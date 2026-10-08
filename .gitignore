@@ -20,8 +20,12 @@ test-results/
 !.env.example
 secrets/
 *.p12
+*.p8
+*.pfx
 *.pem
 *.key
+*.jks
+*.pkpass
 *-service-account*.json
 
 # Database backups
