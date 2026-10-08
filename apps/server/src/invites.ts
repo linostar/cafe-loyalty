@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { parseArgs } from "node:util";
 import { withCafe, type Database } from "@cafe-loyalty/db";
 import { sql, type Kysely, type Transaction } from "kysely";
+import { z } from "zod";
 import { hashToken, newToken } from "./credentials.js";
 
 /** An invite link works for this long. */
@@ -55,4 +57,28 @@ export function inviteLink(dashboardUrl: string, token: string): string {
   const link = new URL("/signup", dashboardUrl);
   link.hash = `invite=${token}`;
   return link.toString();
+}
+
+const inviteArgsSchema = z.union([
+  z.object({ "cafe-name": z.string().trim().min(1).max(120), "cafe-id": z.undefined().optional() }),
+  z.object({ "cafe-id": z.uuid(), "cafe-name": z.undefined().optional() }),
+]);
+
+/**
+ * The create-invite command's target from its arguments: exactly one of `--cafe-name <1-120 characters>` or
+ * `--cafe-id <uuid>`. Returns null for anything else (missing, both, unknown options, invalid values).
+ */
+export function parseInviteArgs(args: readonly string[]): InviteTarget | null {
+  let values: unknown;
+  try {
+    ({ values } = parseArgs({ args: [...args], options: { "cafe-name": { type: "string" }, "cafe-id": { type: "string" } }, strict: true }));
+  } catch {
+    return null;
+  }
+  const parsed = inviteArgsSchema.safeParse(values);
+  if (!parsed.success) {
+    return null;
+  }
+  const data = parsed.data;
+  return data["cafe-id"] === undefined ? { newCafeName: data["cafe-name"] } : { cafeId: data["cafe-id"] };
 }

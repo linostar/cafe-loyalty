@@ -48,20 +48,21 @@ export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST", pa
   if (!response.ok) {
     throw new ApiRequestError(interpretErrorResponse(response.status, text), detailsOf(text));
   }
+  const unreadable = new ApiRequestError({
+    code: null,
+    message: "The server sent a response this page cannot read. Reload the page and try again.",
+    retryable: true,
+    status: response.status,
+  });
   let parsed: unknown;
   try {
     parsed = response.status === 204 ? undefined : JSON.parse(text);
   } catch {
-    parsed = Symbol("unreadable");
+    throw unreadable;
   }
   const result = schema.safeParse(parsed);
   if (!result.success) {
-    throw new ApiRequestError({
-      code: null,
-      message: "The server sent a response this page cannot read. Reload the page and try again.",
-      retryable: true,
-      status: response.status,
-    });
+    throw unreadable;
   }
   return result.data;
 }

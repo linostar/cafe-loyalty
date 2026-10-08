@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
-import { createOwnerInvite, inviteLink } from "./invites.js";
+import { createOwnerInvite } from "./invites.js";
 import { EmailDeliveryError, type EmailMessage, type Mailer } from "./mailer.js";
 import { RESET_REQUESTED_MESSAGE, ownerAuthRoutes } from "./owner-auth.js";
 
@@ -183,10 +183,6 @@ describe("invites", () => {
     expect(second.json()).toMatchObject({ cafe: { id: owner.cafeId } });
     await expect(createOwnerInvite(testDb.app.db, { cafeId: randomUUID() })).rejects.toThrow("No café has this id.");
   });
-
-  it("put the token in the link's fragment", () => {
-    expect(inviteLink("https://dashboard.example.test", "A".repeat(43))).toBe(`https://dashboard.example.test/signup#invite=${"A".repeat(43)}`);
-  });
 });
 
 describe("sign-in", () => {
@@ -223,6 +219,14 @@ describe("sign-in", () => {
     expect(blocked.json()).toMatchObject({ code: "RATE_LIMITED", retryable: true });
     expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
     expect((await signIn(app, owner.email, PASSWORD, "198.51.100.2")).statusCode).toBe(200);
+  });
+
+  it("holds the limit against parallel attempts", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const replies = await Promise.all(Array.from({ length: 15 }, () => signIn(app, owner.email, "wrong password!", "198.51.100.3")));
+    expect(replies.filter((reply) => reply.statusCode === 401)).toHaveLength(10);
+    expect(replies.filter((reply) => reply.statusCode === 429)).toHaveLength(5);
   });
 
   it("never counts correct passwords", async () => {

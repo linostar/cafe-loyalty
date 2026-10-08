@@ -41,7 +41,7 @@ To try the dashboard against the API locally, set `DASHBOARD_API_PROXY=http://12
 | `pnpm db:migrate` | Applies pending migrations as the migrator role (`MIGRATOR_DATABASE_URL`) |
 | `pnpm --filter @cafe-loyalty/server dev` | Runs the API server with reload, reading `.env` |
 | `pnpm --filter @cafe-loyalty/server start` | Runs the built API server (`dist/main.js`); needs the environment set |
-| `pnpm --filter @cafe-loyalty/server create-invite --cafe-name "<name>"` | Creates a café and prints a single-use owner signup link (valid 7 days); `--cafe-id <id>` instead issues a new link for an existing café. Needs `DATABASE_URL` and `DASHBOARD_URL`, and a built server |
+| `pnpm --filter @cafe-loyalty/server create-invite --cafe-name "<name>"` | Creates a café and prints a single-use owner signup link (valid 7 days); `--cafe-id <id>` instead issues a new link for an existing café. Needs `DATABASE_URL` and `DASHBOARD_URL`, and a built server. On a server, run it in a throwaway container so its output is not kept in container logs: `docker compose run --rm server node dist/create-invite-cli.js --cafe-name "<name>"` |
 | `pnpm --filter @cafe-loyalty/worker dev` | Runs the background worker with reload, reading `.env` |
 | `pnpm --filter @cafe-loyalty/worker start` | Runs the built worker (`dist/main.js`); needs the environment set |
 | `pnpm --filter @cafe-loyalty/counter dev` | Runs the counter app dev server |
@@ -74,7 +74,7 @@ PostgreSQL 18. Everything lives in schema `app`; migration history is in `meta.s
 
 ## Owner accounts
 
-- **Invite only.** The operator runs `create-invite`, which creates the café and prints a single-use signup link (`/signup#invite=…`, valid 7 days). The owner opens it, chooses an email and a password (at least 10 characters) and is signed in. Tokens in links sit in the URL fragment, which browsers never send to a server.
+- **Invite only.** The operator runs `create-invite`, which creates the café and prints a single-use signup link (`/signup#invite=…`, valid 7 days). The link is a secret until used: send it to the owner directly, never in a shared channel or a ticket. The owner opens it, chooses an email and a password (at least 10 characters) and is signed in. Tokens in links sit in the URL fragment, which browsers never send to a server.
 - **Passwords** are hashed with argon2id (19 MiB, 2 passes). Sign-in answers a wrong password and an unknown email identically.
 - **Sessions** are server-side rows keyed by the SHA-256 hash of a random 256-bit token sent as a `__Host-` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`). They end after 7 days idle or 30 days in all. Signing out, changing the password and resetting it end every session of the owner. The API accepts JSON bodies only, so a cross-site form cannot post to it.
 - **Password reset** emails a single-use link (`/reset-password#token=…`) valid 30 minutes; only the newest link works. The reply is the same, and sent before any lookup, whether or not the email has an account.

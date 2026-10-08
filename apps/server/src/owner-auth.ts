@@ -278,18 +278,23 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     const accountAndClient = `${body.email} ${client}`;
     const wait = Math.max(limits.loginFailuresPerAccountAndIp.check(accountAndClient), limits.loginFailuresPerAccount.check(body.email));
     if (wait > 0) {
+      // A refused attempt is not counted, so it cannot push the account's overall cap.
       throw rateLimited(reply, wait);
     }
+    // Counted now as a failure and refunded if the password is right: counting only after the slow check would let
+    // parallel requests all pass the check above.
+    limits.loginFailuresPerAccountAndIp.hit(accountAndClient);
+    limits.loginFailuresPerAccount.hit(body.email);
     const owner = await withLookup(db, { ownerEmail: body.email }, (trx) =>
       trx.selectFrom("owners").select(["id", "cafe_id", "password_hash"]).where("email", "=", body.email).executeTakeFirst(),
     );
     const valid = await verifyPassword(owner?.password_hash, body.password);
     if (owner === undefined || !valid) {
-      limits.loginFailuresPerAccountAndIp.hit(accountAndClient);
-      limits.loginFailuresPerAccount.hit(body.email);
       request.log.info({ cafeId: owner?.cafe_id ?? null }, "owner sign-in failed");
       throw new ApiError("UNAUTHENTICATED", "The email or password is wrong. Try again, or reset your password.");
     }
+    limits.loginFailuresPerAccountAndIp.refund(accountAndClient);
+    limits.loginFailuresPerAccount.refund(body.email);
     const created = await withCafe(db, owner.cafe_id, async (trx) => {
       // The hash was checked outside this transaction. Locking the owner row and comparing again orders this
       // sign-in against a concurrent password change or reset, so no session made with the old password outlives it.

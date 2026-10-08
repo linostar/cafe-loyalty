@@ -1,33 +1,26 @@
-import { parseArgs } from "node:util";
 import { createDatabase } from "@cafe-loyalty/db";
 import { formatStartupFailure, loadEnv, redactLogObject } from "@cafe-loyalty/shared";
 import { z } from "zod";
-import { createOwnerInvite, inviteLink, type InviteTarget } from "./invites.js";
+import { dashboardUrlSchema } from "./config.js";
+import { createOwnerInvite, inviteLink, parseInviteArgs, type InviteTarget } from "./invites.js";
 
 const USAGE = 'Usage: create-invite --cafe-name "Café name"   (new café)\n       create-invite --cafe-id <uuid>          (another owner, or a fresh link, for an existing café)';
 
 const envSchema = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-  DASHBOARD_URL: z.url({ protocol: /^https?$/ }),
+  DASHBOARD_URL: dashboardUrlSchema,
 });
-
-const argsSchema = z.union([
-  z.object({ "cafe-name": z.string().trim().min(1, "Give the café a name.").max(120, "Use at most 120 characters."), "cafe-id": z.undefined() }),
-  z.object({ "cafe-id": z.uuid("Use the café's id (a UUID)."), "cafe-name": z.undefined() }),
-]);
 
 let env: z.output<typeof envSchema>;
 let target: InviteTarget;
 try {
   env = loadEnv(envSchema, process.env);
-  const { values } = parseArgs({ options: { "cafe-name": { type: "string" }, "cafe-id": { type: "string" } }, strict: true });
-  const args = argsSchema.safeParse(values);
-  if (!args.success) {
-    process.stderr.write(`Give exactly one of --cafe-name or --cafe-id.\n${USAGE}\n`);
+  const parsed = parseInviteArgs(process.argv.slice(2));
+  if (parsed === null) {
+    process.stderr.write(`Give exactly one of --cafe-name (1 to 120 characters) or --cafe-id (a UUID).\n${USAGE}\n`);
     process.exit(2);
   }
-  const data = args.data;
-  target = data["cafe-id"] === undefined ? { newCafeName: data["cafe-name"] } : { cafeId: data["cafe-id"] };
+  target = parsed;
 } catch (error) {
   process.stderr.write(`${formatStartupFailure(error, "create-invite")}\n`);
   process.stderr.write(`${USAGE}\n`);

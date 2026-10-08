@@ -34,7 +34,8 @@ export const clearedSessionCookie = `${SESSION_COOKIE}=; ${COOKIE_ATTRIBUTES}; M
 /** argon2id with the library defaults, which are OWASP's recommended minimum (19 MiB, 2 passes, 1 lane). */
 export const hashPassword = (password: string): Promise<string> => hash(password);
 
-let throwawayHash: Promise<string> | undefined;
+/** Built when the module loads, so the first unknown-email sign-in costs no more than any other. */
+const throwawayHash = hash(newToken());
 
 /**
  * Checks a password against a stored hash. Without a stored hash (unknown email) it still runs a full
@@ -42,7 +43,6 @@ let throwawayHash: Promise<string> | undefined;
  */
 export async function verifyPassword(storedHash: string | undefined, password: string): Promise<boolean> {
   if (storedHash === undefined) {
-    throwawayHash ??= hash(newToken());
     await verify(await throwawayHash, password);
     return false;
   }

@@ -37,6 +37,14 @@ export class RateLimiter {
     return window.count > this.limit ? Math.max(1, Math.ceil((window.resetAt - now) / 1000)) : 0;
   }
 
+  /** Takes back one attempt counted for `key` in its current window (for an attempt that turned out not to count). */
+  refund(key: string): void {
+    const window = this.windows.get(key);
+    if (window !== undefined && window.resetAt > this.now() && window.count > 0) {
+      window.count -= 1;
+    }
+  }
+
   private prune(now: number): void {
     for (const [key, window] of this.windows) {
       if (window.resetAt <= now) {

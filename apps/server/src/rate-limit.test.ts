@@ -20,6 +20,14 @@ describe("RateLimiter", () => {
     expect(limiter.check("a")).toBe(1);
   });
 
+  it("refunds an attempt within its window", () => {
+    const limiter = new RateLimiter(1, 1_000, () => 0);
+    limiter.hit("a");
+    limiter.refund("a");
+    expect(limiter.hit("a")).toBe(0);
+    limiter.refund("unknown");
+  });
+
   it("starts a new window once the old one ends", () => {
     let now = 0;
     const limiter = new RateLimiter(1, 1_000, () => now);

@@ -3,6 +3,14 @@ import { z } from "zod";
 
 const flag = z.enum(["true", "false"]).transform((value) => value === "true");
 
+/** The dashboard's origin: links are built as `/signup`, `/reset-password` on it, so it must have no path. */
+export const dashboardUrlSchema = z
+  .url({ protocol: /^https?$/ })
+  .refine((value) => {
+    const url = new URL(value);
+    return url.pathname === "/" && url.search === "" && url.hash === "";
+  }, "Use the dashboard's address without a path, such as https://dashboard.example.com.");
+
 const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]),
   HOST: z.string().min(1),
@@ -13,7 +21,7 @@ const serverEnvSchema = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   DATABASE_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(100).default(10),
   /** Public address of the owner dashboard, used in emailed links. */
-  DASHBOARD_URL: z.url({ protocol: /^https?$/ }),
+  DASHBOARD_URL: dashboardUrlSchema,
   /**
    * Number of reverse proxies in front of the server (Caddy: 1), so rate limits see the client's address.
    * Required in production: left at 0 behind a proxy, every client would share the proxy's rate limits.
@@ -35,7 +43,7 @@ const serverEnvSchema = z.object({
     if (env.TRUST_PROXY_HOPS === undefined) {
       context.addIssue({ code: "custom", path: ["TRUST_PROXY_HOPS"], message: "Set it in production (1 behind Caddy)." });
     }
-    if (!env.DASHBOARD_URL.startsWith("https://")) {
+    if (new URL(env.DASHBOARD_URL).protocol !== "https:") {
       context.addIssue({ code: "custom", path: ["DASHBOARD_URL"], message: "Use an https address in production." });
     }
   })

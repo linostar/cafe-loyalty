@@ -40,6 +40,14 @@ describe("loadServerConfig", () => {
       /DASHBOARD_URL/,
     );
     expect(loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1" }).TRUST_PROXY_HOPS).toBe(1);
+    expect(loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", DASHBOARD_URL: "HTTPS://Dash.Example.com" }).NODE_ENV).toBe(
+      "production",
+    );
+  });
+
+  it("requires the dashboard address without a path", () => {
+    expect(() => loadServerConfig({ ...valid, DASHBOARD_URL: "https://example.com/dashboard" })).toThrow(/DASHBOARD_URL/);
+    expect(loadServerConfig({ ...valid, DASHBOARD_URL: "https://dashboard.example.com/" }).DASHBOARD_URL).toBe("https://dashboard.example.com/");
   });
 
   it("names invalid variables without their values", () => {
