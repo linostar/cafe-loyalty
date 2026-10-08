@@ -1,0 +1,34 @@
+# AI assistant files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Secrets: environment files, certificates and keys (Apple pass certificates, Google service accounts)
+.env
+.env.*
+!.env.example
+secrets/
+*.p12
+*.pem
+*.key
+*-service-account*.json
+
+# Database backups
+backups/
+*.dump
+*.age
+
+# Logs and OS files
+*.log
+.DS_Store
