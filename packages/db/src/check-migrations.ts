@@ -27,8 +27,14 @@ export function stripSqlNoise(sql: string): string {
     }
     const char = sql.charAt(index);
     if (char === "'" || char === '"') {
+      // E'...' strings treat a backslash as an escape, so \' does not end them.
+      const escapeString = char === "'" && /(^|[^A-Za-z0-9_$])[Ee]$/.test(output);
       let end = index + 1;
       while (end < sql.length) {
+        if (escapeString && sql.charAt(end) === "\\") {
+          end += 2;
+          continue;
+        }
         if (sql.charAt(end) === char) {
           if (sql.charAt(end + 1) === char) {
             end += 2;
@@ -49,18 +55,41 @@ export function stripSqlNoise(sql: string): string {
   return output;
 }
 
-const DROP_TABLE = /\bDROP\s+TABLE\b/i;
+/** Drops that remove tables or columns directly or through CASCADE (a type or schema drop takes its columns with it). */
+const DROP_OBJECT = /\bDROP\s+(TABLE|SCHEMA|TYPE|DOMAIN|VIEW|MATERIALIZED\s+VIEW|EXTENSION)\b/i;
 const RENAME = /\bRENAME\b/i;
+/** Moving a table to another schema renames it for every query that uses it. */
+const SET_SCHEMA = /\bSET\s+SCHEMA\b/i;
+/** A DO block's body is code the check cannot see into, so it may hide a drop. */
+const DO_BLOCK = /^DO\b/i;
 /** ALTER TABLE ... DROP [COLUMN] x, but not DROP CONSTRAINT / DEFAULT / NOT NULL / IDENTITY / EXPRESSION. */
 const DROP_COLUMN = /\bALTER\s+TABLE\b[\s\S]*\bDROP\s+(?!CONSTRAINT\b|DEFAULT\b|NOT\s+NULL\b|IDENTITY\b|EXPRESSION\b)/i;
 
-/** Statements that drop or rename a table or column, which break the previous release (AC 47). */
+/** Statements that drop or rename a table or column (or might, like a DO block), which break the previous release (AC 47). */
 export function findBreakingStatements(sql: string): string[] {
   return stripSqlNoise(sql)
     .split(";")
     .map((statement) => statement.replace(/\s+/g, " ").trim())
     .filter((statement) => statement.length > 0)
-    .filter((statement) => DROP_TABLE.test(statement) || RENAME.test(statement) || DROP_COLUMN.test(statement));
+    .filter(
+      (statement) =>
+        DROP_OBJECT.test(statement) || RENAME.test(statement) || SET_SCHEMA.test(statement) || DROP_COLUMN.test(statement) || DO_BLOCK.test(statement),
+    );
+}
+
+/**
+ * Statements the runner owns: transaction control and changes of role, session or search path. A migration that
+ * runs one of these could commit half its work or create objects owned by the wrong role.
+ */
+const FORBIDDEN = /\b(BEGIN|COMMIT|ROLLBACK|ABORT|END|SAVEPOINT|RELEASE|START\s+TRANSACTION|SET\s+(SESSION\s+|LOCAL\s+)?(ROLE|SESSION\s+AUTHORIZATION|SEARCH_PATH)|RESET\s+(ROLE|ALL|SESSION\s+AUTHORIZATION|SEARCH_PATH))\b/i;
+
+/** Statements that control transactions or change role or search path, which only the runner may do. */
+export function findForbiddenStatements(sql: string): string[] {
+  return stripSqlNoise(sql)
+    .split(";")
+    .map((statement) => statement.replace(/\s+/g, " ").trim())
+    .filter((statement) => statement.length > 0)
+    .filter((statement) => FORBIDDEN.test(statement));
 }
 
 export interface MigrationProblem {
@@ -76,18 +105,25 @@ export interface MigrationCheckContext {
 }
 
 /**
- * Static checks for the migration set: expand migrations never drop or rename tables or columns; a contract
- * migration names a release commit that is in this history; applied migrations are never edited. The deploy
- * script separately refuses a contract migration unless the deployed release is at or after that commit.
+ * Static checks for the migration set: no migration controls transactions or changes role; expand migrations never
+ * drop or rename tables or columns; a contract migration names a release commit that is in this history; applied
+ * migrations are never edited. Checking that the deployed release is at or after that commit is the deploy
+ * script's job (plan Step 19).
  */
 export function checkMigrations(migrations: readonly MigrationFile[], context: MigrationCheckContext): MigrationProblem[] {
   const problems: MigrationProblem[] = [];
   for (const migration of migrations) {
+    for (const statement of findForbiddenStatements(migration.sql)) {
+      problems.push({
+        fileName: migration.fileName,
+        problem: `controls transactions or changes the role or search path, which only the migration runner may do: ${statement.slice(0, 160)}`,
+      });
+    }
     if (migration.kind === "expand") {
       for (const statement of findBreakingStatements(migration.sql)) {
         problems.push({
           fileName: migration.fileName,
-          problem: `drops or renames a table or column, which only a contract migration may do: ${statement.slice(0, 160)}`,
+          problem: `drops or renames a table or column (or runs a DO block), which only a contract migration may do: ${statement.slice(0, 160)}`,
         });
       }
     } else if (migration.requiresDeployed === null || !context.isAncestor(migration.requiresDeployed)) {

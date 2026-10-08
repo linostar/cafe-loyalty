@@ -19,12 +19,12 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 # 18-alpine, multi-arch index
         env:
           # Throwaway test cluster reachable only from this job: trust auth, so no credential exists to leak.
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-          - 5432:5432
+          - 127.0.0.1:5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 2s

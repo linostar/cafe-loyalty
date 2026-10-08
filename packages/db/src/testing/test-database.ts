@@ -36,6 +36,19 @@ function urlFor(adminUrl: string, role: string, password: string, database: stri
   return url.toString();
 }
 
+async function dropTestObjects(adminUrl: string, database: string, roles: readonly string[]): Promise<void> {
+  const admin = new pg.Client({ connectionString: adminUrl, connectionTimeoutMillis: 10_000 });
+  await admin.connect();
+  try {
+    await admin.query(`DROP DATABASE IF EXISTS ${admin.escapeIdentifier(database)} WITH (FORCE)`);
+    for (const role of roles) {
+      await admin.query(`DROP ROLE IF EXISTS ${admin.escapeIdentifier(role)}`);
+    }
+  } finally {
+    await admin.end();
+  }
+}
+
 /**
  * Creates a fresh database with its own migrator and app login roles, and (unless `migrate: false`) applies the
  * repository's migrations. Each call is isolated, so test files can run in parallel. Call `cleanup` afterwards.
@@ -49,18 +62,23 @@ export async function createTestDatabase(options: { migrate?: boolean } = {}): P
   const migratorPassword = randomBytes(24).toString("hex");
   const appPassword = randomBytes(24).toString("hex");
 
-  await bootstrap({ adminUrl, databaseName: name, migratorRole, migratorPassword, appRole, appPassword }, quiet);
   const migratorUrl = urlFor(adminUrl, migratorRole, migratorPassword, name);
   const appUrl = urlFor(adminUrl, appRole, appPassword, name);
 
-  if (options.migrate !== false) {
-    const client = new pg.Client({ connectionString: migratorUrl, connectionTimeoutMillis: 10_000 });
-    await client.connect();
-    try {
-      await migrate(client, await loadMigrations(), quiet);
-    } finally {
-      await client.end();
+  try {
+    await bootstrap({ adminUrl, databaseName: name, migratorRole, migratorPassword, appRole, appPassword }, quiet);
+    if (options.migrate !== false) {
+      const client = new pg.Client({ connectionString: migratorUrl, connectionTimeoutMillis: 10_000 });
+      await client.connect();
+      try {
+        await migrate(client, await loadMigrations(), quiet);
+      } finally {
+        await client.end();
+      }
     }
+  } catch (error) {
+    await dropTestObjects(adminUrl, name, [migratorRole, appRole]).catch(() => undefined);
+    throw error;
   }
 
   const poolErrors: Error[] = [];
@@ -70,6 +88,7 @@ export async function createTestDatabase(options: { migrate?: boolean } = {}): P
     maxConnections: 4,
     connectionTimeoutMs: 10_000,
     statementTimeoutMs: 10_000,
+    idleInTransactionTimeoutMs: 10_000,
     idleTimeoutMs: 1_000,
     onPoolError: (error) => poolErrors.push(error),
   });
@@ -83,15 +102,7 @@ export async function createTestDatabase(options: { migrate?: boolean } = {}): P
     app,
     async cleanup() {
       await app.close();
-      const admin = new pg.Client({ connectionString: adminUrl, connectionTimeoutMillis: 10_000 });
-      await admin.connect();
-      try {
-        await admin.query(`DROP DATABASE IF EXISTS ${admin.escapeIdentifier(name)} WITH (FORCE)`);
-        await admin.query(`DROP ROLE IF EXISTS ${admin.escapeIdentifier(migratorRole)}`);
-        await admin.query(`DROP ROLE IF EXISTS ${admin.escapeIdentifier(appRole)}`);
-      } finally {
-        await admin.end();
-      }
+      await dropTestObjects(adminUrl, name, [migratorRole, appRole]);
       if (poolErrors.length > 0) {
         throw new AggregateError(poolErrors, "The app connection pool reported errors during the test.");
       }

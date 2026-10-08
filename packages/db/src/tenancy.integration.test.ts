@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { TenantContextError, withCafe } from "./database.js";
+import { TenantContextError, createDatabase, withCafe } from "./database.js";
 import { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 import { TABLE_COLUMNS, TENANT_KEY, type Database, type TableName } from "./schema.js";
 import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
 
-const RLS_VIOLATION = "42501";
+/** SQLSTATE 42501, insufficient_privilege: raised both by a row-level security WITH CHECK and by a missing grant. */
+const PERMISSION_DENIED = "42501";
+const INVALID_TEXT_REPRESENTATION = "22P02";
 
 /** Inserts one row of each tenant table for a café. Every table in schema app needs an entry (checked below). */
 const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
@@ -144,7 +146,7 @@ describe.each(TABLES)("isolation of %s", (table) => {
         }
       }),
     );
-    expect(code).toBe(RLS_VIOLATION);
+    expect(code).toBe(PERMISSION_DENIED);
   });
 
   it("cannot update or delete another café's rows", async () => {
@@ -169,13 +171,28 @@ describe.each(TABLES)("isolation of %s", (table) => {
 });
 
 describe("audit log", () => {
+  it("does not let the app set the id or the time of an entry", async () => {
+    const backdated = await errorCodeOf(
+      withCafe(testDb.app.db, cafeA, (trx) =>
+        sql`INSERT INTO audit_log (cafe_id, actor_type, action, entity_type, occurred_at) VALUES (${cafeA}, 'system', 'x', 'x', '2000-01-01')`.execute(trx),
+      ),
+    );
+    const forgedId = await errorCodeOf(
+      withCafe(testDb.app.db, cafeA, (trx) =>
+        sql`INSERT INTO audit_log (id, cafe_id, actor_type, action, entity_type) OVERRIDING SYSTEM VALUE VALUES (1, ${cafeA}, 'system', 'x', 'x')`.execute(trx),
+      ),
+    );
+    expect(backdated).toBe(PERMISSION_DENIED);
+    expect(forgedId).toBe(PERMISSION_DENIED);
+  });
+
   it("is append-only for the app role", async () => {
     const update = await errorCodeOf(
       withCafe(testDb.app.db, cafeA, (trx) => sql`UPDATE audit_log SET action = 'tampered'`.execute(trx)),
     );
     const remove = await errorCodeOf(withCafe(testDb.app.db, cafeA, (trx) => sql`DELETE FROM audit_log`.execute(trx)));
-    expect(update).toBe(RLS_VIOLATION);
-    expect(remove).toBe(RLS_VIOLATION);
+    expect(update).toBe(PERMISSION_DENIED);
+    expect(remove).toBe(PERMISSION_DENIED);
   });
 });
 
@@ -184,10 +201,49 @@ describe("withCafe", () => {
     await expect(withCafe(testDb.app.db, "not-a-uuid", () => Promise.resolve(1))).rejects.toThrow(TenantContextError);
   });
 
-  it("keeps the café setting inside its transaction", async () => {
-    await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafes").select("id").execute());
-    const setting = await sql<{ value: string | null }>`SELECT nullif(current_setting('app.cafe_id', true), '') AS value`.execute(testDb.app.db);
-    expect(setting.rows[0]?.value ?? null).toBeNull();
+  it("keeps the café setting inside its transaction, on the same pooled connection", async () => {
+    // One connection, so the follow-up query is guaranteed to run where the setting was made.
+    const single = createDatabase({
+      connectionString: testDb.appUrl,
+      applicationName: "cafe-loyalty-test-single",
+      maxConnections: 1,
+      connectionTimeoutMs: 10_000,
+      statementTimeoutMs: 10_000,
+      idleInTransactionTimeoutMs: 10_000,
+      idleTimeoutMs: 1_000,
+      onPoolError: (error) => {
+        throw error;
+      },
+    });
+    try {
+      const inside = await withCafe(single.db, cafeA, async (trx) => {
+        const pid = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx);
+        const rows = await trx.selectFrom("cafes").select("id").execute();
+        return { pid: pid.rows[0]?.pid, rows: rows.length };
+      });
+      const after = await sql<{ pid: number; value: string | null; visible: number }>`
+        SELECT pg_backend_pid() AS pid, nullif(current_setting('app.cafe_id', true), '') AS value,
+               (SELECT count(*)::int FROM cafes) AS visible`.execute(single.db);
+      expect(inside.rows).toBe(1);
+      expect(after.rows[0]).toEqual({ pid: inside.pid, value: null, visible: 0 });
+    } finally {
+      await single.close();
+    }
+  });
+
+  it("shows nothing when the setting is empty and fails when it is not a UUID", async () => {
+    const empty = await testDb.app.db.transaction().execute(async (trx) => {
+      await sql`SELECT set_config('app.cafe_id', '', true)`.execute(trx);
+      return sql<{ n: number }>`SELECT count(*)::int AS n FROM cafes`.execute(trx);
+    });
+    expect(empty.rows[0]?.n).toBe(0);
+    const invalid = await errorCodeOf(
+      testDb.app.db.transaction().execute(async (trx) => {
+        await sql`SELECT set_config('app.cafe_id', 'not-a-uuid', true)`.execute(trx);
+        return sql`SELECT count(*) FROM cafes`.execute(trx);
+      }),
+    );
+    expect(invalid).toBe(INVALID_TEXT_REPRESENTATION);
   });
 
   it("keeps updated_at current through the trigger", async () => {

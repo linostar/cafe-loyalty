@@ -12,6 +12,8 @@ export interface DatabaseConfig {
   connectionTimeoutMs: number;
   /** Cancel any statement that runs longer than this. */
   statementTimeoutMs: number;
+  /** End a session that sits idle inside an open transaction (holding locks) for longer than this. */
+  idleInTransactionTimeoutMs: number;
   idleTimeoutMs: number;
   /** Called when an idle pooled connection fails (for example the database restarted). */
   onPoolError: (error: Error) => void;
@@ -31,6 +33,7 @@ export function createDatabase(config: DatabaseConfig): DatabaseHandle {
     connectionTimeoutMillis: config.connectionTimeoutMs,
     idleTimeoutMillis: config.idleTimeoutMs,
     statement_timeout: config.statementTimeoutMs,
+    idle_in_transaction_session_timeout: config.idleInTransactionTimeoutMs,
     query_timeout: config.statementTimeoutMs + 1_000,
     options: "-c search_path=app",
   });

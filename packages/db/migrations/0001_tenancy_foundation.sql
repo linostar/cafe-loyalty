@@ -6,7 +6,8 @@
 
 CREATE FUNCTION current_cafe_id() RETURNS uuid
   LANGUAGE sql STABLE PARALLEL SAFE
-  AS $$ SELECT nullif(current_setting('app.cafe_id', true), '')::uuid $$;
+  -- Fully qualified so no temporary or user object can shadow the function or the type.
+  AS $$ SELECT pg_catalog.nullif(pg_catalog.current_setting('app.cafe_id', true), '')::pg_catalog.uuid $$;
 
 CREATE FUNCTION touch_updated_at() RETURNS trigger
   LANGUAGE plpgsql
@@ -105,7 +106,9 @@ CREATE POLICY cafe_isolation ON audit_log TO cl_app
 -- Runtime privileges. Cafés are never deleted by the app; the audit log is append-only.
 GRANT SELECT, INSERT, UPDATE ON cafes TO cl_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON loyalty_programs, order_types TO cl_app;
-GRANT SELECT, INSERT ON audit_log TO cl_app;
+-- Column-level insert: the app cannot set id or occurred_at, so it cannot backdate or forge audit rows.
+GRANT SELECT ON audit_log TO cl_app;
+GRANT INSERT (cafe_id, actor_type, actor_id, action, entity_type, entity_id, changes) ON audit_log TO cl_app;
 REVOKE ALL ON FUNCTION current_cafe_id() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION current_cafe_id() TO cl_app;
 REVOKE ALL ON FUNCTION touch_updated_at() FROM PUBLIC;

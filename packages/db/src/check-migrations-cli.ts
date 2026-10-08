@@ -21,7 +21,7 @@ function git(args: string[], cwd?: string): string {
 
 function isAncestor(commit: string): boolean {
   try {
-    git(["merge-base", "--is-ancestor", commit, "HEAD"]);
+    git(["merge-base", "--is-ancestor", "--end-of-options", commit, "HEAD"]);
     return true;
   } catch (error) {
     // Exit status 1 means "not an ancestor"; anything else (unknown commit, shallow clone) is also a failure here.
@@ -33,7 +33,7 @@ function changedExistingFiles(baseRef: string): string[] {
   // Run from the repository root: pathspecs are relative to the working directory, and pnpm runs this from packages/db.
   const repoRoot = git(["rev-parse", "--show-toplevel"], MIGRATIONS_DIR).trim();
   const migrationsPath = relative(repoRoot, MIGRATIONS_DIR);
-  const output = git(["diff", "--name-status", "--no-renames", `${baseRef}...HEAD`, "--", migrationsPath], repoRoot);
+  const output = git(["diff", "--name-status", "--no-renames", "--end-of-options", `${baseRef}...HEAD`, "--", migrationsPath], repoRoot);
   return output
     .split("\n")
     .filter((line) => line.length > 0)

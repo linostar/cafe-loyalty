@@ -36,6 +36,7 @@ interface AppliedRow {
 export async function migrate(client: ClientBase, migrations: readonly MigrationFile[], log: MigrationLog): Promise<MigrationOutcome> {
   await client.query(`SET ROLE ${OWNER_GROUP_ROLE}`);
   await client.query("SET search_path = app");
+  await client.query("SET idle_in_transaction_session_timeout = '1min'");
   await client.query("SET lock_timeout = '10s'");
   await client.query("SET statement_timeout = '5min'");
   await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY]);
@@ -55,6 +56,9 @@ export async function migrate(client: ClientBase, migrations: readonly Migration
     for (const migration of pending) {
       await client.query("BEGIN");
       try {
+        // Re-set inside every transaction, so nothing a previous migration did can change who owns new objects.
+        await client.query(`SET LOCAL ROLE ${OWNER_GROUP_ROLE}`);
+        await client.query("SET LOCAL search_path = app");
         await client.query(migration.sql);
         await client.query("INSERT INTO meta.schema_migrations (version, name, checksum) VALUES ($1, $2, $3)", [
           migration.version,
@@ -63,7 +67,8 @@ export async function migrate(client: ClientBase, migrations: readonly Migration
         ]);
         await client.query("COMMIT");
       } catch (error) {
-        await client.query("ROLLBACK");
+        // A failed ROLLBACK (for example a lost connection) must not hide why the migration failed.
+        await client.query("ROLLBACK").catch(() => undefined);
         throw new MigrationStateError(`Migration ${migration.fileName} failed and was rolled back: ${(error as Error).message}`, {
           cause: error,
         });
@@ -71,11 +76,18 @@ export async function migrate(client: ClientBase, migrations: readonly Migration
       applied.push(migration.version);
       log.info({ version: migration.version, name: migration.name, kind: migration.kind }, "migration applied");
     }
-    return { applied, alreadyApplied: rows.length };
-  } finally {
-    await client.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]);
-    await client.query("RESET ROLE");
+    const outcome = { applied, alreadyApplied: rows.length };
+    await release(client);
+    return outcome;
+  } catch (error) {
+    await release(client).catch(() => undefined);
+    throw error;
   }
+}
+
+async function release(client: ClientBase): Promise<void> {
+  await client.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]);
+  await client.query("RESET ROLE");
 }
 
 function verifyHistory(applied: readonly AppliedRow[], migrations: readonly MigrationFile[]): void {

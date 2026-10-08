@@ -63,7 +63,7 @@ Every package also has `build` and `typecheck` scripts, which the root commands 
 
 PostgreSQL 18. Everything lives in schema `app`; migration history is in `meta.schema_migrations`.
 
-- **Roles.** `cl_owner` owns every object and is used only by migrations; `cl_app` holds the runtime privileges. Neither can log in. Each environment has two login roles: a migrator that is a member of `cl_owner`, and an app role that is a member of `cl_app` only. No role has superuser or BYPASSRLS.
+- **Roles.** `cl_owner` owns every object and is used only by migrations; `cl_app` holds the runtime privileges. Neither can log in. Each environment has two login roles: a migrator that is a member of `cl_owner`, and an app role that is a member of `cl_app` only. No role has superuser or BYPASSRLS. Bootstrap sets passwords as SCRAM verifiers, so plaintext never reaches the server or its logs. The group roles are cluster-wide, so staging and production each run their own PostgreSQL server.
 - **Tenant isolation.** Every table has forced row-level security that shows and accepts only the rows of the café set for the current transaction. Code reaches the database only through `withCafe(db, cafeId, work)`, with a café id taken from the authenticated session, device or job, never from request input.
 - **Migrations.** Plain SQL files in `packages/db/migrations`, numbered `0001_...sql`, each starting with `-- migration: expand` (adds only, safe for the previous release) or `-- migration: contract` plus `-- requires-deployed: <commit>` (removes or renames, only once the deployed release no longer uses it). Applied migrations are never edited; the runner refuses a changed file and refuses to run an older release on a newer database.
 

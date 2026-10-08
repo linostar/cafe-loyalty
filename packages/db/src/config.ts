@@ -4,7 +4,11 @@ import { z } from "zod";
 const logLevel = z.enum(["fatal", "error", "warn", "info", "debug", "trace"]);
 const postgresUrl = z.url({ protocol: /^postgres(ql)?$/ });
 const roleName = z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, "Use lowercase letters, digits and underscores.");
-const password = z.string().min(16, "Use at least 16 characters.");
+const password = z
+  .string()
+  .min(16, "Use at least 16 characters.")
+  .regex(/^[\x20-\x7e]+$/, "Use printable ASCII characters only.")
+  .refine((value) => !value.startsWith("choose-a-"), "Replace the placeholder from .env.example with a real password.");
 
 const bootstrapEnvSchema = z.object({
   LOG_LEVEL: logLevel,
@@ -23,7 +27,10 @@ const migrateEnvSchema = z.object({
 
 const checkEnvSchema = z.object({
   /** When set (CI on pull requests), migrations that exist on this ref must be unchanged. */
-  MIGRATIONS_BASE_REF: z.string().min(1).optional(),
+  MIGRATIONS_BASE_REF: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, "Use a branch or ref name such as origin/main.")
+    .optional(),
 });
 
 export type BootstrapEnv = z.output<typeof bootstrapEnvSchema>;
