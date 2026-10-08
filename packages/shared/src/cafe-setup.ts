@@ -51,7 +51,8 @@ function isEasyPin(pin: string): boolean {
 /** A barista's PIN: 6 to 12 digits, not a repeated digit or a straight run (AC 19). */
 export const staffPinSchema = z
   .string()
-  .regex(new RegExp(`^\\d{${String(STAFF_PIN_MIN_LENGTH)},${String(STAFF_PIN_MAX_LENGTH)}}$`), "Use 6 to 12 digits.")
+  // abort: a PIN of the wrong shape gets only this message, not also the guessability one.
+  .regex(new RegExp(`^\\d{${String(STAFF_PIN_MIN_LENGTH)},${String(STAFF_PIN_MAX_LENGTH)}}$`), { message: "Use 6 to 12 digits.", abort: true })
   .refine((pin) => !isEasyPin(pin), "Choose a PIN that is harder to guess than a repeated digit or a straight run such as 123456.");
 
 export const staffCreateSchema = z.object({ name: text(60), pin: staffPinSchema });

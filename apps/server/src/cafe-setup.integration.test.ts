@@ -28,11 +28,11 @@ async function ownerApp() {
 }
 
 describe("access control", () => {
-  it("refuses to start with a route that declares no access", async () => {
+  it("refuses a route that declares no access", async () => {
     const app = Fastify();
     registerAccessControl(app, context.testDb.app.db);
-    app.get("/undeclared", () => ({}));
-    await expect(app.ready()).rejects.toThrow('must declare config.access ("owner", "device" or "public")');
+    // The onRoute hook throws as the route is added, so the server never starts with it.
+    expect(() => app.get("/undeclared", () => ({}))).toThrow('must declare config.access ("owner", "device" or "public")');
     await app.close();
   });
 

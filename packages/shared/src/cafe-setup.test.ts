@@ -18,6 +18,11 @@ describe("staffPinSchema", () => {
     expect(staffPinSchema.safeParse(pin).success).toBe(false);
   });
 
+  it("gives one message per problem", () => {
+    expect(staffPinSchema.safeParse("12345").error?.issues.map((issue) => issue.message)).toEqual(["Use 6 to 12 digits."]);
+    expect(staffPinSchema.safeParse("123456").error?.issues).toHaveLength(1);
+  });
+
   it("does not echo the PIN in its message", () => {
     expect(JSON.stringify(staffPinSchema.safeParse("876543").error?.issues)).not.toContain("876543");
   });
