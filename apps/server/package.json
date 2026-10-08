@@ -7,14 +7,22 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "create-invite": "node --env-file-if-exists=../../.env dist/create-invite-cli.js"
   },
   "dependencies": {
+    "@cafe-loyalty/db": "workspace:*",
     "@cafe-loyalty/shared": "workspace:*",
+    "@node-rs/argon2": "^2.2.2",
     "fastify": "^5.12.5",
+    "kysely": "^0.29.6",
+    "nodemailer": "^10.0.15",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
     "tsx": "^4.23.15"
   }
 }

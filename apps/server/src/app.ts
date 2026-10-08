@@ -1,10 +1,13 @@
 import { LOG_REDACT_CENSOR, LOG_REDACT_HEADER_PATHS, redactLogObject } from "@cafe-loyalty/shared";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import { handleError } from "./http-errors.js";
 
 export interface AppOptions {
   logLevel: string;
   /** Log destination; defaults to stdout. Tests pass a capturing stream. */
   logDestination?: { write(chunk: string): void };
+  /** Reverse proxies in front of the server, so `request.ip` is the client's address (default 0). */
+  trustProxyHops?: number;
 }
 
 /** A path segment that looks like a random secret (at least 16 URL-safe characters). */
@@ -67,13 +70,19 @@ export function buildApp(options: AppOptions): FastifyInstance {
       redact: { paths: [...LOG_REDACT_HEADER_PATHS], censor: LOG_REDACT_CENSOR },
       ...(options.logDestination === undefined ? {} : { stream: options.logDestination }),
     },
+    // Trusts the nearest `trustProxyHops` proxies (what a numeric trustProxy does at runtime; its types take only this form).
+    trustProxy: (_address: string, hop: number) => hop < (options.trustProxyHops ?? 0),
   });
+
+  // JSON only: text/plain is a CORS "simple" type, so a cross-site form could send it without a preflight.
+  app.removeContentTypeParser("text/plain");
+  app.setErrorHandler(handleError);
 
   app.get("/health/live", () => ({ status: "ok" }));
 
   // Replaces Fastify's default handler, whose log message contains the raw URL (secrets included).
   app.setNotFoundHandler((_request, reply) =>
-    reply.code(404).send({ code: "NOT_FOUND", message: "No such page or API route.", retryable: false }),
+    reply.code(404).send({ code: "NOT_FOUND", message: "No such page or API route. Check the address.", retryable: false }),
   );
 
   return app;
