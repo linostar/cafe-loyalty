@@ -1,10 +1,10 @@
 import { createDatabase } from "@cafe-loyalty/db";
 import { formatStartupFailure } from "@cafe-loyalty/shared";
+import { apiRoutes } from "./api.js";
 import { buildApp } from "./app.js";
 import { BackgroundTasks } from "./background.js";
 import { loadServerConfig, type ServerConfig } from "./config.js";
 import { createSmtpMailer } from "./mailer.js";
-import { ownerAuthRoutes } from "./owner-auth.js";
 
 let config: ServerConfig;
 try {
@@ -37,7 +37,14 @@ const mailer = createSmtpMailer({
 });
 const background = new BackgroundTasks(app.log);
 
-await app.register(ownerAuthRoutes, { prefix: "/api/auth", db: database.db, mailer, background, dashboardUrl: config.DASHBOARD_URL });
+await app.register(apiRoutes, {
+  prefix: "/api",
+  db: database.db,
+  mailer,
+  background,
+  dashboardUrl: config.DASHBOARD_URL,
+  counterUrl: config.COUNTER_URL,
+});
 // Runs once the server has stopped taking requests: finish emails in flight, then release connections.
 app.addHook("onClose", async () => {
   await background.drain();

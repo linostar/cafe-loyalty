@@ -9,6 +9,7 @@ const valid = {
   LOG_LEVEL: "info",
   DATABASE_URL: "postgres://app:secret@127.0.0.1:5432/cafe_loyalty",
   DASHBOARD_URL: "https://dashboard.example.com",
+  COUNTER_URL: "https://counter.example.com",
   SMTP_HOST: "smtp.example.com",
   SMTP_PORT: "587",
   SMTP_SECURE: "false",
@@ -36,6 +37,9 @@ describe("loadServerConfig", () => {
 
   it("requires proxy hops and an https dashboard in production", () => {
     expect(() => loadServerConfig({ ...valid, NODE_ENV: "production" })).toThrow(/TRUST_PROXY_HOPS/);
+    expect(() => loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", COUNTER_URL: "http://counter.example.com" })).toThrow(
+      /COUNTER_URL/,
+    );
     expect(() => loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", DASHBOARD_URL: "http://dash.example.com" })).toThrow(
       /DASHBOARD_URL/,
     );

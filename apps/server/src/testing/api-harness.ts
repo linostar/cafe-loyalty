@@ -1,0 +1,185 @@
+import { randomUUID, webcrypto } from "node:crypto";
+import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
+import { deviceTokenSigningPayload } from "@cafe-loyalty/shared";
+import type { FastifyInstance, LightMyRequestResponse } from "fastify";
+import pg from "pg";
+import { afterAll, afterEach, beforeAll, expect } from "vitest";
+import type { RouteAccess } from "../access.js";
+import { apiRoutes } from "../api.js";
+import { buildApp } from "../app.js";
+import { BackgroundTasks } from "../background.js";
+import { createOwnerInvite } from "../invites.js";
+import type { EmailMessage, Mailer } from "../mailer.js";
+
+export const DASHBOARD_URL = "https://dashboard.example.test";
+export const COUNTER_URL = "https://counter.example.test";
+export const PASSWORD = "correct horse battery";
+
+export class FakeMailer implements Mailer {
+  readonly sent: EmailMessage[] = [];
+  /** When set, send waits for it, to show that a request does not wait for its email. */
+  gate: Promise<void> | undefined;
+  failWith: Error | undefined;
+
+  async send(message: EmailMessage): Promise<void> {
+    await this.gate;
+    if (this.failWith !== undefined) {
+      throw this.failWith;
+    }
+    this.sent.push(message);
+  }
+
+  close(): void {
+    // Nothing to release.
+  }
+}
+
+export interface RegisteredRoute {
+  method: string;
+  url: string;
+  access: RouteAccess | undefined;
+}
+
+export interface Harness {
+  app: FastifyInstance;
+  mailer: FakeMailer;
+  background: BackgroundTasks;
+  logs: string[];
+  /** Every route the API registered, with its declared access. */
+  routes: RegisteredRoute[];
+}
+
+export const uniqueEmail = (): string => `owner-${randomUUID()}@example.com`;
+
+export function cookieToken(response: LightMyRequestResponse): string {
+  const header = response.headers["set-cookie"];
+  const value = Array.isArray(header) ? header[0] : header;
+  const match = /^__Host-cl_session=([A-Za-z0-9_-]{43});/.exec(value ?? "");
+  if (match?.[1] === undefined) {
+    throw new Error(`No session cookie in the response (status ${String(response.statusCode)}).`);
+  }
+  return match[1];
+}
+
+export const withCookie = (token: string) => ({ cookie: `__Host-cl_session=${token}` });
+export const withBearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+export async function signIn(app: FastifyInstance, email: string, password = PASSWORD, remoteAddress = "203.0.113.1"): Promise<LightMyRequestResponse> {
+  return app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password }, remoteAddress });
+}
+
+export interface SignedUpOwner {
+  email: string;
+  cafeId: string;
+  ownerId: string;
+  session: string;
+}
+
+export interface PairedDevice {
+  deviceId: string;
+  keyId: string;
+  accessToken: string;
+  privateKey: webcrypto.CryptoKey;
+}
+
+/** A device key pair as the counter app makes it: non-extractable private key, public key exported as a JWK. */
+export async function deviceKeyPair(): Promise<{ privateKey: webcrypto.CryptoKey; publicJwk: webcrypto.JsonWebKey }> {
+  const pair = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+  return { privateKey: pair.privateKey, publicJwk: await webcrypto.subtle.exportKey("jwk", pair.publicKey) };
+}
+
+/** A token renewal request signed by the device key, as the counter app sends it. */
+export async function signedRenewal(device: Pick<PairedDevice, "deviceId" | "keyId" | "privateKey">, issuedAt = new Date().toISOString()) {
+  const fields = { deviceId: device.deviceId, keyId: device.keyId, issuedAt };
+  const signature = await webcrypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, device.privateKey, Buffer.from(deviceTokenSigningPayload(fields)));
+  return { ...fields, signature: Buffer.from(signature).toString("base64url") };
+}
+
+/**
+ * Registers a test database for the calling test file (created before its tests, dropped after) and returns
+ * helpers to build apps on it. Each harness() is a fresh app, so rate limits start empty.
+ */
+export function useApiHarness() {
+  let testDb: TestDatabase | undefined;
+  let admin: pg.Client | undefined;
+  const open: Harness[] = [];
+
+  beforeAll(async () => {
+    testDb = await createTestDatabase();
+    admin = new pg.Client({ connectionString: testDb.adminUrl });
+    await admin.connect();
+  });
+
+  afterAll(async () => {
+    await admin?.end();
+    await testDb?.cleanup();
+  });
+
+  afterEach(async () => {
+    for (const created of open.splice(0)) {
+      await created.background.drain();
+      await created.app.close();
+    }
+  });
+
+  const context = {
+    get testDb(): TestDatabase {
+      if (testDb === undefined) {
+        throw new Error("The test database is created in beforeAll; use it inside a test.");
+      }
+      return testDb;
+    },
+    get admin(): pg.Client {
+      if (admin === undefined) {
+        throw new Error("The admin connection is opened in beforeAll; use it inside a test.");
+      }
+      return admin;
+    },
+
+    harness: async (): Promise<Harness> => {
+      const logs: string[] = [];
+      const routes: RegisteredRoute[] = [];
+      const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
+      app.addHook("onRoute", (route) => {
+        for (const method of [route.method].flat()) {
+          routes.push({ method, url: route.url, access: route.config?.access });
+        }
+      });
+      const mailer = new FakeMailer();
+      const background = new BackgroundTasks(app.log);
+      await app.register(apiRoutes, { prefix: "/api", db: context.testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL, counterUrl: COUNTER_URL });
+      await app.ready();
+      const created = { app, mailer, background, logs, routes };
+      open.push(created);
+      return created;
+    },
+
+    invite: (cafeName = "Café Test"): Promise<{ cafeId: string; token: string }> =>
+      createOwnerInvite(context.testDb.app.db, { newCafeName: cafeName }),
+
+    signUp: async (app: FastifyInstance, email = uniqueEmail()): Promise<SignedUpOwner> => {
+      const { token, cafeId } = await context.invite();
+      const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email, password: PASSWORD } });
+      expect(response.statusCode).toBe(201);
+      const body = response.json<{ owner: { id: string } }>();
+      return { email, cafeId, ownerId: body.owner.id, session: cookieToken(response) };
+    },
+
+    /** Creates a pairing code as the owner and pairs a new device with it. */
+    pairDevice: async (app: FastifyInstance, owner: SignedUpOwner, deviceName = "Counter 1"): Promise<PairedDevice> => {
+      const created = await app.inject({ method: "POST", url: "/api/devices/pairing-codes", headers: withCookie(owner.session), payload: { deviceName } });
+      expect(created.statusCode).toBe(201);
+      const { privateKey, publicJwk } = await deviceKeyPair();
+      const paired = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: created.json<{ code: string }>().code, publicKey: publicJwk } });
+      expect(paired.statusCode).toBe(201);
+      const body = paired.json<{ deviceId: string; keyId: string; accessToken: string }>();
+      return { deviceId: body.deviceId, keyId: body.keyId, accessToken: body.accessToken, privateKey };
+    },
+
+    auditActions: async (cafeId: string): Promise<string[]> => {
+      const { rows } = await context.admin.query<{ action: string }>("SELECT action FROM app.audit_log WHERE cafe_id = $1 ORDER BY id", [cafeId]);
+      return rows.map((row) => row.action);
+    },
+  };
+  return context;
+}

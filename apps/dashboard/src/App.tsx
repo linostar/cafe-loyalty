@@ -1,16 +1,33 @@
 import { OWNER_PASSWORD_MIN_LENGTH, ownerSessionSchema, type OwnerSession } from "@cafe-loyalty/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, noContent } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
+import { CafePage } from "./cafe-page.js";
+import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
+import { SessionEndedContext } from "./session.js";
+import { StaffPage } from "./staff-page.js";
 
-type HomeState =
+type SessionState =
   | { status: "loading" }
   | { status: "signed-out"; notice: string | null }
   | { status: "signed-in"; session: OwnerSession }
   | { status: "unavailable"; message: string };
 
-function ChangePasswordForm({ onChanged, onSessionEnded }: { onChanged: () => void; onSessionEnded: (message: string) => void }) {
+/** The signed-in pages, by path; each is behind the session gate. */
+const OWNER_PAGES = [
+  { path: "/", label: "Home" },
+  { path: "/cafe", label: "Café" },
+  { path: "/staff", label: "Staff" },
+  { path: "/devices", label: "Devices" },
+  { path: "/account", label: "Account" },
+] as const;
+
+type OwnerPath = (typeof OWNER_PAGES)[number]["path"];
+
+const isOwnerPath = (path: string): path is OwnerPath => OWNER_PAGES.some((page) => page.path === path);
+
+function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
@@ -25,8 +42,6 @@ function ChangePasswordForm({ onChanged, onSessionEnded }: { onChanged: () => vo
           void submit(() => apiRequest("POST", "/api/auth/password", noContent, { currentPassword, newPassword })).then((result) => {
             if (result.ok) {
               onChanged();
-            } else if (result.error instanceof ApiRequestError && result.error.failure.code === "UNAUTHENTICATED") {
-              onSessionEnded(result.error.message);
             }
           });
         }}
@@ -60,13 +75,35 @@ function ChangePasswordForm({ onChanged, onSessionEnded }: { onChanged: () => vo
   );
 }
 
-function SignedInHome({ session, onSignedOut }: { session: OwnerSession; onSignedOut: (notice: string) => void }) {
+function HomePage({ session }: { session: OwnerSession }) {
+  return (
+    <section aria-labelledby="cafe-title">
+      <h2 id="cafe-title">{session.cafe.name}</h2>
+      <p>Signed in as {session.owner.email}</p>
+      <ul className="items">
+        <li>
+          <a href="/cafe">Café</a>: name, loyalty program and order types
+        </li>
+        <li>
+          <a href="/staff">Staff</a>: baristas and their PINs
+        </li>
+        <li>
+          <a href="/devices">Devices</a>: pair or remove counter phones
+        </li>
+        <li>
+          <a href="/account">Account</a>: password and signing out
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void }) {
   const { pending, error, submit } = useSubmit();
   return (
     <>
-      <section aria-labelledby="cafe-title">
-        <h2 id="cafe-title">{session.cafe.name}</h2>
-        <p>Signed in as {session.owner.email}</p>
+      <section aria-labelledby="account-title">
+        <h2 id="account-title">Account</h2>
         <FormError message={error} />
         <button
           type="button"
@@ -86,16 +123,34 @@ function SignedInHome({ session, onSignedOut }: { session: OwnerSession; onSigne
         onChanged={() => {
           onSignedOut("Your password is changed. Sign in with the new password.");
         }}
-        onSessionEnded={onSignedOut}
       />
     </>
   );
 }
 
-/** `/`: the signed-in owner's home, or the sign-in form. */
-function HomeRoute() {
-  const [state, setState] = useState<HomeState>({ status: "loading" });
+function OwnerNav({ path }: { path: OwnerPath }) {
+  return (
+    <nav aria-label="Dashboard">
+      <ul>
+        {OWNER_PAGES.map((page) => (
+          <li key={page.path}>
+            <a href={page.path} aria-current={page.path === path ? "page" : undefined}>
+              {page.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+/** The owner's pages: checks the session once, shows sign-in when there is none, and the page with its nav when there is. */
+function OwnerArea({ path }: { path: OwnerPath }) {
+  const [state, setState] = useState<SessionState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const signOut = useCallback((notice: string) => {
+    setState({ status: "signed-out", notice });
+  }, []);
 
   useEffect(() => {
     let current = true;
@@ -121,6 +176,7 @@ function HomeRoute() {
     };
   }, [attempt]);
 
+  let content: ReactNode;
   switch (state.status) {
     case "loading":
       return <p role="status">Loading…</p>;
@@ -151,13 +207,28 @@ function HomeRoute() {
         />
       );
     case "signed-in":
+      switch (path) {
+        case "/":
+          content = <HomePage session={state.session} />;
+          break;
+        case "/cafe":
+          content = <CafePage />;
+          break;
+        case "/staff":
+          content = <StaffPage />;
+          break;
+        case "/devices":
+          content = <DevicesPage />;
+          break;
+        case "/account":
+          content = <AccountPage onSignedOut={signOut} />;
+          break;
+      }
       return (
-        <SignedInHome
-          session={state.session}
-          onSignedOut={(notice) => {
-            setState({ status: "signed-out", notice });
-          }}
-        />
+        <SessionEndedContext.Provider value={signOut}>
+          <OwnerNav path={path} />
+          {content}
+        </SessionEndedContext.Provider>
       );
   }
 }
@@ -171,7 +242,7 @@ function Page({ path }: { path: string }) {
     case "/reset-password":
       return <ResetPasswordPage />;
     default:
-      return <HomeRoute />;
+      return <OwnerArea path={isOwnerPath(path) ? path : "/"} />;
   }
 }
 

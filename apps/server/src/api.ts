@@ -1,0 +1,30 @@
+import type { Database } from "@cafe-loyalty/db";
+import type { FastifyInstance } from "fastify";
+import type { Kysely } from "kysely";
+import { registerAccessControl } from "./access.js";
+import type { BackgroundTasks } from "./background.js";
+import { cafeRoutes } from "./cafe-routes.js";
+import { deviceRoutes } from "./device-routes.js";
+import type { Mailer } from "./mailer.js";
+import { ownerAuthRoutes } from "./owner-auth.js";
+import { staffRoutes } from "./staff-routes.js";
+
+export interface ApiOptions {
+  db: Kysely<Database>;
+  mailer: Mailer;
+  background: BackgroundTasks;
+  /** Public dashboard address (invite and reset links). */
+  dashboardUrl: string;
+  /** Public counter app address (pairing QR codes). */
+  counterUrl: string;
+}
+
+/** Every API route, behind the access control each declares. Register with `{ prefix: "/api" }`. */
+export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (error?: Error) => void): void {
+  registerAccessControl(app, options.db);
+  void app.register(ownerAuthRoutes, { prefix: "/auth", db: options.db, mailer: options.mailer, background: options.background, dashboardUrl: options.dashboardUrl });
+  void app.register(cafeRoutes, { db: options.db });
+  void app.register(staffRoutes, { db: options.db });
+  void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl });
+  done();
+}

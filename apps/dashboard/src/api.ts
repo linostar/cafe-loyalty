@@ -32,7 +32,7 @@ function detailsOf(body: string): ErrorDetail[] {
  * Calls the API on this site. Resolves with the parsed body (undefined for 204); rejects with ApiRequestError
  * for an error response, an unreadable response or a network failure.
  */
-export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST", path: string, schema: T, body?: unknown): Promise<z.output<T>> {
+export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, schema: T, body?: unknown): Promise<z.output<T>> {
   let response: Response;
   try {
     response = await fetch(path, {

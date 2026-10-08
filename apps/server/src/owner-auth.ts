@@ -8,40 +8,22 @@ import {
   signupRequestSchema,
   type OwnerSession,
 } from "@cafe-loyalty/shared";
-import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { sql, type Kysely, type Transaction } from "kysely";
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
+import type { Kysely, Transaction } from "kysely";
+import { SESSION_ABSOLUTE_TIMEOUT_SECONDS, SESSION_IDLE_TIMEOUT_SECONDS, findSession, ownerOf } from "./access.js";
 import type { BackgroundTasks } from "./background.js";
 import { clearedSessionCookie, hashPassword, hashToken, newToken, readSessionCookie, sessionCookie, verifyPassword } from "./credentials.js";
+import { audit, isUniqueViolation, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-/** A session ends after this long without a request (AC 15). */
-export const SESSION_IDLE_TIMEOUT_SECONDS = 7 * DAY;
-/** A session ends this long after sign-in however much it is used (AC 15). */
-export const SESSION_ABSOLUTE_TIMEOUT_SECONDS = 30 * DAY;
-/** A session's last-seen time is written at most this often. */
-const SESSION_TOUCH_SECONDS = MINUTE;
 /** A password reset link works for this long (AC 16). */
 export const RESET_TOKEN_TTL_SECONDS = 30 * MINUTE;
 
 export const RESET_REQUESTED_MESSAGE = "If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.";
-
-export interface OwnerContext {
-  sessionId: string;
-  ownerId: string;
-  cafeId: string;
-}
-
-declare module "fastify" {
-  interface FastifyRequest {
-    /** The signed-in owner; set by the requireOwner pre-handler, null on routes without it. */
-    owner: OwnerContext | null;
-  }
-}
 
 export interface OwnerAuthOptions {
   db: Kysely<Database>;
@@ -51,25 +33,11 @@ export interface OwnerAuthOptions {
   dashboardUrl: string;
 }
 
-const now = () => sql<Date>`now()`;
-const secondsFromNow = (seconds: number) => sql<Date>`now() + make_interval(secs => ${seconds})`;
-const secondsAgo = (seconds: number) => sql<Date>`now() - make_interval(secs => ${seconds})`;
-
 const inviteExpired = () => new ApiError("LINK_EXPIRED", "This invite link has expired or was already used. Ask for a new invite.");
 const resetExpired = () => new ApiError("LINK_EXPIRED", "This password reset link has expired or was already used. Request a new one.");
-const sessionEnded = () => new ApiError("UNAUTHENTICATED", "Your session has ended. Sign in again.");
-
-function isUniqueViolation(error: unknown, constraint: string): boolean {
-  const { code, constraint: violated } = error as { code?: unknown; constraint?: unknown };
-  return code === "23505" && violated === constraint;
-}
-
-async function audit(trx: Transaction<Database>, cafeId: string, ownerId: string, action: string, actorType: AuditActorType = "owner"): Promise<void> {
-  await trx
-    .insertInto("audit_log")
-    .values({ cafe_id: cafeId, actor_type: actorType, actor_id: actorType === "owner" ? ownerId : null, action, entity_type: "owner", entity_id: ownerId })
-    .execute();
-}
+/** An audit entry about the owner's own account. */
+const auditOwner = (trx: Transaction<Database>, cafeId: string, ownerId: string, action: string, actorType: AuditActorType = "owner") =>
+  audit(trx, { cafeId, actorType, actorId: actorType === "owner" ? ownerId : null, action, entityType: "owner", entityId: ownerId });
 
 /** Creates a session for the owner (dropping their timed-out ones) and returns its token for the cookie. */
 async function startSession(trx: Transaction<Database>, cafeId: string, ownerId: string): Promise<string> {
@@ -97,14 +65,15 @@ async function loadSession(trx: Transaction<Database>, ownerId: string): Promise
 }
 
 /**
- * Sets a new password and ends everything the old one could reach: every session and every reset link
- * (AC 15, 16). Pairing codes join this list when devices are built (Step 6).
+ * Sets a new password and ends everything the old one could reach: every session, every reset link and every
+ * open pairing code the owner created (AC 15, 16).
  */
 async function setPassword(trx: Transaction<Database>, cafeId: string, ownerId: string, passwordHash: string, action: string): Promise<void> {
   await trx.updateTable("owners").set({ password_hash: passwordHash, password_changed_at: now() }).where("id", "=", ownerId).execute();
   await trx.deleteFrom("owner_sessions").where("owner_id", "=", ownerId).execute();
   await trx.deleteFrom("password_reset_tokens").where("owner_id", "=", ownerId).execute();
-  await audit(trx, cafeId, ownerId, action);
+  await trx.deleteFrom("pairing_codes").where("owner_id", "=", ownerId).execute();
+  await auditOwner(trx, cafeId, ownerId, action);
 }
 
 export function passwordResetEmail(to: string, link: string): EmailMessage {
@@ -123,7 +92,7 @@ export function passwordResetEmail(to: string, link: string): EmailMessage {
   };
 }
 
-/** Owner accounts (AC 15, 16): register with `{ prefix: "/api/auth" }`. */
+/** Owner accounts (AC 15, 16): registered by apiRoutes under `/api/auth`. */
 export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions, done: (error?: Error) => void): void {
   const { db, mailer, background } = options;
   const limits = {
@@ -146,43 +115,6 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     }
   }
 
-  async function findSession(token: string): Promise<(OwnerContext & { lastSeenAt: Date }) | undefined> {
-    const tokenHash = hashToken(token);
-    return withLookup(db, { secretHash: tokenHash }, (trx) =>
-      trx
-        .selectFrom("owner_sessions")
-        .select(["id as sessionId", "owner_id as ownerId", "cafe_id as cafeId", "last_seen_at as lastSeenAt"])
-        .where("token_hash", "=", tokenHash)
-        .where("expires_at", ">", now())
-        .where("last_seen_at", ">", secondsAgo(SESSION_IDLE_TIMEOUT_SECONDS))
-        .executeTakeFirst(),
-    );
-  }
-
-  async function requireOwner(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const token = readSessionCookie(request.headers.cookie);
-    const session = token === undefined ? undefined : await findSession(token);
-    if (session === undefined) {
-      if (token !== undefined) {
-        void reply.header("set-cookie", clearedSessionCookie);
-      }
-      throw sessionEnded();
-    }
-    if (Date.now() - session.lastSeenAt.getTime() > SESSION_TOUCH_SECONDS * 1000) {
-      await withCafe(db, session.cafeId, (trx) =>
-        trx.updateTable("owner_sessions").set({ last_seen_at: now() }).where("id", "=", session.sessionId).execute(),
-      );
-    }
-    request.owner = { sessionId: session.sessionId, ownerId: session.ownerId, cafeId: session.cafeId };
-  }
-
-  function ownerOf(request: FastifyRequest): OwnerContext {
-    if (request.owner === null) {
-      throw sessionEnded();
-    }
-    return request.owner;
-  }
-
   async function sendPasswordReset(email: string, log: FastifyBaseLogger): Promise<void> {
     const owner = await withLookup(db, { ownerEmail: email }, (trx) =>
       trx.selectFrom("owners").select(["id", "cafe_id"]).where("email", "=", email).executeTakeFirst(),
@@ -200,7 +132,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
         .insertInto("password_reset_tokens")
         .values({ cafe_id: owner.cafe_id, owner_id: owner.id, token_hash: hashToken(token), expires_at: secondsFromNow(RESET_TOKEN_TTL_SECONDS) })
         .execute();
-      await audit(trx, owner.cafe_id, owner.id, "owner.password_reset_requested", "system");
+      await auditOwner(trx, owner.cafe_id, owner.id, "owner.password_reset_requested", "system");
     });
     const link = new URL("/reset-password", options.dashboardUrl);
     // In the fragment, which browsers never send to a server or put in a Referer header.
@@ -214,14 +146,8 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     log.info({ cafeId: owner.cafe_id, ownerId: owner.id }, "password reset email sent");
   }
 
-  app.decorateRequest("owner", null);
-  app.addHook("onRequest", (_request, reply, next) => {
-    void reply.header("cache-control", "no-store");
-    next();
-  });
-
   /** Claims an operator invite: creates the owner of the invite's café and signs them in. */
-  app.post("/signup", async (request, reply) => {
+  app.post("/signup", { config: { access: "public" } }, async (request, reply) => {
     enforce(limits.signupPerIp, clientKey(request.ip), reply);
     const body = parseInput(signupRequestSchema, request.body);
     const inviteHash = hashToken(body.inviteToken);
@@ -256,7 +182,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
           .values({ cafe_id: invite.cafe_id, email: body.email, password_hash: passwordHash })
           .returning("id")
           .executeTakeFirstOrThrow();
-        await audit(trx, invite.cafe_id, owner.id, "owner.signed_up");
+        await auditOwner(trx, invite.cafe_id, owner.id, "owner.signed_up");
         const token = await startSession(trx, invite.cafe_id, owner.id);
         return { token, session: await loadSession(trx, owner.id) };
       });
@@ -271,7 +197,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     return reply.code(201).header("set-cookie", sessionCookie(created.token, SESSION_ABSOLUTE_TIMEOUT_SECONDS)).send(created.session);
   });
 
-  app.post("/login", async (request, reply) => {
+  app.post("/login", { config: { access: "public" } }, async (request, reply) => {
     const client = clientKey(request.ip);
     enforce(limits.loginPerIp, client, reply);
     const body = parseInput(loginRequestSchema, request.body);
@@ -303,26 +229,26 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
         throw new ApiError("UNAUTHENTICATED", "The email or password is wrong. Try again, or reset your password.");
       }
       const token = await startSession(trx, owner.cafe_id, owner.id);
-      await audit(trx, owner.cafe_id, owner.id, "owner.signed_in");
+      await auditOwner(trx, owner.cafe_id, owner.id, "owner.signed_in");
       return { token, session: await loadSession(trx, owner.id) };
     });
     request.log.info({ cafeId: owner.cafe_id, ownerId: owner.id }, "owner signed in");
     return reply.header("set-cookie", sessionCookie(created.token, SESSION_ABSOLUTE_TIMEOUT_SECONDS)).send(created.session);
   });
 
-  app.get("/session", { preHandler: requireOwner }, async (request) => {
+  app.get("/session", { config: { access: "owner" } }, async (request) => {
     const owner = ownerOf(request);
     return withCafe(db, owner.cafeId, (trx) => loadSession(trx, owner.ownerId));
   });
 
   /** Ends every session of the owner, not only this one (AC 15). Always clears the cookie. */
-  app.post("/logout", async (request, reply) => {
+  app.post("/logout", { config: { access: "public" } }, async (request, reply) => {
     const token = readSessionCookie(request.headers.cookie);
-    const session = token === undefined ? undefined : await findSession(token);
+    const session = token === undefined ? undefined : await findSession(db, token);
     if (session !== undefined) {
       await withCafe(db, session.cafeId, async (trx) => {
         await trx.deleteFrom("owner_sessions").where("owner_id", "=", session.ownerId).execute();
-        await audit(trx, session.cafeId, session.ownerId, "owner.signed_out");
+        await auditOwner(trx, session.cafeId, session.ownerId, "owner.signed_out");
       });
       request.log.info({ cafeId: session.cafeId, ownerId: session.ownerId }, "owner signed out");
     }
@@ -330,7 +256,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
   });
 
   /** Changes the password and ends every session, this one included (AC 15). */
-  app.post("/password", { preHandler: requireOwner }, async (request, reply) => {
+  app.post("/password", { config: { access: "owner" } }, async (request, reply) => {
     const owner = ownerOf(request);
     enforce(limits.passwordChangePerOwner, owner.ownerId, reply);
     const body = parseInput(passwordChangeRequestSchema, request.body);
@@ -350,7 +276,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
    * Starts a password reset. The reply is the same whether or not the email has an account, and it is sent
    * before any lookup, so its timing cannot tell either (AC 16); the lookup and the email run afterwards.
    */
-  app.post("/password-reset", async (request, reply) => {
+  app.post("/password-reset", { config: { access: "public" } }, async (request, reply) => {
     enforce(limits.resetRequestPerIp, clientKey(request.ip), reply);
     const body = parseInput(passwordResetRequestSchema, request.body);
     enforce(limits.resetRequestPerAccount, body.email, reply);
@@ -360,7 +286,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
   });
 
   /** Sets a new password from a reset link: single-use, and it ends every session (AC 16). */
-  app.post("/password-reset/complete", async (request, reply) => {
+  app.post("/password-reset/complete", { config: { access: "public" } }, async (request, reply) => {
     enforce(limits.resetCompletePerIp, clientKey(request.ip), reply);
     const body = parseInput(passwordResetCompleteRequestSchema, request.body);
     const tokenHash = hashToken(body.token);

@@ -22,6 +22,7 @@ test("signs in, shows the café and signs out", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Café Najjar" })).toBeVisible();
   await expect(page.getByText("Signed in as rana@example.com")).toBeVisible();
 
+  await page.getByRole("navigation", { name: "Dashboard" }).getByRole("link", { name: "Account" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("status")).toHaveText("You signed out on every device.");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
@@ -120,7 +121,7 @@ test("requests a reset link and sets a new password from it", async ({ page }) =
 
 test("changes the password and returns to sign-in", async ({ page }) => {
   await mockApi(page, { "GET /api/auth/session": reply(200, SESSION), "POST /api/auth/password": reply(204) });
-  await page.goto("/");
+  await page.goto("/account");
   await page.getByLabel("Current password", { exact: true }).fill("correct horse battery");
   await page.getByLabel("New password", { exact: true }).fill("a brand new password");
   await page.getByRole("button", { name: "Change password" }).click();
@@ -143,7 +144,7 @@ test("treats a proxy's HTML error page as a retryable failure", async ({ page })
 
 test("returns to sign-in when the session ended before a password change", async ({ page }) => {
   await mockApi(page, { "GET /api/auth/session": reply(200, SESSION), "POST /api/auth/password": reply(401, UNAUTHENTICATED) });
-  await page.goto("/");
+  await page.goto("/account");
   await page.getByLabel("Current password", { exact: true }).fill("correct horse battery");
   await page.getByLabel("New password", { exact: true }).fill("a brand new password");
   await page.getByRole("button", { name: "Change password" }).click();

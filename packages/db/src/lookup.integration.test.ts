@@ -178,3 +178,95 @@ describe("secret-keyed policies", () => {
     expect(code).toBe("23505");
   });
 });
+
+describe("device lookups", () => {
+  interface SeededDevice {
+    cafeId: string;
+    deviceId: string;
+    keyId: string;
+    tokenHash: Buffer;
+    pairingLookupHash: Buffer;
+  }
+  let deviceA: SeededDevice;
+  let deviceB: SeededDevice;
+
+  async function seedDevice(cafe: SeededCafe): Promise<SeededDevice> {
+    const seeded = {
+      cafeId: cafe.cafeId,
+      deviceId: randomUUID(),
+      keyId: randomUUID(),
+      tokenHash: hashOf(randomBytes(32)),
+      pairingLookupHash: hashOf(randomBytes(32)),
+    };
+    const later = new Date(Date.now() + 3_600_000);
+    await withCafe(testDb.app.db, cafe.cafeId, async (trx) => {
+      await trx.insertInto("devices").values({ id: seeded.deviceId, cafe_id: cafe.cafeId, name: "Counter" }).execute();
+      await trx
+        .insertInto("device_keys")
+        .values({ id: seeded.keyId, cafe_id: cafe.cafeId, device_id: seeded.deviceId, public_key: JSON.stringify({ kty: "EC", crv: "P-256", x: "x", y: "y" }) })
+        .execute();
+      await trx.insertInto("device_tokens").values({ cafe_id: cafe.cafeId, device_id: seeded.deviceId, token_hash: seeded.tokenHash, expires_at: later }).execute();
+      await trx
+        .insertInto("pairing_codes")
+        .values({
+          cafe_id: cafe.cafeId,
+          owner_id: cafe.ownerId,
+          device_name: "Counter 2",
+          lookup_hash: seeded.pairingLookupHash,
+          secret_hash: hashOf(randomBytes(32)),
+          expires_at: later,
+        })
+        .execute();
+    });
+    return seeded;
+  }
+
+  async function deviceCounts(key: Parameters<typeof withLookup>[1]): Promise<Record<string, number>> {
+    return withLookup(testDb.app.db, key, async (trx) => {
+      const counts: Record<string, number> = {};
+      for (const table of ["devices", "device_keys", "device_tokens", "pairing_codes", "staff"] as const) {
+        const result = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)}`.execute(trx);
+        counts[table] = result.rows[0]?.n ?? -1;
+      }
+      return counts;
+    });
+  }
+
+  const none = { devices: 0, device_keys: 0, device_tokens: 0, pairing_codes: 0, staff: 0 };
+
+  beforeAll(async () => {
+    deviceA = await seedDevice(cafeA);
+    deviceB = await seedDevice(cafeB);
+  });
+
+  it("show only the device key with that id", async () => {
+    const keys = await withLookup(testDb.app.db, { deviceKeyId: deviceB.keyId.toUpperCase() }, (trx) =>
+      trx.selectFrom("device_keys").select(["id", "cafe_id", "device_id"]).execute(),
+    );
+    expect(keys).toEqual([{ id: deviceB.keyId, cafe_id: deviceB.cafeId, device_id: deviceB.deviceId }]);
+    expect(await deviceCounts({ deviceKeyId: deviceB.keyId })).toEqual({ ...none, device_keys: 1 });
+    expect(await deviceCounts({ deviceKeyId: randomUUID() })).toEqual(none);
+  });
+
+  it("show only the device token or pairing code with that hash", async () => {
+    expect(await deviceCounts({ secretHash: deviceA.tokenHash })).toEqual({ ...none, device_tokens: 1 });
+    expect(await deviceCounts({ secretHash: deviceA.pairingLookupHash })).toEqual({ ...none, pairing_codes: 1 });
+  });
+
+  it("reject a device key id that is not a UUID before touching the database", async () => {
+    await expect(withLookup(testDb.app.db, { deviceKeyId: "key-1" }, () => Promise.resolve(1))).rejects.toThrow(TenantContextError);
+  });
+
+  it("never let a café change another café's device rows, even holding their key id or hashes", async () => {
+    const affected = await withCafe(testDb.app.db, cafeA.cafeId, async (trx) => {
+      await sql`SELECT set_config('app.device_key_id', ${deviceB.keyId}, true)`.execute(trx);
+      const tokens = await trx.deleteFrom("device_tokens").where("cafe_id", "=", cafeB.cafeId).executeTakeFirst();
+      await sql`SELECT set_config('app.secret_hash', ${deviceB.pairingLookupHash.toString("hex")}, true)`.execute(trx);
+      const burned = await trx.updateTable("pairing_codes").set({ failed_attempts: 5 }).where("cafe_id", "=", cafeB.cafeId).executeTakeFirst();
+      const deleted = await trx.deleteFrom("pairing_codes").where("cafe_id", "=", cafeB.cafeId).executeTakeFirst();
+      const revoked = await trx.updateTable("devices").set({ revoked_at: new Date() }).where("id", "=", deviceB.deviceId).executeTakeFirst();
+      return { tokens: tokens.numDeletedRows, burned: burned.numUpdatedRows, deleted: deleted.numDeletedRows, revoked: revoked.numUpdatedRows };
+    });
+    expect(affected).toEqual({ tokens: 0n, burned: 0n, deleted: 0n, revoked: 0n });
+  });
+});

@@ -3,13 +3,15 @@ import { z } from "zod";
 
 const flag = z.enum(["true", "false"]).transform((value) => value === "true");
 
-/** The dashboard's origin: links are built as `/signup`, `/reset-password` on it, so it must have no path. */
-export const dashboardUrlSchema = z
-  .url({ protocol: /^https?$/ })
-  .refine((value) => {
+/** A web app's origin. Links are built as paths on it (`/signup`, `/pair`), so it must have no path of its own. */
+const originSchema = (app: string, example: string) =>
+  z.url({ protocol: /^https?$/ }).refine((value) => {
     const url = new URL(value);
     return url.pathname === "/" && url.search === "" && url.hash === "";
-  }, "Use the dashboard's address without a path, such as https://dashboard.example.com.");
+  }, `Use the ${app}'s address without a path, such as ${example}.`);
+
+export const dashboardUrlSchema = originSchema("dashboard", "https://dashboard.example.com");
+export const counterUrlSchema = originSchema("counter app", "https://counter.example.com");
 
 const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]),
@@ -22,6 +24,8 @@ const serverEnvSchema = z.object({
   DATABASE_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(100).default(10),
   /** Public address of the owner dashboard, used in emailed links. */
   DASHBOARD_URL: dashboardUrlSchema,
+  /** Public address of the counter app; pairing QR codes open its /pair page. */
+  COUNTER_URL: counterUrlSchema,
   /**
    * Number of reverse proxies in front of the server (Caddy: 1), so rate limits see the client's address.
    * Required in production: left at 0 behind a proxy, every client would share the proxy's rate limits.
@@ -43,8 +47,10 @@ const serverEnvSchema = z.object({
     if (env.TRUST_PROXY_HOPS === undefined) {
       context.addIssue({ code: "custom", path: ["TRUST_PROXY_HOPS"], message: "Set it in production (1 behind Caddy)." });
     }
-    if (new URL(env.DASHBOARD_URL).protocol !== "https:") {
-      context.addIssue({ code: "custom", path: ["DASHBOARD_URL"], message: "Use an https address in production." });
+    for (const key of ["DASHBOARD_URL", "COUNTER_URL"] as const) {
+      if (new URL(env[key]).protocol !== "https:") {
+        context.addIssue({ code: "custom", path: [key], message: "Use an https address in production." });
+      }
     }
   })
   .transform((env) => ({ ...env, TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS ?? 0 }));

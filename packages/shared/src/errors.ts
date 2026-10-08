@@ -19,6 +19,8 @@ export const ERROR_CODES = {
   FORBIDDEN: { status: 403, retryable: false },
   NOT_FOUND: { status: 404, retryable: false },
   CONFLICT: { status: 409, retryable: false },
+  /** A pairing code that is wrong, used, expired or burned by wrong tries: create a new one on the dashboard (AC 17). */
+  PAIRING_CODE_INVALID: { status: 400, retryable: false },
   /** An invite or password reset link that is unknown, already used or expired: ask for a new one. */
   LINK_EXPIRED: { status: 410, retryable: false },
   PAYLOAD_TOO_LARGE: { status: 413, retryable: false },

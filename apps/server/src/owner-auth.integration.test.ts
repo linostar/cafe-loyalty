@@ -1,113 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
-import type { FastifyInstance, LightMyRequestResponse } from "fastify";
-import pg from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { buildApp } from "./app.js";
-import { BackgroundTasks } from "./background.js";
+import type { LightMyRequestResponse } from "fastify";
+import { describe, expect, it } from "vitest";
 import { hashToken, newToken } from "./credentials.js";
 import { createOwnerInvite } from "./invites.js";
-import { EmailDeliveryError, type EmailMessage, type Mailer } from "./mailer.js";
-import { RESET_REQUESTED_MESSAGE, ownerAuthRoutes } from "./owner-auth.js";
+import { EmailDeliveryError, type EmailMessage } from "./mailer.js";
+import { RESET_REQUESTED_MESSAGE } from "./owner-auth.js";
+import { PASSWORD, cookieToken, signIn, uniqueEmail, useApiHarness, withCookie, type Harness } from "./testing/api-harness.js";
 
-const DASHBOARD_URL = "https://dashboard.example.test";
-const PASSWORD = "correct horse battery";
-
-class FakeMailer implements Mailer {
-  readonly sent: EmailMessage[] = [];
-  /** When set, send waits for it, to show that a request does not wait for its email. */
-  gate: Promise<void> | undefined;
-  failWith: Error | undefined;
-
-  async send(message: EmailMessage): Promise<void> {
-    await this.gate;
-    if (this.failWith !== undefined) {
-      throw this.failWith;
-    }
-    this.sent.push(message);
-  }
-
-  close(): void {
-    // Nothing to release.
-  }
-}
-
-interface Harness {
-  app: FastifyInstance;
-  mailer: FakeMailer;
-  background: BackgroundTasks;
-  logs: string[];
-}
-
-let testDb: TestDatabase;
-let admin: pg.Client;
-const open: Harness[] = [];
-
-beforeAll(async () => {
-  testDb = await createTestDatabase();
-  admin = new pg.Client({ connectionString: testDb.adminUrl });
-  await admin.connect();
-});
-
-afterAll(async () => {
-  await admin.end();
-  await testDb.cleanup();
-});
-
-afterEach(async () => {
-  for (const harness of open.splice(0)) {
-    await harness.background.drain();
-    await harness.app.close();
-  }
-});
-
-/** A fresh app (with fresh rate limits) on the shared test database. */
-async function harness(): Promise<Harness> {
-  const logs: string[] = [];
-  const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
-  const mailer = new FakeMailer();
-  const background = new BackgroundTasks(app.log);
-  await app.register(ownerAuthRoutes, { prefix: "/api/auth", db: testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL });
-  await app.ready();
-  const created = { app, mailer, background, logs };
-  open.push(created);
-  return created;
-}
-
-const uniqueEmail = (): string => `owner-${randomUUID()}@example.com`;
-
-function cookieToken(response: LightMyRequestResponse): string {
-  const header = response.headers["set-cookie"];
-  const value = Array.isArray(header) ? header[0] : header;
-  const match = /^__Host-cl_session=([A-Za-z0-9_-]{43});/.exec(value ?? "");
-  if (match?.[1] === undefined) {
-    throw new Error(`No session cookie in the response (status ${String(response.statusCode)}).`);
-  }
-  return match[1];
-}
-
-const withCookie = (token: string) => ({ cookie: `__Host-cl_session=${token}` });
-
-async function invite(cafeName = "Café Test"): Promise<{ cafeId: string; token: string }> {
-  return createOwnerInvite(testDb.app.db, { newCafeName: cafeName });
-}
-
-async function signUp(app: FastifyInstance, email = uniqueEmail()): Promise<{ email: string; cafeId: string; ownerId: string; session: string }> {
-  const { token, cafeId } = await invite();
-  const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email, password: PASSWORD } });
-  expect(response.statusCode).toBe(201);
-  const body = response.json<{ owner: { id: string } }>();
-  return { email, cafeId, ownerId: body.owner.id, session: cookieToken(response) };
-}
-
-async function signIn(app: FastifyInstance, email: string, password = PASSWORD, remoteAddress = "203.0.113.1"): Promise<LightMyRequestResponse> {
-  return app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password }, remoteAddress });
-}
-
-async function auditActions(cafeId: string): Promise<string[]> {
-  const { rows } = await admin.query<{ action: string }>("SELECT action FROM app.audit_log WHERE cafe_id = $1 ORDER BY id", [cafeId]);
-  return rows.map((row) => row.action);
-}
+const context = useApiHarness();
+const { harness, invite, signUp, auditActions } = context;
 
 describe("signup", () => {
   it("creates the invited café's owner and signs them in", async () => {
@@ -128,7 +29,7 @@ describe("signup", () => {
     expect(session.statusCode).toBe(200);
     expect(session.json()).toEqual(body);
 
-    const stored = await admin.query<{ password_hash: string }>("SELECT password_hash FROM app.owners WHERE id = $1", [body.owner.id]);
+    const stored = await context.admin.query<{ password_hash: string }>("SELECT password_hash FROM app.owners WHERE id = $1", [body.owner.id]);
     expect(stored.rows[0]?.password_hash).toMatch(/^\$argon2id\$/);
     expect(await auditActions(cafeId)).toEqual(["cafe.created", "owner_invite.created", "owner.signed_up"]);
   });
@@ -146,7 +47,7 @@ describe("signup", () => {
   it("refuses an expired or unknown invite", async () => {
     const { app } = await harness();
     const { token } = await invite();
-    await admin.query("UPDATE app.owner_invites SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [hashToken(token)]);
+    await context.admin.query("UPDATE app.owner_invites SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [hashToken(token)]);
     for (const inviteToken of [token, newToken()]) {
       const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken, email: uniqueEmail(), password: PASSWORD } });
       expect(response.statusCode).toBe(410);
@@ -177,11 +78,11 @@ describe("invites", () => {
   it("can be issued again for an existing café, and never for an unknown one", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    const again = await createOwnerInvite(testDb.app.db, { cafeId: owner.cafeId });
+    const again = await createOwnerInvite(context.testDb.app.db, { cafeId: owner.cafeId });
     const second = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: again.token, email: uniqueEmail(), password: PASSWORD } });
     expect(second.statusCode).toBe(201);
     expect(second.json()).toMatchObject({ cafe: { id: owner.cafeId } });
-    await expect(createOwnerInvite(testDb.app.db, { cafeId: randomUUID() })).rejects.toThrow("No café has this id.");
+    await expect(createOwnerInvite(context.testDb.app.db, { cafeId: randomUUID() })).rejects.toThrow("No café has this id.");
   });
 });
 
@@ -276,7 +177,7 @@ describe("sessions", () => {
   it("end after 7 days idle and clear the cookie", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    await admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '7 days 1 second' WHERE token_hash = $1", [hashToken(owner.session)]);
+    await context.admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '7 days 1 second' WHERE token_hash = $1", [hashToken(owner.session)]);
     const response = await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) });
     expect(response.statusCode).toBe(401);
     expect(response.headers["set-cookie"]).toContain("Max-Age=0");
@@ -285,16 +186,16 @@ describe("sessions", () => {
   it("end at their absolute expiry however recently used", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    await admin.query("UPDATE app.owner_sessions SET expires_at = now() - interval '1 second', last_seen_at = now() WHERE token_hash = $1", [hashToken(owner.session)]);
+    await context.admin.query("UPDATE app.owner_sessions SET expires_at = now() - interval '1 second', last_seen_at = now() WHERE token_hash = $1", [hashToken(owner.session)]);
     expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) })).statusCode).toBe(401);
   });
 
   it("record use, so an active session stays open", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    await admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '6 days' WHERE token_hash = $1", [hashToken(owner.session)]);
+    await context.admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '6 days' WHERE token_hash = $1", [hashToken(owner.session)]);
     expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) })).statusCode).toBe(200);
-    const { rows } = await admin.query<{ recent: boolean }>(
+    const { rows } = await context.admin.query<{ recent: boolean }>(
       "SELECT last_seen_at > now() - interval '1 minute' AS recent FROM app.owner_sessions WHERE token_hash = $1",
       [hashToken(owner.session)],
     );
@@ -304,7 +205,7 @@ describe("sessions", () => {
   it("are stored as hashes only", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    const { rows } = await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.owner_sessions WHERE token_hash = $1", [
+    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.owner_sessions WHERE token_hash = $1", [
       Buffer.from(owner.session),
     ]);
     expect(rows[0]?.n).toBe(0);
@@ -363,7 +264,7 @@ describe("password change", () => {
     for (const token of [owner.session, other]) {
       expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(token) })).statusCode).toBe(401);
     }
-    const resets = await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
+    const resets = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
     expect(resets.rows[0]?.n).toBe(0);
     expect((await signIn(app, owner.email)).statusCode).toBe(401);
     expect((await signIn(app, owner.email, "a brand new password")).statusCode).toBe(200);
@@ -419,7 +320,7 @@ describe("password reset", () => {
     const owner = await signUp(h.app);
     await requestReset(h, owner.email);
     const token = linkToken(h.mailer.sent[0]);
-    const { rows } = await admin.query<{ token_hash: Buffer; lifetime_seconds: number }>(
+    const { rows } = await context.admin.query<{ token_hash: Buffer; lifetime_seconds: number }>(
       "SELECT token_hash, extract(epoch FROM expires_at - created_at)::int AS lifetime_seconds FROM app.password_reset_tokens WHERE owner_id = $1",
       [owner.ownerId],
     );
@@ -456,7 +357,7 @@ describe("password reset", () => {
     const h = await harness();
     const owner = await signUp(h.app);
     await requestReset(h, owner.email);
-    await admin.query("UPDATE app.password_reset_tokens SET expires_at = now() - interval '1 second' WHERE owner_id = $1", [owner.ownerId]);
+    await context.admin.query("UPDATE app.password_reset_tokens SET expires_at = now() - interval '1 second' WHERE owner_id = $1", [owner.ownerId]);
     const response = await h.app.inject({
       method: "POST",
       url: "/api/auth/password-reset/complete",
@@ -470,7 +371,7 @@ describe("password reset", () => {
     const owner = await signUp(h.app);
     await Promise.all([1, 2, 3].map(() => h.app.inject({ method: "POST", url: "/api/auth/password-reset", payload: { email: owner.email } })));
     await h.background.drain();
-    const { rows } = await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
+    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
     expect(rows[0]?.n).toBe(1);
   });
 
