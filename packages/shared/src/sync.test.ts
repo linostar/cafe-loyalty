@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_SYNC_BATCH,
+  SYNC_EVENT_SIGNING_PREFIX,
   SYNC_RESULT_CODES,
-  canonicalEventJson,
   isFinalSyncStatus,
   parseSyncEvent,
   readSyncResponse,
   syncRequestSchema,
   syncResponseSchema,
+  syncEventSigningPayload,
   syncResult,
 } from "./sync.js";
 
@@ -120,21 +121,33 @@ describe("parseSyncEvent", () => {
   });
 });
 
-describe("canonicalEventJson", () => {
-  it("sorts keys at every level and leaves out the signature", () => {
-    const a = canonicalEventJson({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: "x" }, signature: "s1" });
-    const b = canonicalEventJson({ signature: "s2", a: { c: "x", d: [3, { y: 2, z: 1 }] }, b: 1 });
+describe("syncEventSigningPayload", () => {
+  it("prefixes, sorts keys at every level and leaves out the signature", () => {
+    const a = syncEventSigningPayload({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: "x" }, signature: "s1" });
+    const b = syncEventSigningPayload({ signature: "s2", a: { c: "x", d: [3, { y: 2, z: 1 }] }, b: 1 });
     expect(a).toBe(b);
-    expect(a).toBe('{"a":{"c":"x","d":[3,{"y":2,"z":1}]},"b":1}');
+    expect(a).toBe(`${SYNC_EVENT_SIGNING_PREFIX}{"a":{"c":"x","d":[3,{"y":2,"z":1}]},"b":1}`);
   });
 
   it("covers fields the server does not know, so newer builds verify and hash consistently", () => {
-    expect(canonicalEventJson(visitEvent({ fromNewerBuild: true }))).not.toBe(canonicalEventJson(visitEvent()));
+    expect(syncEventSigningPayload(visitEvent({ fromNewerBuild: true }))).not.toBe(syncEventSigningPayload(visitEvent()));
+  });
+
+  it("keeps an own __proto__ key from parsed JSON as data", () => {
+    const parsed: unknown = JSON.parse('{"__proto__":{"polluted":true},"a":1}');
+    expect(syncEventSigningPayload(parsed)).toBe(`${SYNC_EVENT_SIGNING_PREFIX}{"__proto__":{"polluted":true},"a":1}`);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("accepts only plain objects", () => {
+    expect(() => syncEventSigningPayload([1, 2])).toThrow(TypeError);
+    expect(() => syncEventSigningPayload(new Date())).toThrow(TypeError);
+    expect(() => syncEventSigningPayload("event")).toThrow(TypeError);
   });
 
   it("refuses values JSON cannot represent exactly", () => {
-    expect(() => canonicalEventJson({ amount: Number.NaN })).toThrow(TypeError);
-    expect(() => canonicalEventJson({ when: () => 1 })).toThrow(TypeError);
+    expect(() => syncEventSigningPayload({ amount: Number.NaN })).toThrow(TypeError);
+    expect(() => syncEventSigningPayload({ when: () => 1 })).toThrow(TypeError);
   });
 });
 

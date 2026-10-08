@@ -9,9 +9,9 @@ import { e164PhoneSchema } from "./phone.js";
  * server keeps accepting every version a counter build inside the support window can send (AC 26, AC 27). Within
  * a version, unknown fields are stripped, so new data must never be added to an existing version.
  *
- * Signing and idempotency: the device signs `canonicalEventJson(raw)` and the server verifies the signature and
- * computes the idempotency payload hash (AC 24) over the same raw event, before any field is stripped, so builds
- * with extra fields verify and hash consistently.
+ * Signing and idempotency: the device signs `syncEventSigningPayload(raw)` and the server verifies the signature and
+ * computes the idempotency payload hash (AC 24) over the same bytes of the raw event, before any field is stripped,
+ * so builds with extra fields verify and hash consistently.
  */
 
 /** Most events one sync request may carry. It may only ever grow: older builds send batches up to this size. */
@@ -161,12 +161,27 @@ export function parseSyncEvent(raw: unknown): ParsedSyncEvent {
   return { status: "valid", event: event.data };
 }
 
+/** Domain-separation prefix: a device-key signature over a sync event can never be valid in any other context. */
+export const SYNC_EVENT_SIGNING_PREFIX = "cafe-loyalty/sync-event/v1\n";
+
 /**
- * The bytes a device signs and the server verifies and hashes: the raw event as JSON with object keys sorted at
- * every level and without the top-level `signature`. Throws on values JSON cannot represent exactly.
+ * The text a device signs (UTF-8 encoded) and the server verifies and hashes: the prefix, then the raw event as
+ * JSON with object keys sorted at every level and without the top-level `signature`. Accepts only a plain object;
+ * throws on values JSON cannot represent exactly.
  */
-export function canonicalEventJson(raw: Readonly<Record<string, unknown>>): string {
-  return canonicalJson(Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "signature")));
+export function syncEventSigningPayload(raw: unknown): string {
+  if (!isPlainObject(raw)) {
+    throw new TypeError("A sync event must be a plain object.");
+  }
+  return SYNC_EVENT_SIGNING_PREFIX + canonicalJson(Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "signature")));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function canonicalJson(value: unknown): string {

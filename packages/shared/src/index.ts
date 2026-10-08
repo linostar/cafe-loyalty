@@ -18,15 +18,16 @@ export { e164PhoneSchema, type E164Phone } from "./phone.js";
 export { formatStartupFailure } from "./startup.js";
 export {
   MAX_SYNC_BATCH,
+  SYNC_EVENT_SIGNING_PREFIX,
   SYNC_RESULT_CODES,
   SYNC_STATUSES,
-  canonicalEventJson,
   cardReferenceSchema,
   isFinalSyncStatus,
   parseSyncEvent,
   readSyncResponse,
   syncRequestSchema,
   syncResponseSchema,
+  syncEventSigningPayload,
   syncResult,
   syncResultSchema,
   syncSignatureSchema,
