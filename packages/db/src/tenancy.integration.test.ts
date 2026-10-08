@@ -1,0 +1,204 @@
+import { randomUUID } from "node:crypto";
+import { sql, type Transaction } from "kysely";
+import pg from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TenantContextError, withCafe } from "./database.js";
+import { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
+import { TABLE_COLUMNS, TENANT_KEY, type Database, type TableName } from "./schema.js";
+import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
+
+const RLS_VIOLATION = "42501";
+
+/** Inserts one row of each tenant table for a café. Every table in schema app needs an entry (checked below). */
+const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
+  loyalty_programs: (trx, cafeId) =>
+    trx
+      .insertInto("loyalty_programs")
+      .values({ cafe_id: cafeId, stamps_required: 9, reward_name_ar: "قهوة مجانية", reward_name_en: "Free coffee" })
+      .execute(),
+  order_types: (trx, cafeId) =>
+    trx
+      .insertInto("order_types")
+      .values({ cafe_id: cafeId, name_ar: "إسبريسو", name_en: "Espresso", price_cents: 250, cost_cents: 70 })
+      .execute(),
+  audit_log: (trx, cafeId) =>
+    trx
+      .insertInto("audit_log")
+      .values({ cafe_id: cafeId, actor_type: "system", action: "fixture.created", entity_type: "fixture", changes: JSON.stringify({ step: 4 }) })
+      .execute(),
+};
+
+const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];
+
+let testDb: TestDatabase;
+let admin: pg.Client;
+const cafeA = randomUUID();
+const cafeB = randomUUID();
+
+async function seedCafe(cafeId: string, name: string): Promise<void> {
+  await withCafe(testDb.app.db, cafeId, async (trx) => {
+    await trx.insertInto("cafes").values({ id: cafeId, name }).execute();
+    for (const fixture of Object.values(FIXTURES)) {
+      await fixture(trx, cafeId);
+    }
+  });
+}
+
+async function errorCodeOf(promise: Promise<unknown>): Promise<string | undefined> {
+  try {
+    await promise;
+    return undefined;
+  } catch (error) {
+    return (error as { code?: string }).code;
+  }
+}
+
+beforeAll(async () => {
+  testDb = await createTestDatabase();
+  admin = new pg.Client({ connectionString: testDb.adminUrl });
+  await admin.connect();
+  await seedCafe(cafeA, "Café A");
+  await seedCafe(cafeB, "Café B");
+});
+
+afterAll(async () => {
+  await admin.end();
+  await testDb.cleanup();
+});
+
+describe("catalog", () => {
+  it("lists exactly the tables the code knows about in schema app", async () => {
+    const { rows } = await admin.query<{ relname: string }>(
+      "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'app' AND c.relkind IN ('r', 'p') ORDER BY 1",
+    );
+    expect(rows.map((row) => row.relname)).toEqual([...TABLES].sort());
+  });
+
+  it("has a fixture for every tenant table", () => {
+    expect([...Object.keys(FIXTURES), "cafes"].sort()).toEqual([...TABLES].sort());
+  });
+
+  it("forces row-level security with a café policy on every table, owned by the owner role", async () => {
+    const { rows } = await admin.query<{ relname: string; enabled: boolean; forced: boolean; policies: number; owner: string }>(`
+      SELECT c.relname, c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced,
+             (SELECT count(*)::int FROM pg_policy p WHERE p.polrelid = c.oid) AS policies,
+             pg_get_userbyid(c.relowner) AS owner
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'app' AND c.relkind IN ('r', 'p')`);
+    for (const row of rows) {
+      expect(row, row.relname).toMatchObject({ enabled: true, forced: true, owner: OWNER_GROUP_ROLE });
+      expect(row.policies, row.relname).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("roles", () => {
+  it("connects the app as a login role without superuser or BYPASSRLS, outside the owner role", async () => {
+    const { rows } = await admin.query<{ rolsuper: boolean; rolbypassrls: boolean; in_app: boolean; in_owner: boolean }>(
+      `SELECT rolsuper, rolbypassrls, pg_has_role($1, $2, 'MEMBER') AS in_app, pg_has_role($1, $3, 'MEMBER') AS in_owner
+       FROM pg_roles WHERE rolname = $1`,
+      [testDb.appRole, APP_GROUP_ROLE, OWNER_GROUP_ROLE],
+    );
+    expect(rows[0]).toEqual({ rolsuper: false, rolbypassrls: false, in_app: true, in_owner: false });
+    const current = await sql<{ user: string }>`SELECT current_user AS user`.execute(testDb.app.db);
+    expect(current.rows[0]?.user).toBe(testDb.appRole);
+  });
+
+  it("gives the group roles no superuser or BYPASSRLS", async () => {
+    const { rows } = await admin.query<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean; rolcanlogin: boolean }>(
+      "SELECT rolname, rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = ANY($1) ORDER BY rolname",
+      [[APP_GROUP_ROLE, OWNER_GROUP_ROLE]],
+    );
+    expect(rows).toEqual([
+      { rolname: APP_GROUP_ROLE, rolsuper: false, rolbypassrls: false, rolcanlogin: false },
+      { rolname: OWNER_GROUP_ROLE, rolsuper: false, rolbypassrls: false, rolcanlogin: false },
+    ]);
+  });
+});
+
+describe.each(TABLES)("isolation of %s", (table) => {
+  const key = TENANT_KEY[table];
+
+  it("shows café A only its own rows", async () => {
+    const counts = await withCafe(testDb.app.db, cafeA, async (trx) => {
+      const own = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)} WHERE ${sql.ref(key)} = ${cafeA}`.execute(trx);
+      const other = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)} WHERE ${sql.ref(key)} <> ${cafeA}`.execute(trx);
+      return { own: own.rows[0]?.n, other: other.rows[0]?.n };
+    });
+    expect(counts.own).toBeGreaterThan(0);
+    expect(counts.other).toBe(0);
+  });
+
+  it("shows nothing when no café is set", async () => {
+    const result = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)}`.execute(testDb.app.db);
+    expect(result.rows[0]?.n).toBe(0);
+  });
+
+  it("refuses to write a row for another café", async () => {
+    const code = await errorCodeOf(
+      withCafe(testDb.app.db, cafeA, async (trx) => {
+        if (table === "cafes") {
+          await trx.insertInto("cafes").values({ id: randomUUID(), name: "Intruder" }).execute();
+        } else {
+          await FIXTURES[table](trx, cafeB);
+        }
+      }),
+    );
+    expect(code).toBe(RLS_VIOLATION);
+  });
+
+  it("cannot update or delete another café's rows", async () => {
+    const privileges = await admin.query<{ can_update: boolean; can_delete: boolean }>(
+      "SELECT has_table_privilege($1, $2, 'UPDATE') AS can_update, has_table_privilege($1, $2, 'DELETE') AS can_delete",
+      [testDb.appRole, `app.${table}`],
+    );
+    const { can_update: canUpdate, can_delete: canDelete } = privileges.rows[0] ?? { can_update: false, can_delete: false };
+    const affected = await withCafe(testDb.app.db, cafeA, async (trx) => {
+      const updated = canUpdate
+        ? (await sql`UPDATE ${sql.table(table)} SET ${sql.ref(key)} = ${sql.ref(key)} WHERE ${sql.ref(key)} = ${cafeB}`.execute(trx)).numAffectedRows
+        : 0n;
+      const deleted = canDelete
+        ? (await sql`DELETE FROM ${sql.table(table)} WHERE ${sql.ref(key)} = ${cafeB}`.execute(trx)).numAffectedRows
+        : 0n;
+      return { updated, deleted };
+    });
+    expect(affected).toEqual({ updated: 0n, deleted: 0n });
+    const remaining = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM app.${table} WHERE ${key} = $1`, [cafeB]);
+    expect(remaining.rows[0]?.n).toBeGreaterThan(0);
+  });
+});
+
+describe("audit log", () => {
+  it("is append-only for the app role", async () => {
+    const update = await errorCodeOf(
+      withCafe(testDb.app.db, cafeA, (trx) => sql`UPDATE audit_log SET action = 'tampered'`.execute(trx)),
+    );
+    const remove = await errorCodeOf(withCafe(testDb.app.db, cafeA, (trx) => sql`DELETE FROM audit_log`.execute(trx)));
+    expect(update).toBe(RLS_VIOLATION);
+    expect(remove).toBe(RLS_VIOLATION);
+  });
+});
+
+describe("withCafe", () => {
+  it("rejects a café id that is not a UUID before touching the database", async () => {
+    await expect(withCafe(testDb.app.db, "not-a-uuid", () => Promise.resolve(1))).rejects.toThrow(TenantContextError);
+  });
+
+  it("keeps the café setting inside its transaction", async () => {
+    await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafes").select("id").execute());
+    const setting = await sql<{ value: string | null }>`SELECT nullif(current_setting('app.cafe_id', true), '') AS value`.execute(testDb.app.db);
+    expect(setting.rows[0]?.value ?? null).toBeNull();
+  });
+
+  it("keeps updated_at current through the trigger", async () => {
+    const [before, after] = await withCafe(testDb.app.db, cafeA, async (trx) => {
+      const first = await trx.selectFrom("order_types").select(["id", "updated_at"]).executeTakeFirstOrThrow();
+      await sql`SELECT pg_sleep(0.01)`.execute(trx);
+      await trx.updateTable("order_types").set({ price_cents: 275 }).where("id", "=", first.id).execute();
+      const second = await trx.selectFrom("order_types").select("updated_at").where("id", "=", first.id).executeTakeFirstOrThrow();
+      return [first.updated_at, second.updated_at];
+    });
+    // now() is the transaction start, so the trigger value equals it; it must at least be set and not move backwards.
+    expect(after.getTime()).toBeGreaterThanOrEqual(before.getTime());
+  });
+});

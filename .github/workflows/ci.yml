@@ -17,13 +17,31 @@ jobs:
     name: Test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          # Throwaway test cluster reachable only from this job: trust auth, so no credential exists to leak.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     env:
       BUILD_ID: ${{ github.sha }}
+      TEST_DATABASE_ADMIN_URL: postgres://postgres@localhost:5432/postgres
+      # On pull requests, migrations that already exist on the base branch must be unchanged.
+      MIGRATIONS_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history: the migration check verifies commits named by contract migrations and diffs against the base branch.
+          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
