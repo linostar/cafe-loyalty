@@ -1,0 +1,100 @@
+import type { ColumnType, Generated } from "kysely";
+
+/** A timestamptz column the database fills in. */
+type CreatedAt = ColumnType<Date, never, never>;
+/** A timestamptz column a trigger keeps current. */
+type UpdatedAt = ColumnType<Date, never, never>;
+
+export interface CafesTable {
+  id: ColumnType<string, string | undefined, never>;
+  name: string;
+  time_zone: Generated<string>;
+  catalog_version: Generated<number>;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface LoyaltyProgramsTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  stamps_required: number;
+  reward_name_ar: string;
+  reward_name_en: string;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface OrderTypesTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  name_ar: string;
+  name_en: string;
+  price_cents: number;
+  cost_cents: number;
+  stamps_earned: Generated<number>;
+  active: Generated<boolean>;
+  sort_order: Generated<number>;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export type AuditActorType = "owner" | "staff" | "device" | "system";
+
+/** Append-only: the app role may insert and read, never update or delete. `changes` must hold no personal data. */
+export interface AuditLogTable {
+  id: ColumnType<string, never, never>;
+  cafe_id: ColumnType<string, string, never>;
+  actor_type: ColumnType<AuditActorType, AuditActorType, never>;
+  actor_id: ColumnType<string | null, string | null | undefined, never>;
+  action: ColumnType<string, string, never>;
+  entity_type: ColumnType<string, string, never>;
+  entity_id: ColumnType<string | null, string | null | undefined, never>;
+  changes: ColumnType<Record<string, unknown>, string | undefined, never>;
+  occurred_at: CreatedAt;
+}
+
+/** Tables in schema `app`, as the app role sees them. Every one is scoped to a café by row-level security. */
+export interface Database {
+  cafes: CafesTable;
+  loyalty_programs: LoyaltyProgramsTable;
+  order_types: OrderTypesTable;
+  audit_log: AuditLogTable;
+}
+
+export type TableName = keyof Database;
+
+type ColumnLists = { readonly [T in TableName]: readonly (keyof Database[T] & string)[] };
+
+/** Every column of every table, checked against the live schema by an integration test. */
+export const TABLE_COLUMNS = {
+  cafes: ["id", "name", "time_zone", "catalog_version", "created_at", "updated_at"],
+  loyalty_programs: ["id", "cafe_id", "stamps_required", "reward_name_ar", "reward_name_en", "created_at", "updated_at"],
+  order_types: [
+    "id",
+    "cafe_id",
+    "name_ar",
+    "name_en",
+    "price_cents",
+    "cost_cents",
+    "stamps_earned",
+    "active",
+    "sort_order",
+    "created_at",
+    "updated_at",
+  ],
+  audit_log: ["id", "cafe_id", "actor_type", "actor_id", "action", "entity_type", "entity_id", "changes", "occurred_at"],
+} as const satisfies ColumnLists;
+
+/** The column holding each table's café: `id` for cafes itself, `cafe_id` everywhere else. */
+export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id">> = {
+  cafes: "id",
+  loyalty_programs: "cafe_id",
+  order_types: "cafe_id",
+  audit_log: "cafe_id",
+};
+
+type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };
+type CompletenessByTable = { [T in TableName]: [Exclude<keyof Database[T], ListedColumns[T]>] extends [never] ? true : false };
+type AssertAllTrue<X extends Record<TableName, true>> = X;
+/** Compile-time check that TABLE_COLUMNS lists every column of the Database interface; fails to compile otherwise. */
+export type TableColumnsAreComplete = AssertAllTrue<CompletenessByTable>;

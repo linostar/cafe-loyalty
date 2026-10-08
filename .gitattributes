@@ -1,0 +1,2 @@
+# Migration checksums are computed over the file bytes: keep SQL line endings identical on every OS.
+*.sql text eol=lf
