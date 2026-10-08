@@ -6,8 +6,8 @@
 
 CREATE FUNCTION current_cafe_id() RETURNS uuid
   LANGUAGE sql STABLE PARALLEL SAFE
-  -- Fully qualified so no temporary or user object can shadow the function or the type.
-  AS $$ SELECT pg_catalog.nullif(pg_catalog.current_setting('app.cafe_id', true), '')::pg_catalog.uuid $$;
+  -- current_setting and uuid are schema-qualified so no temporary or user object can shadow them; NULLIF is SQL syntax.
+  AS $$ SELECT NULLIF(pg_catalog.current_setting('app.cafe_id', true), '')::pg_catalog.uuid $$;
 
 CREATE FUNCTION touch_updated_at() RETURNS trigger
   LANGUAGE plpgsql
