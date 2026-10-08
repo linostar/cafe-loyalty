@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,7 +11,22 @@ import { createTestDatabase, type TestDatabase } from "./testing/test-database.j
 const PERMISSION_DENIED = "42501";
 const INVALID_TEXT_REPRESENTATION = "22P02";
 
-/** Inserts one row of each tenant table for a café. Every table in schema app needs an entry (checked below). */
+/** The owner each café's fixtures use, so a fixture written for café B under café A still names a real owner. */
+const ownerIds = new Map<string, string>();
+const ownerIdOf = (cafeId: string): string => {
+  let id = ownerIds.get(cafeId);
+  if (id === undefined) {
+    id = randomUUID();
+    ownerIds.set(cafeId, id);
+  }
+  return id;
+};
+const inOneHour = (): Date => new Date(Date.now() + 3_600_000);
+
+/**
+ * Inserts one row of each tenant table for a café, in this order. Every table in schema app needs an entry
+ * (checked below).
+ */
 const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
   loyalty_programs: (trx, cafeId) =>
     trx
@@ -27,6 +42,23 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<D
     trx
       .insertInto("audit_log")
       .values({ cafe_id: cafeId, actor_type: "system", action: "fixture.created", entity_type: "fixture", changes: JSON.stringify({ step: 4 }) })
+      .execute(),
+  owners: (trx, cafeId) =>
+    trx
+      .insertInto("owners")
+      .values({ id: ownerIdOf(cafeId), cafe_id: cafeId, email: `owner-${cafeId}@example.com`, password_hash: "$argon2id$fixture" })
+      .execute(),
+  owner_invites: (trx, cafeId) =>
+    trx.insertInto("owner_invites").values({ cafe_id: cafeId, token_hash: randomBytes(32), expires_at: inOneHour() }).execute(),
+  owner_sessions: (trx, cafeId) =>
+    trx
+      .insertInto("owner_sessions")
+      .values({ cafe_id: cafeId, owner_id: ownerIdOf(cafeId), token_hash: randomBytes(32), expires_at: inOneHour() })
+      .execute(),
+  password_reset_tokens: (trx, cafeId) =>
+    trx
+      .insertInto("password_reset_tokens")
+      .values({ cafe_id: cafeId, owner_id: ownerIdOf(cafeId), token_hash: randomBytes(32), expires_at: inOneHour() })
       .execute(),
 };
 

@@ -14,6 +14,25 @@ export {
 } from "./errors.js";
 export { LOG_REDACT_CENSOR, LOG_REDACT_HEADER_PATHS, isSensitiveKey, redactLogObject } from "./logging.js";
 export { MAX_CENTS, centsSchema, formatUsd, type Cents, type DisplayLocale } from "./money.js";
+export {
+  OWNER_PASSWORD_MAX_LENGTH,
+  OWNER_PASSWORD_MIN_LENGTH,
+  linkTokenSchema,
+  loginRequestSchema,
+  ownerEmailSchema,
+  ownerPasswordSchema,
+  ownerSessionSchema,
+  passwordChangeRequestSchema,
+  passwordResetCompleteRequestSchema,
+  passwordResetRequestSchema,
+  signupRequestSchema,
+  type LoginRequest,
+  type OwnerSession,
+  type PasswordChangeRequest,
+  type PasswordResetCompleteRequest,
+  type PasswordResetRequest,
+  type SignupRequest,
+} from "./owner-auth.js";
 export { e164PhoneSchema, type E164Phone } from "./phone.js";
 export { formatStartupFailure } from "./startup.js";
 export {

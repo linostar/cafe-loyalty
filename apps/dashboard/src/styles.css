@@ -1,0 +1,65 @@
+:root {
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color: #1d1d1f;
+  background: #ffffff;
+}
+
+body {
+  margin: 0;
+}
+
+header,
+main,
+footer {
+  box-sizing: border-box;
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.field {
+  margin-block: 1rem;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+}
+
+input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid #1a5fb4;
+  outline-offset: 2px;
+}
+
+.hint {
+  margin: 0.25rem 0 0;
+  color: #4a4a4f;
+}
+
+.form-error,
+.field-error {
+  color: #a51d2d;
+}
+
+.field-error {
+  margin: 0.25rem 0 0;
+}
+
+.notice {
+  padding: 0.5rem;
+  border-inline-start: 4px solid #26a269;
+  background: #eef8f1;
+}

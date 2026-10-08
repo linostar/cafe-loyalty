@@ -8,18 +8,18 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "build:shared": "pnpm --filter @cafe-loyalty/shared build",
+    "build:packages": "pnpm --filter \"./packages/*\" build",
     "test": "pnpm typecheck && pnpm lint && pnpm check:migrations && pnpm test:unit && pnpm test:db && pnpm test:e2e",
-    "typecheck": "pnpm build:shared && pnpm -r typecheck && tsc -p tsconfig.json --noEmit",
-    "lint": "pnpm build:shared && eslint . --max-warnings 0",
-    "test:unit": "pnpm build:shared && vitest run",
-    "test:db": "pnpm build:shared && vitest run --config packages/db/vitest.integration.config.ts",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck && tsc -p tsconfig.json --noEmit",
+    "lint": "pnpm build:packages && eslint . --max-warnings 0",
+    "test:unit": "pnpm build:packages && vitest run",
+    "test:db": "pnpm build:packages && vitest run --config vitest.integration.config.ts",
     "test:e2e": "pnpm build && playwright test",
     "db:up": "docker compose -f compose.dev.yaml --env-file .env up -d --wait",
     "db:down": "docker compose -f compose.dev.yaml --env-file .env down",
-    "db:bootstrap": "pnpm build:shared && pnpm --filter @cafe-loyalty/db build && pnpm --filter @cafe-loyalty/db bootstrap",
-    "db:migrate": "pnpm build:shared && pnpm --filter @cafe-loyalty/db build && pnpm --filter @cafe-loyalty/db migrate",
-    "check:migrations": "pnpm build:shared && pnpm --filter @cafe-loyalty/db build && pnpm --filter @cafe-loyalty/db check-migrations"
+    "db:bootstrap": "pnpm build:packages && pnpm --filter @cafe-loyalty/db bootstrap",
+    "db:migrate": "pnpm build:packages && pnpm --filter @cafe-loyalty/db migrate",
+    "check:migrations": "pnpm build:packages && pnpm --filter @cafe-loyalty/db check-migrations"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

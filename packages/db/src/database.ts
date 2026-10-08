@@ -65,3 +65,36 @@ export async function withCafe<T>(db: Kysely<Database>, cafeId: string, work: (t
     return work(trx);
   });
 }
+
+/** What a caller holds before any café is known: an owner's email (signing in) or a token hash (session, invite, reset). */
+export type LookupKey = { ownerEmail: string } | { secretHash: Buffer };
+
+const SECRET_HASH_BYTES = 32;
+
+/**
+ * Runs `work` in one read-only transaction with no café set, in which row-level security shows only the rows
+ * matching `key`: the owner with that email, or the session, invite or reset token with that hash. It never shows
+ * other rows and cannot write; follow up with withCafe on the café id it returns.
+ */
+export async function withLookup<T>(db: Kysely<Database>, key: LookupKey, work: (trx: Transaction<Database>) => Promise<T>): Promise<T> {
+  let setting: string;
+  let value: string;
+  if ("ownerEmail" in key) {
+    if (key.ownerEmail === "") {
+      throw new TenantContextError("An owner email lookup must not be empty.");
+    }
+    [setting, value] = ["app.owner_email", key.ownerEmail];
+  } else {
+    if (key.secretHash.length !== SECRET_HASH_BYTES) {
+      throw new TenantContextError("A secret hash must be 32 bytes.");
+    }
+    [setting, value] = ["app.secret_hash", key.secretHash.toString("hex")];
+  }
+  return db
+    .transaction()
+    .setAccessMode("read only")
+    .execute(async (trx) => {
+      await sql`SELECT set_config(${setting}, ${value}, true)`.execute(trx);
+      return work(trx);
+    });
+}

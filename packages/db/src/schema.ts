@@ -53,12 +53,61 @@ export interface AuditLogTable {
   occurred_at: CreatedAt;
 }
 
-/** Tables in schema `app`, as the app role sees them. Every one is scoped to a café by row-level security. */
+/** A token column: the SHA-256 hash of a secret the client holds (32 bytes). */
+type TokenHash = ColumnType<Buffer, Buffer, never>;
+
+export interface OwnersTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  /** Lower-case; unique across every café. */
+  email: ColumnType<string, string, never>;
+  password_hash: string;
+  password_changed_at: ColumnType<Date, Date | undefined, Date>;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface OwnerInvitesTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  token_hash: TokenHash;
+  expires_at: ColumnType<Date, Date, never>;
+  used_at: ColumnType<Date | null, never, Date>;
+  created_at: CreatedAt;
+}
+
+export interface OwnerSessionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  owner_id: ColumnType<string, string, never>;
+  token_hash: TokenHash;
+  created_at: CreatedAt;
+  last_seen_at: ColumnType<Date, never, Date>;
+  expires_at: ColumnType<Date, Date, never>;
+}
+
+export interface PasswordResetTokensTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  owner_id: ColumnType<string, string, never>;
+  token_hash: TokenHash;
+  expires_at: ColumnType<Date, Date, never>;
+  created_at: CreatedAt;
+}
+
+/**
+ * Tables in schema `app`, as the app role sees them. Every one is scoped to a café by row-level security; owners,
+ * invites, sessions and reset tokens can also be read (never written) by their email or token hash (withLookup).
+ */
 export interface Database {
   cafes: CafesTable;
   loyalty_programs: LoyaltyProgramsTable;
   order_types: OrderTypesTable;
   audit_log: AuditLogTable;
+  owners: OwnersTable;
+  owner_invites: OwnerInvitesTable;
+  owner_sessions: OwnerSessionsTable;
+  password_reset_tokens: PasswordResetTokensTable;
 }
 
 export type TableName = keyof Database;
@@ -83,6 +132,10 @@ export const TABLE_COLUMNS = {
     "updated_at",
   ],
   audit_log: ["id", "cafe_id", "actor_type", "actor_id", "action", "entity_type", "entity_id", "changes", "occurred_at"],
+  owners: ["id", "cafe_id", "email", "password_hash", "password_changed_at", "created_at", "updated_at"],
+  owner_invites: ["id", "cafe_id", "token_hash", "expires_at", "used_at", "created_at"],
+  owner_sessions: ["id", "cafe_id", "owner_id", "token_hash", "created_at", "last_seen_at", "expires_at"],
+  password_reset_tokens: ["id", "cafe_id", "owner_id", "token_hash", "expires_at", "created_at"],
 } as const satisfies ColumnLists;
 
 /** The column holding each table's café: `id` for cafes itself, `cafe_id` everywhere else. */
@@ -91,6 +144,10 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id">> = {
   loyalty_programs: "cafe_id",
   order_types: "cafe_id",
   audit_log: "cafe_id",
+  owners: "cafe_id",
+  owner_invites: "cafe_id",
+  owner_sessions: "cafe_id",
+  password_reset_tokens: "cafe_id",
 };
 
 type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };

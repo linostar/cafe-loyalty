@@ -19,6 +19,8 @@ export const ERROR_CODES = {
   FORBIDDEN: { status: 403, retryable: false },
   NOT_FOUND: { status: 404, retryable: false },
   CONFLICT: { status: 409, retryable: false },
+  /** An invite or password reset link that is unknown, already used or expired: ask for a new one. */
+  LINK_EXPIRED: { status: 410, retryable: false },
   PAYLOAD_TOO_LARGE: { status: 413, retryable: false },
   UNSUPPORTED_MEDIA_TYPE: { status: 415, retryable: false },
   CLIENT_TOO_OLD: { status: 426, retryable: false },
@@ -95,11 +97,11 @@ export function interpretErrorResponse(status: number, body: string): Interprete
   try {
     parsed = JSON.parse(body);
   } catch {
-    return { code: null, message: `The server sent an unreadable response (HTTP ${String(status)}).`, retryable: true, status };
+    return { code: null, message: `The server sent an unreadable response (HTTP ${String(status)}). Wait a moment and try again.`, retryable: true, status };
   }
   const envelope = clientEnvelopeSchema.safeParse(parsed);
   if (!envelope.success || !Object.hasOwn(ERROR_CODES, envelope.data.code)) {
-    return { code: null, message: `The server sent an error this app does not recognise (HTTP ${String(status)}).`, retryable: true, status };
+    return { code: null, message: `The server sent an error this app does not recognise (HTTP ${String(status)}). Reload the page and try again.`, retryable: true, status };
   }
   const code = envelope.data.code as ErrorCode;
   const message = envelope.data.message.length > 0 ? envelope.data.message : `The request failed (HTTP ${String(status)}).`;

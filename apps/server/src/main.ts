@@ -1,6 +1,10 @@
+import { createDatabase } from "@cafe-loyalty/db";
 import { formatStartupFailure } from "@cafe-loyalty/shared";
 import { buildApp } from "./app.js";
+import { BackgroundTasks } from "./background.js";
 import { loadServerConfig, type ServerConfig } from "./config.js";
+import { createSmtpMailer } from "./mailer.js";
+import { ownerAuthRoutes } from "./owner-auth.js";
 
 let config: ServerConfig;
 try {
@@ -10,7 +14,36 @@ try {
   process.exit(1);
 }
 
-const app = buildApp({ logLevel: config.LOG_LEVEL });
+const app = buildApp({ logLevel: config.LOG_LEVEL, trustProxyHops: config.TRUST_PROXY_HOPS });
+const database = createDatabase({
+  connectionString: config.DATABASE_URL,
+  applicationName: "cafe-loyalty-server",
+  maxConnections: config.DATABASE_MAX_CONNECTIONS,
+  connectionTimeoutMs: 5_000,
+  statementTimeoutMs: 10_000,
+  idleInTransactionTimeoutMs: 15_000,
+  idleTimeoutMs: 30_000,
+  onPoolError: (error) => {
+    app.log.error({ err: error }, "database pool error");
+  },
+});
+const mailer = createSmtpMailer({
+  host: config.SMTP_HOST,
+  port: config.SMTP_PORT,
+  secure: config.SMTP_SECURE,
+  user: config.SMTP_USER,
+  password: config.SMTP_PASSWORD,
+  from: config.EMAIL_FROM,
+});
+const background = new BackgroundTasks(app.log);
+
+await app.register(ownerAuthRoutes, { prefix: "/api/auth", db: database.db, mailer, background, dashboardUrl: config.DASHBOARD_URL });
+// Runs once the server has stopped taking requests: finish emails in flight, then release connections.
+app.addHook("onClose", async () => {
+  await background.drain();
+  mailer.close();
+  await database.close();
+});
 
 let shuttingDown = false;
 
