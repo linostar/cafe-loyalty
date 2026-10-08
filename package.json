@@ -9,6 +9,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "build:shared": "pnpm --filter @cafe-loyalty/shared build",
+    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:e2e",
     "typecheck": "pnpm build:shared && pnpm -r typecheck && tsc -p tsconfig.json --noEmit",
     "lint": "pnpm build:shared && eslint . --max-warnings 0",
     "test:unit": "pnpm build:shared && vitest run",

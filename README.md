@@ -21,6 +21,7 @@ pnpm db:up                  # starts PostgreSQL on 127.0.0.1 and waits until it 
 
 | Command | What it does |
 |---|---|
+| `pnpm test` | The full gate: typecheck, lint, unit tests, then browser tests; stops at the first failure. CI runs this on every pull request and push to `main` |
 | `pnpm build` | Builds every package (shared first) |
 | `pnpm build:shared` | Builds only `@cafe-loyalty/shared`, which the other packages import from its `dist` |
 | `pnpm typecheck` | Type-checks every package and the root config files |
@@ -50,6 +51,10 @@ Every package also has `build` and `typecheck` scripts, which the root commands 
 | `apps/dashboard` | `@cafe-loyalty/dashboard` | Owner dashboard (Vite, React) |
 | `e2e` | | Playwright browser tests |
 | `compose.dev.yaml` | | Local development database |
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs `pnpm test` on Ubuntu with the Node version from `.nvmrc`, a frozen lockfile and Playwright Chromium. It has read-only repository permissions, pins every action to a commit SHA, and uploads the Playwright report when a run fails.
 
 ## Configuration
 
