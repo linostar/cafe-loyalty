@@ -1,4 +1,4 @@
-import { base64PemSchema, keyFitsCertificate } from "@cafe-loyalty/db";
+import { base64PemSchema, googleIssuerIdSchema, googleServiceAccountSchema, keyFitsCertificate, keyringSchema } from "@cafe-loyalty/db";
 import { loadEnv } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
@@ -20,28 +20,6 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const secretBytes = (name: string) =>
   z.string().refine((value) => BASE64.test(value) && Buffer.from(value, "base64").length >= 32, `Use at least 32 random bytes in base64 (${name}).`);
 
-/**
- * A keyring: comma-separated `id:base64key` entries of 32-byte keys, the newest (used for new data) first. Older
- * keys stay listed while data made with them may still exist.
- */
-const keyringSchema = z
-  .string()
-  .transform((value, context) => {
-    const keys = value.split(",").map((entry) => {
-      const [id = "", key = ""] = entry.trim().split(":");
-      // Strictly base64, like the pepper: Buffer.from would otherwise skip stray characters silently.
-      return { id, key: BASE64.test(key) ? Buffer.from(key, "base64") : Buffer.alloc(0) };
-    });
-    const valid =
-      keys.length > 0 &&
-      keys.every((entry) => /^[a-z0-9]{1,16}$/.test(entry.id) && entry.key.length === 32) &&
-      new Set(keys.map((entry) => entry.id)).size === keys.length;
-    if (!valid) {
-      context.addIssue({ code: "custom", message: "Use comma-separated id:key entries: ids of 1 to 16 lower-case letters or digits, each key 32 bytes in base64, newest first." });
-      return z.NEVER;
-    }
-    return keys;
-  });
 export const counterUrlSchema = originSchema("counter app", "https://counter.example.com");
 
 const APPLE_KEYS = ["APPLE_PASS_TYPE_ID", "APPLE_TEAM_ID", "APPLE_PASS_CERTIFICATE", "APPLE_PASS_KEY", "APPLE_WWDR_CERTIFICATE"] as const;
@@ -100,6 +78,12 @@ const serverEnvSchema = z.object({
   APPLE_PASS_CERTIFICATE: base64PemSchema("certificate").optional(),
   APPLE_PASS_KEY: base64PemSchema("private key").optional(),
   APPLE_WWDR_CERTIFICATE: base64PemSchema("certificate").optional(),
+  /**
+   * Google Wallet (AC 10): both, or neither for no Google passes. The issuer id from the Google Pay & Wallet Console,
+   * and the JSON key file of the service account the issuer account added as a user, base64-encoded on one line.
+   */
+  GOOGLE_WALLET_ISSUER_ID: googleIssuerIdSchema.optional(),
+  GOOGLE_WALLET_SERVICE_ACCOUNT: googleServiceAccountSchema.optional(),
 })
   .superRefine((env, context) => {
     const missingApple = APPLE_KEYS.filter((key) => env[key] === undefined);
@@ -114,6 +98,10 @@ const serverEnvSchema = z.object({
       !keyFitsCertificate(env.APPLE_PASS_CERTIFICATE, env.APPLE_PASS_KEY)
     ) {
       context.addIssue({ code: "custom", path: ["APPLE_PASS_KEY"], message: "Use the private key of APPLE_PASS_CERTIFICATE." });
+    }
+    if ((env.GOOGLE_WALLET_ISSUER_ID === undefined) !== (env.GOOGLE_WALLET_SERVICE_ACCOUNT === undefined)) {
+      const missing = env.GOOGLE_WALLET_ISSUER_ID === undefined ? "GOOGLE_WALLET_ISSUER_ID" : "GOOGLE_WALLET_SERVICE_ACCOUNT";
+      context.addIssue({ code: "custom", path: [missing], message: "Set both Google Wallet variables (GOOGLE_WALLET_*), or neither (Google Wallet off)." });
     }
     if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
       context.addIssue({ code: "custom", path: ["SMTP_PASSWORD"], message: "Set both SMTP_USER and SMTP_PASSWORD, or neither." });
@@ -136,8 +124,12 @@ const serverEnvSchema = z.object({
       }
     }
   })
-  .transform(({ APPLE_PASS_TYPE_ID, APPLE_TEAM_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, APPLE_WWDR_CERTIFICATE, ...env }) => ({
+  .transform(({ APPLE_PASS_TYPE_ID, APPLE_TEAM_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, APPLE_WWDR_CERTIFICATE, GOOGLE_WALLET_ISSUER_ID, GOOGLE_WALLET_SERVICE_ACCOUNT, ...env }) => ({
     ...env,
+    googlePasses:
+      GOOGLE_WALLET_ISSUER_ID === undefined || GOOGLE_WALLET_SERVICE_ACCOUNT === undefined
+        ? undefined
+        : { issuerId: GOOGLE_WALLET_ISSUER_ID, serviceAccount: GOOGLE_WALLET_SERVICE_ACCOUNT },
     TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS ?? 0,
     BUILT_AT: env.BUILT_AT === undefined ? new Date() : new Date(env.BUILT_AT),
     applePasses:

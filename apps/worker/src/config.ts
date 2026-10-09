@@ -1,8 +1,11 @@
-import { base64PemSchema, keyFitsCertificate } from "@cafe-loyalty/db";
+import { base64PemSchema, googleIssuerIdSchema, googleServiceAccountSchema, keyFitsCertificate, keyringSchema } from "@cafe-loyalty/db";
 import { loadEnv } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
 const APPLE_KEYS = ["APPLE_PASS_TYPE_ID", "APPLE_PASS_CERTIFICATE", "APPLE_PASS_KEY"] as const;
+const GOOGLE_KEYS = ["GOOGLE_WALLET_ISSUER_ID", "GOOGLE_WALLET_SERVICE_ACCOUNT"] as const;
+/** What building Google objects also takes; the server always has them, so they alone do not turn Google Wallet on. */
+const GOOGLE_NEEDS = ["CARD_QR_KEYS", "PUBLIC_URL"] as const;
 
 const workerEnvSchema = z
   .object({
@@ -16,12 +19,31 @@ const workerEnvSchema = z
     APPLE_PASS_TYPE_ID: z.string().regex(/^pass(\.[A-Za-z0-9-]+)+$/, "Use the pass type identifier, such as pass.com.example.loyalty.").optional(),
     APPLE_PASS_CERTIFICATE: base64PemSchema("certificate").optional(),
     APPLE_PASS_KEY: base64PemSchema("private key").optional(),
+    /**
+     * Google Wallet, as the server has it, plus what the worker needs to build objects as the server does: the card
+     * QR keys (the object carries the card's QR) and the server's PUBLIC_URL (where Google fetches the logo).
+     */
+    GOOGLE_WALLET_ISSUER_ID: googleIssuerIdSchema.optional(),
+    GOOGLE_WALLET_SERVICE_ACCOUNT: googleServiceAccountSchema.optional(),
+    CARD_QR_KEYS: keyringSchema.optional(),
+    PUBLIC_URL: z.url({ protocol: /^https?$/ }).optional(),
   })
   .superRefine((env, context) => {
     const missing = APPLE_KEYS.filter((key) => env[key] === undefined);
     if (missing.length > 0 && missing.length < APPLE_KEYS.length) {
       for (const key of missing) {
         context.addIssue({ code: "custom", path: [key], message: "Set every APPLE_PASS_* variable, or none (Apple Wallet off)." });
+      }
+    }
+    const missingGoogle = GOOGLE_KEYS.filter((key) => env[key] === undefined);
+    if (missingGoogle.length > 0 && missingGoogle.length < GOOGLE_KEYS.length) {
+      for (const key of missingGoogle) {
+        context.addIssue({ code: "custom", path: [key], message: "Set both Google Wallet variables (GOOGLE_WALLET_*), or neither (Google Wallet off)." });
+      }
+    }
+    if (missingGoogle.length === 0) {
+      for (const key of GOOGLE_NEEDS.filter((need) => env[need] === undefined)) {
+        context.addIssue({ code: "custom", path: [key], message: "Set it as the server has it: Google Wallet objects carry the card's QR and the server's logo address." });
       }
     }
     if (
@@ -32,8 +54,12 @@ const workerEnvSchema = z
       context.addIssue({ code: "custom", path: ["APPLE_PASS_KEY"], message: "Use the private key of APPLE_PASS_CERTIFICATE." });
     }
   })
-  .transform(({ APPLE_PASS_TYPE_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, ...env }) => ({
+  .transform(({ APPLE_PASS_TYPE_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, GOOGLE_WALLET_ISSUER_ID, GOOGLE_WALLET_SERVICE_ACCOUNT, CARD_QR_KEYS, PUBLIC_URL, ...env }) => ({
     ...env,
+    googlePasses:
+      GOOGLE_WALLET_ISSUER_ID === undefined || GOOGLE_WALLET_SERVICE_ACCOUNT === undefined || CARD_QR_KEYS === undefined || PUBLIC_URL === undefined
+        ? undefined
+        : { serviceAccount: GOOGLE_WALLET_SERVICE_ACCOUNT, settings: { issuerId: GOOGLE_WALLET_ISSUER_ID, publicUrl: PUBLIC_URL, cardQr: { keys: CARD_QR_KEYS } } },
     applePasses:
       APPLE_PASS_TYPE_ID === undefined || APPLE_PASS_CERTIFICATE === undefined || APPLE_PASS_KEY === undefined
         ? undefined

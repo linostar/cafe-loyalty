@@ -1,4 +1,5 @@
 import { connect, constants, type ClientHttp2Session } from "node:http2";
+import { DeliveryError } from "./delivery.js";
 
 /** "unregistered": APNs says the device no longer takes this pass's pushes, so its registration can go (AC 12). */
 export type PushResult = "sent" | "unregistered";
@@ -62,7 +63,7 @@ export function createApnsPusher(options: ApnsOptions): PassPusher {
         let body = "";
         request.setTimeout(timeoutMs, () => {
           request.close(constants.NGHTTP2_CANCEL);
-          reject(new Error(`APNs did not answer within ${String(timeoutMs)} ms.`));
+          reject(new DeliveryError(`APNs did not answer within ${String(timeoutMs)} ms.`, "timeout"));
         });
         request.on("response", (headers) => {
           status = Number(headers[":status"]);
@@ -84,7 +85,7 @@ export function createApnsPusher(options: ApnsOptions): PassPusher {
           } else if (status === 410 || (status === 400 && DEAD_TOKEN_REASONS.has(reason))) {
             resolve("unregistered");
           } else {
-            reject(new Error(`APNs answered ${String(status)}${reason === "" ? "" : ` (${reason})`}.`));
+            reject(new DeliveryError(`APNs answered ${String(status)}${reason === "" ? "" : ` (${reason})`}.`, `apns_${String(status)}${reason === "" ? "" : `_${reason}`}`));
           }
         });
         request.on("error", reject);

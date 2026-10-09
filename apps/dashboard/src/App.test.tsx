@@ -28,7 +28,9 @@ describe("Dashboard App", () => {
 
   it("signs in and shows the café", async () => {
     const fetch = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>((path) =>
-      Promise.resolve(path === "/api/auth/login" ? respond(200, SESSION) : unauthenticated()),
+      Promise.resolve(
+        path === "/api/auth/login" ? respond(200, SESSION) : path === "/api/cafe/wallet-deliveries" ? respond(200, { failing: [] }) : unauthenticated(),
+      ),
     );
     vi.stubGlobal("fetch", fetch);
     render(<App />);
@@ -39,6 +41,21 @@ describe("Dashboard App", () => {
     expect(screen.getByText("Signed in as rana@example.com")).toBeInTheDocument();
     const [, init] = fetch.mock.calls.find(([path]) => path === "/api/auth/login") ?? [];
     expect(JSON.parse(init?.body as string)).toEqual({ email: "rana@example.com", password: "correct horse battery" });
+  });
+
+  it("warns when customers' wallet cards keep failing to update (AC 13)", async () => {
+    const failing = [{ wallet: "apple", passes: 1, lastFailedAt: "2026-10-09T08:00:00.000Z", lastError: "apns_503_ServiceUnavailable" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) =>
+        Promise.resolve(path === "/api/auth/session" ? respond(200, SESSION) : path === "/api/cafe/wallet-deliveries" ? respond(200, { failing }) : unauthenticated()),
+      ),
+    );
+    render(<App />);
+    const warning = await screen.findByRole("region", { name: "Wallet card updates are failing" });
+    expect(warning).toHaveTextContent("Some customers' wallet cards are not showing their latest stamps");
+    expect(warning).toHaveTextContent("Apple Wallet: 1 card, last failure");
+    expect(warning).toHaveTextContent("apns_503_ServiceUnavailable");
   });
 
   it("shows the server's message when sign-in fails", async () => {

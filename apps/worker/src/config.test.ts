@@ -27,6 +27,27 @@ function selfSigned(): { certificate: string; privateKey: string; pem: { certifi
 }
 
 describe("loadWorkerConfig", () => {
+  it("runs without Google Wallet, or with its settings, the card QR keys and the server's public address", () => {
+    const pem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const key = Buffer.alloc(32, 1);
+    const google = {
+      GOOGLE_WALLET_ISSUER_ID: "3388000000012345678",
+      GOOGLE_WALLET_SERVICE_ACCOUNT: Buffer.from(JSON.stringify({ client_email: "wallet@example.iam.gserviceaccount.com", private_key: pem })).toString("base64"),
+      CARD_QR_KEYS: `q1:${key.toString("base64")}`,
+      PUBLIC_URL: "https://card.example.com",
+    };
+    expect(loadWorkerConfig(valid).googlePasses).toBeUndefined();
+    // The server's own variables, shared through one .env, leave Google Wallet off.
+    expect(loadWorkerConfig({ ...valid, CARD_QR_KEYS: google.CARD_QR_KEYS, PUBLIC_URL: google.PUBLIC_URL }).googlePasses).toBeUndefined();
+    expect(loadWorkerConfig({ ...valid, ...google }).googlePasses).toEqual({
+      serviceAccount: { email: "wallet@example.iam.gserviceaccount.com", privateKey: pem },
+      settings: { issuerId: "3388000000012345678", publicUrl: "https://card.example.com", cardQr: { keys: [{ id: "q1", key }] } },
+    });
+    expect(() => loadWorkerConfig({ ...valid, ...google, CARD_QR_KEYS: undefined })).toThrow(/CARD_QR_KEYS: Set it as the server has it/);
+    expect(() => loadWorkerConfig({ ...valid, ...google, GOOGLE_WALLET_SERVICE_ACCOUNT: undefined })).toThrow(/GOOGLE_WALLET_SERVICE_ACCOUNT: Set both/);
+    expect(() => loadWorkerConfig({ ...valid, ...google, CARD_QR_KEYS: "q1:short" })).toThrow(/CARD_QR_KEYS: Use comma-separated/);
+  });
+
   it("runs without Apple Wallet, or with all of its settings for APNs", () => {
     const signer = selfSigned();
     expect(loadWorkerConfig(valid).applePasses).toBeUndefined();

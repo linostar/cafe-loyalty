@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { setLookup, useCafe, withCafe, withLookup, type Database, type PgBoss } from "@cafe-loyalty/db";
+import { GOOGLE_PASS_UPDATE_QUEUE, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -10,8 +10,9 @@ import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, count, html, page, pickLang, t, type Lang, type MessageKey, type SafeHtml } from "./customer-html.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
+import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
-import { queuePassUpdate } from "./pass-updates.js";
+import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 const MINUTE = 60;
@@ -49,6 +50,8 @@ export interface CustomerPagesOptions {
   jobs: PgBoss | undefined;
   /** Apple Wallet settings; without them the web card offers no Apple pass. */
   apple?: ApplePassConfig | undefined;
+  /** Google Wallet settings; without them the web card offers no Google pass. */
+  google?: GoogleWalletConfig | undefined;
   /** Overrides for tests: signups per café per hour (default 1,000). */
   limits?: { signupPerCafe?: number };
 }
@@ -114,7 +117,7 @@ export function recoveryEmail(to: string, link: string): EmailMessage {
 }
 
 /**
- * Deletes a card, with its Apple passes and their registrations (foreign key cascades), and, if that was its
+ * Deletes a card, with its Apple and Google passes and the Apple registrations (foreign key cascades), and, if that was its
  * customer's last card anywhere, the customer (the phone number) too (AC 9).
  * The customer's ON DELETE RESTRICT foreign key decides "anywhere", since this café's view cannot see other cafés'
  * cards; its refusal (restrict_violation, 23001) is rolled back to a savepoint and leaves the customer for those cards.
@@ -153,6 +156,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     // shut a café's signup page; the per-address limit is the main one.
     signupPerCafe: new RateLimiter(options.limits?.signupPerCafe ?? 1_000, HOUR * 1000),
     cardChangesPerCard: new RateLimiter(20, HOUR * 1000),
+    // Each Google save link queues a write to Google with the issuer's shared account and quota.
+    googleLinksPerCard: new RateLimiter(20, HOUR * 1000),
     recoverPerIp: new RateLimiter(5, HOUR * 1000),
     recoverPerEmail: new RateLimiter(3, HOUR * 1000),
     restorePerIp: new RateLimiter(10, 15 * MINUTE * 1000),
@@ -387,6 +392,7 @@ ${notice === undefined ? null : html`<p class="notice" role="status">${notice}</
 ${reward === undefined || program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
 <img class="qr" src="${qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
 ${options.apple === undefined || !onAppleDevice(request) ? null : html`<p><a class="wallet" href="${path}/apple-pass?lang=${lang}">${t(lang, "addToAppleWallet")}</a></p>`}
+${options.google === undefined || onAppleDevice(request) ? null : html`<p><a class="google-wallet" href="${path}/google-pass?lang=${lang}"><img src="${GOOGLE_WALLET_BADGES[lang]}" alt="${t(lang, "addToGoogleWallet")}" width="199" height="55"></a></p>`}
 <p>${t(lang, "keepLink")}</p>
 <section aria-labelledby="email-title">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
@@ -460,6 +466,58 @@ ${errorBlock(errors.delete, "delete-error")}
     });
     request.log.info({ cafeId: card.cafe_id }, "apple pass downloaded");
     return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("content-disposition", 'attachment; filename="card.pkpass"').send(pkpass);
+  });
+
+  /**
+   * The card as a Google Wallet loyalty object (AC 10), for this epoch of the card: records the pass and queues its
+   * write, so the worker keeps the object current whether or not the customer saves it first (AC 12), then sends the
+   * browser to Google's save page.
+   */
+  app.get("/c/:secret/google-pass", async (request, reply) => {
+    const { google } = options;
+    if (google === undefined) {
+      throw new PageError(404, "notFound");
+    }
+    const { secret } = request.params as { secret: string };
+    const card = await cardOrGone(secret);
+    enforce(limits.googleLinksPerCard, card.id);
+    const found = await withCafe(db, card.cafe_id, async (trx) => {
+      await trx
+        .insertInto("google_passes")
+        .values({ cafe_id: card.cafe_id, card_id: card.id, epoch: card.epoch })
+        .onConflict((conflict) => conflict.columns(["card_id", "epoch"]).doNothing())
+        .execute();
+      const pass = await trx.selectFrom("google_passes").select("id").where("card_id", "=", card.id).where("epoch", "=", card.epoch).executeTakeFirstOrThrow();
+      if (options.jobs !== undefined) {
+        await queueOne(trx, options.jobs, GOOGLE_PASS_UPDATE_QUEUE, { cafeId: card.cafe_id, passId: pass.id });
+      }
+      return {
+        stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
+        cafe: await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
+        program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
+      };
+    });
+    const location = googleSaveUrl(google, options.publicUrl, found.cafe, {
+      cafeId: card.cafe_id,
+      cardId: card.id,
+      epoch: card.epoch,
+      stamps: found.stamps,
+      program:
+        found.program === undefined
+          ? undefined
+          : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
+      qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
+    });
+    request.log.info({ cafeId: card.cafe_id }, "google pass save link opened");
+    return reply.code(303).header("location", location).send();
+  });
+
+  /** The Google class logo, fetched by Google (public, no secrets). */
+  app.get("/wallet/logo.png", async (_request, reply) => {
+    if (options.google === undefined) {
+      throw new PageError(404, "notFound");
+    }
+    return reply.code(200).header("content-type", "image/png").header("cache-control", "public, max-age=86400").send(GOOGLE_LOGO_PNG);
   });
 
   /** Sets or removes the card's recovery email (AC 8). */
@@ -630,7 +688,8 @@ ${errorBlock(error, "email-error")}
 
   /**
    * Uses a recovery link once: restore gives every card with that email a new epoch and a new web link, so the old
-   * QR codes and links stop working and the old Apple pass is pushed voided (AC 8); delete removes those cards, their
+   * QR codes and links stop working and the old Apple pass is pushed voided and the old Google object written INACTIVE
+   * (AC 8); delete removes those cards, their
    * passes and registrations, and any phone number left without a card (AC 9). All in one transaction across the
    * customer's cafés.
    */

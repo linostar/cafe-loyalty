@@ -9,6 +9,8 @@ export {
   STAFF_PIN_MAX_LENGTH,
   STAFF_PIN_MIN_LENGTH,
   cafeSetupSchema,
+  REPEATED_DELIVERY_FAILURES,
+  walletDeliveriesSchema,
   cafeUpdateSchema,
   deviceCatalogSchema,
   deviceInfoSchema,
@@ -50,6 +52,7 @@ export {
   type Redemption,
   type StaffMember,
   type TokenRenewalRequest,
+  type WalletDeliveries,
 } from "./cafe-setup.js";
 export { EnvError, loadEnv } from "./env.js";
 export {

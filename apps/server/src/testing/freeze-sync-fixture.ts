@@ -33,7 +33,7 @@ const cards = { qr: { cardId: randomUUID() }, phone: { cardId: randomUUID(), pho
 // Test-only keys, kept in the fixture so the replay can check its QR codes and phone lookups.
 const secrets = { phoneLookupPepper: randomBytes(32).toString("base64"), cardQrKey: { id: "fx1", key: randomBytes(32).toString("base64") } };
 const cardQr = signCardQr(
-  { phoneLookupPepper: Buffer.alloc(32), phoneEncryption: { keys: [] }, cardQr: { keys: [{ id: secrets.cardQrKey.id, key: Buffer.from(secrets.cardQrKey.key, "base64") }] } },
+  { cardQr: { keys: [{ id: secrets.cardQrKey.id, key: Buffer.from(secrets.cardQrKey.key, "base64") }] } },
   { cardId: cards.qr.cardId, cafeId, epoch: 1 },
 );
 let sequence = 0;

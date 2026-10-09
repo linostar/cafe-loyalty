@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, webcrypto } from "node:crypto";
-import { APPLE_PASS_UPDATE_QUEUE, createJobQueue, startJobQueue, type PgBoss } from "@cafe-loyalty/db";
+import { APPLE_PASS_UPDATE_QUEUE, createJobQueue, startJobQueue, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
 import {
   COUNTER_BUILT_AT_HEADER,
@@ -23,7 +23,7 @@ import { BackgroundTasks } from "../background.js";
 import { createOwnerInvite } from "../invites.js";
 import type { EmailMessage, Mailer } from "../mailer.js";
 import { passkitRoutes } from "../passkit-routes.js";
-import { testApplePasses } from "./certificates.js";
+import { testApplePasses, testGoogleWallet } from "./certificates.js";
 
 export const DASHBOARD_URL = "https://dashboard.example.test";
 export const COUNTER_URL = "https://counter.example.test";
@@ -39,6 +39,9 @@ export const TEST_SECRETS: CustomerSecrets = {
 
 /** Apple Wallet settings with self-signed certificates, fresh per test file. */
 export const TEST_APPLE: ApplePassConfig = testApplePasses();
+
+/** Google Wallet settings with a test service account key, fresh per test file; `publicKey` checks its signatures. */
+export const TEST_GOOGLE = testGoogleWallet();
 
 export class FakeMailer implements Mailer {
   readonly sent: EmailMessage[] = [];
@@ -205,18 +208,24 @@ export function useApiHarness() {
       return jobs;
     },
 
-    /** Apple pass update jobs queued for a café's passes, oldest first: the pass ids, and the job states. */
-    queuedPassUpdates: async (cafeId: string): Promise<{ passId: string; state: string }[]> => {
+    /** Pass update jobs (Apple's unless `queue` says otherwise) queued for a café's passes, oldest first: the pass ids, and the job states. */
+    queuedPassUpdates: async (cafeId: string, queue = APPLE_PASS_UPDATE_QUEUE): Promise<{ passId: string; state: string }[]> => {
       const { rows } = await context.admin.query<{ pass_id: string; state: string }>(
         "SELECT data->>'passId' AS pass_id, state FROM pgboss.job WHERE name = $1 AND data->>'cafeId' = $2 ORDER BY created_on, id",
-        [APPLE_PASS_UPDATE_QUEUE, cafeId],
+        [queue, cafeId],
       );
       return rows.map((row) => ({ passId: row.pass_id, state: row.state }));
     },
 
     /** `jobs: null` builds the app as the server runs when its job queue could not start. */
     harness: async (
-      overrides: { customerLimits?: { signupPerCafe?: number }; secrets?: CustomerSecrets; apple?: ApplePassConfig | null; jobs?: null } = {},
+      overrides: {
+        customerLimits?: { signupPerCafe?: number };
+        secrets?: CustomerSecrets;
+        apple?: ApplePassConfig | null;
+        google?: GoogleWalletConfig | null;
+        jobs?: null;
+      } = {},
     ): Promise<Harness> => {
       const logs: string[] = [];
       const routes: RegisteredRoute[] = [];
@@ -249,6 +258,7 @@ export function useApiHarness() {
         secrets: overrides.secrets ?? TEST_SECRETS,
         jobs: overrides.jobs === null ? undefined : context.jobs,
         apple,
+        google: overrides.google === null ? undefined : (overrides.google ?? TEST_GOOGLE.config),
         ...(overrides.customerLimits === undefined ? {} : { limits: overrides.customerLimits }),
       });
       if (apple !== undefined) {

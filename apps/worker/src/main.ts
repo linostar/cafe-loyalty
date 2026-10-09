@@ -1,6 +1,7 @@
 import { JOB_STATEMENT_TIMEOUT_MS, createDatabase, createJobQueue } from "@cafe-loyalty/db";
 import { formatStartupFailure } from "@cafe-loyalty/shared";
 import { createApnsPusher } from "./apns.js";
+import { createGoogleWallet } from "./google-wallet.js";
 import { loadWorkerConfig, type WorkerConfig } from "./config.js";
 import { jobQueueTask } from "./jobs.js";
 import { createLogger } from "./logger.js";
@@ -16,6 +17,9 @@ try {
 const logger = createLogger(config.LOG_LEVEL);
 if (config.applePasses === undefined) {
   logger.warn("Apple Wallet is off: no APPLE_PASS_* variables are set, so Apple pass updates stay queued for a worker that has them");
+}
+if (config.googlePasses === undefined) {
+  logger.warn("Google Wallet is off: no GOOGLE_WALLET_* variables are set, so Google pass updates stay queued for a worker that has them");
 }
 
 const database = createDatabase({
@@ -35,6 +39,10 @@ const tasks: WorkerTask[] = [
   jobQueueTask(createJobQueue(config.DATABASE_URL, logger, { applicationName: "cafe-loyalty-worker", maxConnections: 4 }), logger, config.SHUTDOWN_TIMEOUT_MS, {
     db: database.db,
     pusher: config.applePasses === undefined ? undefined : createApnsPusher(config.applePasses),
+    google:
+      config.googlePasses === undefined
+        ? undefined
+        : { wallet: createGoogleWallet({ serviceAccount: config.googlePasses.serviceAccount }), settings: config.googlePasses.settings },
   }),
 ];
 const controller = new AbortController();

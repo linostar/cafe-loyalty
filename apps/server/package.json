@@ -9,6 +9,7 @@
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node dist/main.js",
     "create-invite": "node --env-file-if-exists=../../.env dist/create-invite-cli.js",
+    "wallet-check": "node --env-file-if-exists=../../.env dist/wallet-check-cli.js",
     "freeze-sync-fixture": "tsx src/testing/freeze-sync-fixture.ts"
   },
   "dependencies": {
