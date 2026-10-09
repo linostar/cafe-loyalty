@@ -7,6 +7,7 @@
 import { randomBytes, randomUUID, webcrypto } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { syncEventSigningPayload } from "@cafe-loyalty/shared";
+import { signCardQr } from "../customer-crypto.js";
 import { z } from "zod";
 import type { SyncFixture } from "./sync-fixtures.js";
 
@@ -25,7 +26,16 @@ const recordedAt = new Date().toISOString();
 const keys = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
 const jwk = await webcrypto.subtle.exportKey("jwk", keys.publicKey);
 const device = { deviceId: randomUUID(), keyId: randomUUID(), publicKey: { kty: "EC" as const, crv: "P-256" as const, x: jwk.x ?? "", y: jwk.y ?? "" } };
+const cafeId = randomUUID();
 const staffId = randomUUID();
+const orderTypeId = randomUUID();
+const cards = { qr: { cardId: randomUUID() }, phone: { cardId: randomUUID(), phone: "+96170000000" } };
+// Test-only keys, kept in the fixture so the replay can check its QR codes and phone lookups.
+const secrets = { phoneLookupPepper: randomBytes(32).toString("base64"), cardQrKey: { id: "fx1", key: randomBytes(32).toString("base64") } };
+const cardQr = signCardQr(
+  { phoneLookupPepper: Buffer.alloc(32), phoneEncryption: { keys: [] }, cardQr: { keys: [{ id: secrets.cardQrKey.id, key: Buffer.from(secrets.cardQrKey.key, "base64") }] } },
+  { cardId: cards.qr.cardId, cafeId, epoch: 1 },
+);
 let sequence = 0;
 
 /** An event built and signed exactly as the counter's recordEvent does it (apps/counter/src/sync.ts). */
@@ -36,10 +46,10 @@ async function event(type: string, schemaVersion: number, payload: Record<string
   return { ...fields, signature: Buffer.from(signature).toString("base64url") };
 }
 
-const item = { orderTypeId: randomUUID(), quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 };
-const byQr = await event("visit.recorded", 1, { card: { kind: "qr", token: `v1.${randomBytes(8).toString("hex")}` }, items: [item], totalCents: 700 });
+const item = { orderTypeId, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 };
+const byQr = await event("visit.recorded", 1, { card: { kind: "qr", token: cardQr }, items: [item], totalCents: 700 });
 // A fake test number (Lebanese mobile format).
-const byPhone = await event("visit.recorded", 1, { card: { kind: "phone", phone: "+96170000000" }, items: [item], totalCents: 700 });
+const byPhone = await event("visit.recorded", 1, { card: { kind: "phone", phone: cards.phone.phone }, items: [item], totalCents: 700 });
 const lockout = await event("staff.pin_lockout", 1, { failedAttempts: 5, lockedUntil: new Date(Date.parse(recordedAt) + 30_000).toISOString() });
 // A type no release will ever define, standing in for one a newer counter build sends: it must stay unsupported.
 const fromTheFuture = await event("test.never-supported", 1, { note: "from a newer build" });
@@ -49,8 +59,12 @@ const fixture: SyncFixture = {
   build: process.env.BUILD_ID ?? "dev",
   builtAt,
   recordedAt,
+  cafeId,
   device,
   staffId,
+  orderTypeId,
+  cards,
+  secrets,
   requests: [
     {
       events: [byQr, byPhone, lockout, fromTheFuture, malformed],

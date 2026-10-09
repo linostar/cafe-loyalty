@@ -39,5 +39,9 @@ export {
   type SyncEventStatus,
   type SyncEventsTable,
   type SyncHoldReason,
+  type RedemptionsTable,
+  type VisitItemsTable,
+  type VisitOutcome,
+  type VisitsTable,
   type TableName,
 } from "./schema.js";

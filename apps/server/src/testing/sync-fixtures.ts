@@ -8,8 +8,16 @@ export const syncFixtureSchema = z.object({
   builtAt: z.iso.datetime({ offset: false }),
   /** The time the events were recorded; the replay runs at this server time, so the clock-skew rules match. */
   recordedAt: z.iso.datetime({ offset: false }),
+  /** The café the cards' QR codes name. */
+  cafeId: z.uuid(),
   device: z.object({ deviceId: z.uuid(), keyId: z.uuid(), publicKey: devicePublicKeySchema }),
   staffId: z.uuid(),
+  /** The order type the visits buy, earning one stamp each. */
+  orderTypeId: z.uuid(),
+  /** A card scanned by QR, and a card already confirmed at the counter, stamped by phone number. */
+  cards: z.object({ qr: z.object({ cardId: z.uuid() }), phone: z.object({ cardId: z.uuid(), phone: z.string() }) }),
+  /** Test-only secrets the replay uses, so the QR codes and phone lookups of the frozen events still match. */
+  secrets: z.object({ phoneLookupPepper: z.base64(), cardQrKey: z.object({ id: z.string(), key: z.base64() }) }),
   requests: z
     .array(
       z.object({

@@ -1,4 +1,4 @@
-import { deviceStaffSchema, normalizePairingCode } from "@cafe-loyalty/shared";
+import { deviceCatalogSchema, deviceStaffSchema, normalizePairingCode, type DeviceCatalog } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequestFor, pairDevice } from "./device.js";
 import { attemptPin } from "./pin.js";
@@ -11,6 +11,7 @@ import {
   listRejected,
   onStorageChange,
   setMeta,
+  storeCatalog,
   storeStaff,
   type DeviceRecord,
   type RejectedEvent,
@@ -19,6 +20,7 @@ import {
 import { syncQueue } from "./sync.js";
 import { useServiceWorkerUpdate, type UpdateState } from "./updates.js";
 import { useOnlineStatus } from "./useOnlineStatus.js";
+import { CounterScreen } from "./visit.js";
 
 /** How often a counter with waiting events tries to send them. */
 const SYNC_INTERVAL_MS = 30_000;
@@ -34,11 +36,19 @@ interface Stored {
   baristaId: string | undefined;
   pending: number;
   rejected: RejectedEvent[];
+  catalog: DeviceCatalog | undefined;
 }
 
 async function readStored(): Promise<Stored> {
-  const [device, staff, barista, pending, rejected] = await Promise.all([getMeta("device"), getMeta("staff"), getMeta("barista"), countQueued(), listRejected()]);
-  return { device, staff: staff ?? [], baristaId: barista?.staffId, pending, rejected };
+  const [device, staff, barista, pending, rejected, catalog] = await Promise.all([
+    getMeta("device"),
+    getMeta("staff"),
+    getMeta("barista"),
+    countQueued(),
+    listRejected(),
+    getMeta("catalog"),
+  ]);
+  return { device, staff: staff ?? [], baristaId: barista?.staffId, pending, rejected, catalog };
 }
 
 const EVENT_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };
@@ -489,6 +499,8 @@ export function App() {
         const { body, keyId } = await deviceRequestFor("GET", "/api/device/staff", deviceStaffSchema);
         // Only for the pairing the request was made for; a barista the owner removed is signed out.
         await storeStaff(keyId, body.staff);
+        const catalog = await deviceRequestFor("GET", "/api/device/catalog", deviceCatalogSchema);
+        await storeCatalog(catalog.keyId, catalog.body);
         setNotice(null);
       }),
     [handled],
@@ -615,6 +627,9 @@ export function App() {
           <p>
             Signed in as <strong>{barista?.name}</strong> on {stored?.device?.deviceName}.
           </p>
+          {device === undefined || barista === undefined ? null : (
+            <CounterScreen device={device} barista={barista} catalog={stored?.catalog} online={online} onBusy={setBusy} />
+          )}
           <button
             type="button"
             onClick={() => {

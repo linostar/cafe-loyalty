@@ -51,6 +51,17 @@ const keyIdOf = (cafeId: string): string => {
   }
   return id;
 };
+/** Ids each café's fixtures share between tables (order type, card, sync event, visit), like ownerIdOf. */
+const sharedIds = new Map<string, string>();
+const idOf = (kind: string, cafeId: string): string => {
+  const key = `${kind}:${cafeId}`;
+  let id = sharedIds.get(key);
+  if (id === undefined) {
+    id = randomUUID();
+    sharedIds.set(key, id);
+  }
+  return id;
+};
 const PUBLIC_KEY = JSON.stringify({ kty: "EC", crv: "P-256", x: "A".repeat(43), y: "B".repeat(43) });
 
 /** Tables without a café of their own (TENANT_KEY null), tested in customers.integration.test.ts. */
@@ -66,7 +77,7 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
   order_types: (trx, cafeId) =>
     trx
       .insertInto("order_types")
-      .values({ cafe_id: cafeId, name_ar: "إسبريسو", name_en: "Espresso", price_cents: 250, cost_cents: 70 })
+      .values({ id: idOf("orderType", cafeId), cafe_id: cafeId, name_ar: "إسبريسو", name_en: "Espresso", price_cents: 250, cost_cents: 70 })
       .execute(),
   audit_log: (trx, cafeId) =>
     trx
@@ -116,11 +127,12 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       })
       .execute(),
   cards: (trx, cafeId) =>
-    trx.insertInto("cards").values({ cafe_id: cafeId, web_secret_hash: randomBytes(32), privacy_accepted_at: new Date() }).execute(),
+    trx.insertInto("cards").values({ id: idOf("card", cafeId), cafe_id: cafeId, web_secret_hash: randomBytes(32), privacy_accepted_at: new Date() }).execute(),
   sync_events: (trx, cafeId) =>
     trx
       .insertInto("sync_events")
       .values({
+        id: idOf("syncEvent", cafeId),
         cafe_id: cafeId,
         device_id: deviceIdOf(cafeId),
         event_id: randomUUID(),
@@ -132,6 +144,52 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
         sequence: 0,
         occurred_at: new Date(),
         status: "applied",
+      })
+      .execute(),
+  visits: (trx, cafeId) =>
+    trx
+      .insertInto("visits")
+      .values({
+        id: idOf("visit", cafeId),
+        cafe_id: cafeId,
+        sync_event_id: idOf("syncEvent", cafeId),
+        card_id: idOf("card", cafeId),
+        identified_by: "qr",
+        device_id: deviceIdOf(cafeId),
+        staff_id: staffIdOf(cafeId),
+        occurred_at: new Date(),
+        total_cents: 250,
+        stamps_earned: 1,
+        stamps_added: 1,
+        outcome: "stamped",
+      })
+      .execute(),
+  visit_items: (trx, cafeId) =>
+    trx
+      .insertInto("visit_items")
+      .values({
+        cafe_id: cafeId,
+        visit_id: idOf("visit", cafeId),
+        line: 0,
+        order_type_id: idOf("orderType", cafeId),
+        quantity: 1,
+        unit_price_cents: 250,
+        unit_cost_cents: 70,
+        catalog_version: 1,
+        stamps_each: 1,
+      })
+      .execute(),
+  redemptions: (trx, cafeId) =>
+    trx
+      .insertInto("redemptions")
+      .values({
+        cafe_id: cafeId,
+        device_id: deviceIdOf(cafeId),
+        event_id: randomUUID(),
+        card_id: idOf("card", cafeId),
+        staff_id: staffIdOf(cafeId),
+        stamps_used: 9,
+        stamps_left: 0,
       })
       .execute(),
 };

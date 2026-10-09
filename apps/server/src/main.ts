@@ -37,6 +37,12 @@ const mailer = createSmtpMailer({
 });
 const background = new BackgroundTasks(app.log);
 
+const secrets = {
+  phoneLookupPepper: Buffer.from(config.PHONE_LOOKUP_PEPPER, "base64"),
+  phoneEncryption: { keys: config.PHONE_ENCRYPTION_KEYS },
+  cardQr: { keys: config.CARD_QR_KEYS },
+};
+
 await app.register(apiRoutes, {
   prefix: "/api",
   db: database.db,
@@ -46,13 +52,14 @@ await app.register(apiRoutes, {
   counterUrl: config.COUNTER_URL,
   publicUrl: config.PUBLIC_URL,
   releaseBuiltAt: config.BUILT_AT,
+  secrets,
 });
 await app.register(customerPages, {
   db: database.db,
   mailer,
   background,
   publicUrl: config.PUBLIC_URL,
-  secrets: { phoneLookupPepper: Buffer.from(config.PHONE_LOOKUP_PEPPER, "base64"), phoneEncryption: { keys: config.PHONE_ENCRYPTION_KEYS }, cardQr: { keys: config.CARD_QR_KEYS } },
+  secrets,
 });
 // Runs once the server has stopped taking requests: finish emails in flight, then release connections.
 app.addHook("onClose", async () => {

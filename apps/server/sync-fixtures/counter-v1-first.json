@@ -1,38 +1,56 @@
 {
-  "build": "f8a23e2d0e36d7deabcafccbc6f0f65f82b9248c",
-  "builtAt": "2026-10-09T09:11:18Z",
-  "recordedAt": "2026-10-09T09:20:49.035Z",
+  "build": "6fd4fea6c6c61eb06c0ea98384cb05d6b8d0c19c",
+  "builtAt": "2026-10-09T10:11:26Z",
+  "recordedAt": "2026-10-09T10:26:31.511Z",
+  "cafeId": "f1f70211-3fe5-453e-b765-4b76e76c7333",
   "device": {
-    "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-    "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+    "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+    "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
     "publicKey": {
       "kty": "EC",
       "crv": "P-256",
-      "x": "YN2rTYbsENKtKlmQrB1lu3LaA-J_BkGW-GKCo2eylPc",
-      "y": "Ee1rKuGLP0-wQrNQLDo62W-wUssRkmT2Wn2DDhsFFiE"
+      "x": "gZru2EfOll4-tWSqKWl-015pDm45KebZNn1IhtIq3c4",
+      "y": "_cuiajkkpOHj3mIu1ivptHpTK49VJdyKk9t_DLxgYcQ"
     }
   },
-  "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+  "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
+  "orderTypeId": "04fea59f-a1c4-4b97-8888-4c3a74785088",
+  "cards": {
+    "qr": {
+      "cardId": "ba1df54b-6010-4e41-94ce-f3036dcea633"
+    },
+    "phone": {
+      "cardId": "dde9ae76-3bd0-41df-9321-e4b6b0782597",
+      "phone": "+96170000000"
+    }
+  },
+  "secrets": {
+    "phoneLookupPepper": "PQCz6grzSh0OQLdbZLqsDohouX3LA98vp92H2tKE9yA=",
+    "cardQrKey": {
+      "id": "fx1",
+      "key": "jUzMmpiPvp9Ae/+G7OOQJn3IyBD/wwBRDrXixSsTU90="
+    }
+  },
   "requests": [
     {
       "events": [
         {
-          "eventId": "6fc71fc0-e005-4618-8138-55fd00f74eca",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "72c8ea95-a41f-4ca5-8fbe-93e6e0ee3af8",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 1,
           "schemaVersion": 1,
           "type": "visit.recorded",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "card": {
               "kind": "qr",
-              "token": "v1.e1416e2079279b54"
+              "token": "v1.ba1df54b-6010-4e41-94ce-f3036dcea633.f1f70211-3fe5-453e-b765-4b76e76c7333.1.fx1.ecpol9Sq0MmuTVhdghkFR5zNstMzmQObAmPslK1OMAM"
             },
             "items": [
               {
-                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "orderTypeId": "04fea59f-a1c4-4b97-8888-4c3a74785088",
                 "quantity": 2,
                 "unitPriceCents": 350,
                 "unitCostCents": 120,
@@ -41,17 +59,17 @@
             ],
             "totalCents": 700
           },
-          "signature": "dINb5QgQgSl5chR8mdhdmvpIRhTVCQVjOmSd4HgVnOgRGP2yj7g4lamCU0lS_4klv02uAmof4G-ylDr52FLZLg"
+          "signature": "kASHEEJ5yw53QmBpcGUqznCr-4S3tFB5eDC46w7gdgMGosY5Pw90Z4VZjFPIPgeKL4r2B19Xx3oVvnQ0LPU05w"
         },
         {
-          "eventId": "61c470d9-70a2-4f9e-a564-f4e89ee5a129",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "f9750a8e-b51c-4c43-8e52-e3b6d988f7e9",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 2,
           "schemaVersion": 1,
           "type": "visit.recorded",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "card": {
               "kind": "phone",
@@ -59,7 +77,7 @@
             },
             "items": [
               {
-                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "orderTypeId": "04fea59f-a1c4-4b97-8888-4c3a74785088",
                 "quantity": 2,
                 "unitPriceCents": 350,
                 "unitCostCents": 120,
@@ -68,46 +86,46 @@
             ],
             "totalCents": 700
           },
-          "signature": "Sb_fCXZM0B2--TKvMOS9LWUuOn4y5VCHwBmtBMzeyn2SMW6w_ta0JMNhwdz4ivBi-IjYr6EThG___x8Efoa7fA"
+          "signature": "Kzx8Ak9sq1GTqYY3eZ-yrixoQjeWAome0OcCh8bxJXxJ0TzOul2VVy99Er6EequvbW4ZCrvznlTW8t44y8-NHQ"
         },
         {
-          "eventId": "09b1cc76-2230-4c08-ace0-4c6bcbcb0974",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "c41ddce6-53a9-4c6c-b1ea-74376e108089",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 3,
           "schemaVersion": 1,
           "type": "staff.pin_lockout",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "failedAttempts": 5,
-            "lockedUntil": "2026-10-09T09:21:19.035Z"
+            "lockedUntil": "2026-10-09T10:27:01.511Z"
           },
-          "signature": "foi5BBBj8MUhIwHa7NbLWN1SAVZR2rW3qUm8vFVtJmxeA8PCdxUF71u8bdhgolbv59S5LJH3yRhpSAGBmb95mA"
+          "signature": "4mkBTY9t96YyV44B-W-koGlwv8OTFkG7v3NkGvNZuvZ0kzgaGjDXCXVkv9TNH9KMvU-PlH3sv4jDt15kz6QzoA"
         },
         {
-          "eventId": "9c87ce9b-5a49-4364-97db-2bfc8428275c",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "b689928f-5bc6-4734-bb0f-fd687331e805",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 4,
           "schemaVersion": 1,
           "type": "test.never-supported",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "note": "from a newer build"
           },
-          "signature": "zeoAenWsjEmgcFUoJilu91pOlNhlPWs55kHP_TaQ-1figpYAt0cp1hdlUTllwgcOCYdf_neJGcCV5OeC1CjkhA"
+          "signature": "umt1EjAHZydBvmZovYPipk_sEEYFAFczg6Z2KYmk0H8UiwnPxZnRYOxc7XT0E3OHVedJPwqDFfDvU_HEnSA8gw"
         },
         {
-          "eventId": "4b00c603-80c7-4caf-bc1d-082f16e4250d",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "f9b4bbec-91b1-4f97-b1e1-7ea73b51e786",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 5,
           "schemaVersion": 1,
           "type": "visit.recorded",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "card": {
               "kind": "qr",
@@ -116,7 +134,7 @@
             "items": [],
             "totalCents": 0
           },
-          "signature": "vrGtOcVzAhvZaLIA--0qOlonWnJ9NAOz33lJupKAGnMUwJE1sCtYPV1AyfngsggiIt-sPgptxtDVCp3yGZvI1g"
+          "signature": "WzkTu9upYr0VFQBcniJ83lZ-VShql89YmyGe_MH0QAQJIT63l4iYqW8AB-qy17garUJyLjC8PJc8G0K3nHsJzA"
         }
       ],
       "results": [
@@ -145,22 +163,22 @@
     {
       "events": [
         {
-          "eventId": "6fc71fc0-e005-4618-8138-55fd00f74eca",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "72c8ea95-a41f-4ca5-8fbe-93e6e0ee3af8",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 1,
           "schemaVersion": 1,
           "type": "visit.recorded",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "card": {
               "kind": "qr",
-              "token": "v1.e1416e2079279b54"
+              "token": "v1.ba1df54b-6010-4e41-94ce-f3036dcea633.f1f70211-3fe5-453e-b765-4b76e76c7333.1.fx1.ecpol9Sq0MmuTVhdghkFR5zNstMzmQObAmPslK1OMAM"
             },
             "items": [
               {
-                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "orderTypeId": "04fea59f-a1c4-4b97-8888-4c3a74785088",
                 "quantity": 2,
                 "unitPriceCents": 350,
                 "unitCostCents": 120,
@@ -169,17 +187,17 @@
             ],
             "totalCents": 700
           },
-          "signature": "dINb5QgQgSl5chR8mdhdmvpIRhTVCQVjOmSd4HgVnOgRGP2yj7g4lamCU0lS_4klv02uAmof4G-ylDr52FLZLg"
+          "signature": "kASHEEJ5yw53QmBpcGUqznCr-4S3tFB5eDC46w7gdgMGosY5Pw90Z4VZjFPIPgeKL4r2B19Xx3oVvnQ0LPU05w"
         },
         {
-          "eventId": "61c470d9-70a2-4f9e-a564-f4e89ee5a129",
-          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
-          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
-          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "eventId": "f9750a8e-b51c-4c43-8e52-e3b6d988f7e9",
+          "deviceId": "f953e885-622a-4983-901b-059c4d6268da",
+          "keyId": "0e5b844c-b3b6-4c93-a7f2-8756c0d9a3be",
+          "staffId": "966eb9a8-389a-4a25-9a79-c6a41356f508",
           "sequence": 2,
           "schemaVersion": 1,
           "type": "visit.recorded",
-          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "occurredAt": "2026-10-09T10:26:31.511Z",
           "payload": {
             "card": {
               "kind": "phone",
@@ -187,7 +205,7 @@
             },
             "items": [
               {
-                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "orderTypeId": "04fea59f-a1c4-4b97-8888-4c3a74785088",
                 "quantity": 2,
                 "unitPriceCents": 350,
                 "unitCostCents": 120,
@@ -196,7 +214,7 @@
             ],
             "totalCents": 700
           },
-          "signature": "Sb_fCXZM0B2--TKvMOS9LWUuOn4y5VCHwBmtBMzeyn2SMW6w_ta0JMNhwdz4ivBi-IjYr6EThG___x8Efoa7fA"
+          "signature": "Kzx8Ak9sq1GTqYY3eZ-yrixoQjeWAome0OcCh8bxJXxJ0TzOul2VVy99Er6EequvbW4ZCrvznlTW8t44y8-NHQ"
         }
       ],
       "results": [

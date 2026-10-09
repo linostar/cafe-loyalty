@@ -14,7 +14,7 @@ import { afterAll, afterEach, beforeAll, expect } from "vitest";
 import type { RouteAccess } from "../access.js";
 import { apiRoutes } from "../api.js";
 import { customerPages } from "../customer-pages.js";
-import type { CustomerSecrets } from "../customer-crypto.js";
+import { encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "../customer-crypto.js";
 import { buildApp } from "../app.js";
 import { BackgroundTasks } from "../background.js";
 import { createOwnerInvite } from "../invites.js";
@@ -186,7 +186,7 @@ export function useApiHarness() {
       return admin;
     },
 
-    harness: async (overrides: { customerLimits?: { signupPerCafe?: number } } = {}): Promise<Harness> => {
+    harness: async (overrides: { customerLimits?: { signupPerCafe?: number }; secrets?: CustomerSecrets } = {}): Promise<Harness> => {
       const logs: string[] = [];
       const routes: RegisteredRoute[] = [];
       const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
@@ -206,13 +206,14 @@ export function useApiHarness() {
         counterUrl: COUNTER_URL,
         publicUrl: PUBLIC_URL,
         releaseBuiltAt: RELEASE_BUILT_AT,
+        secrets: overrides.secrets ?? TEST_SECRETS,
       });
       await app.register(customerPages, {
         db: context.testDb.app.db,
         mailer,
         background,
         publicUrl: PUBLIC_URL,
-        secrets: TEST_SECRETS,
+        secrets: overrides.secrets ?? TEST_SECRETS,
         ...(overrides.customerLimits === undefined ? {} : { limits: overrides.customerLimits }),
       });
       await app.ready();
@@ -284,6 +285,29 @@ export function useApiHarness() {
           await holder.end();
         },
       };
+    },
+
+    /**
+     * A card of `cafeId` as signup makes it, with its QR signed by the test keys. With `phone`, the card is linked to
+     * that number, and `phoneConfirmed` marks it as already scanned at a counter (so it may be stamped by phone).
+     */
+    issueCard: async (cafeId: string, options: { phone?: string; phoneConfirmed?: boolean } = {}): Promise<{ cardId: string; qr: string }> => {
+      let customerId: string | null = null;
+      if (options.phone !== undefined) {
+        const encrypted = encryptPhone(TEST_SECRETS, options.phone);
+        const { rows } = await context.admin.query<{ id: string }>(
+          "INSERT INTO app.customers (phone_lookup, phone_ciphertext, phone_key_id) VALUES ($1, $2, $3) RETURNING id",
+          [phoneLookup(TEST_SECRETS, options.phone), encrypted.ciphertext, encrypted.keyId],
+        );
+        customerId = rows[0]?.id ?? null;
+      }
+      const { rows } = await context.admin.query<{ id: string }>(
+        `INSERT INTO app.cards (cafe_id, customer_id, web_secret_hash, privacy_accepted_at, phone_confirmed_at)
+         VALUES ($1, $2, $3, now(), CASE WHEN $4 THEN now() END) RETURNING id`,
+        [cafeId, customerId, randomBytes(32), options.phoneConfirmed === true],
+      );
+      const cardId = rows[0]?.id ?? "missing";
+      return { cardId, qr: signCardQr(TEST_SECRETS, { cardId, cafeId, epoch: 1 }) };
     },
 
     auditActions: async (cafeId: string): Promise<string[]> => {

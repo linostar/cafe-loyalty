@@ -17,10 +17,15 @@ import {
 } from "./testing/api-harness.js";
 
 const context = useApiHarness();
-const { harness, signUp, pairDevice, auditActions } = context;
+const { harness, signUp, pairDevice, auditActions, issueCard } = context;
 
-const ORDER_TYPE_ID = "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f";
-const QR_TOKEN = "v1.card.cafe.1.q1.mac";
+/**
+ * Each café's order type and card, by device: these tests are about the sync protocol, so the order type earns no
+ * stamps and the stamping rules (stamping.integration.test.ts) never change an answer.
+ */
+const cafeOf = new Map<string, { orderTypeId: string; qr: string }>();
+let lastCafe: { orderTypeId: string; qr: string } = { orderTypeId: "missing", qr: "missing" };
+const ORDER_TYPE = { nameAr: "إسبريسو", nameEn: "Espresso", priceCents: 350, costCents: 120, stampsEarned: 0 };
 
 async function counterApp() {
   const h = await harness();
@@ -30,7 +35,11 @@ async function counterApp() {
   const staff = (await as("POST", "/api/staff", { name: "Rami", pin: "482913" })).json<{ staff: { id: string }[] }>().staff;
   const staffId = staff[0]?.id ?? "missing";
   const device = await pairDevice(h.app, owner);
-  return { ...h, owner, as, staffId, device };
+  const orderTypeId = (await as("POST", "/api/cafe/order-types", ORDER_TYPE)).json<{ orderTypes: { id: string }[] }>().orderTypes[0]?.id ?? "missing";
+  const { qr } = await issueCard(owner.cafeId);
+  lastCafe = { orderTypeId, qr };
+  cafeOf.set(device.deviceId, lastCafe);
+  return { ...h, owner, as, staffId, device, orderTypeId, qr };
 }
 
 let sequence = 0;
@@ -38,6 +47,7 @@ let sequence = 0;
 /** A valid visit as the counter records it, signed by `device`. */
 function visit(device: PairedDevice, staffId: string, overrides: Record<string, unknown> = {}) {
   sequence += 1;
+  const { orderTypeId, qr } = cafeOf.get(device.deviceId) ?? lastCafe;
   return signedEvent(device, {
     eventId: randomUUID(),
     staffId,
@@ -46,8 +56,8 @@ function visit(device: PairedDevice, staffId: string, overrides: Record<string, 
     type: "visit.recorded",
     occurredAt: new Date().toISOString(),
     payload: {
-      card: { kind: "qr", token: QR_TOKEN },
-      items: [{ orderTypeId: ORDER_TYPE_ID, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 }],
+      card: { kind: "qr", token: qr },
+      items: [{ orderTypeId, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 }],
       totalCents: 700,
     },
     ...overrides,
@@ -85,7 +95,7 @@ describe("sync", () => {
     const now = Date.now();
     const events = [
       await visit(device, staffId),
-      await visit(device, staffId, { payload: { card: { kind: "qr", token: QR_TOKEN }, items: [], totalCents: 0 } }),
+      await visit(device, staffId, { payload: { card: { kind: "qr", token: lastCafe.qr }, items: [], totalCents: 0 } }),
       await visit(device, staffId, { type: "test.never-supported" }),
       await visit(device, staffId, { schemaVersion: 2 }),
       await visit({ ...device, privateKey: other.privateKey }, staffId),
@@ -128,8 +138,9 @@ describe("sync", () => {
   });
 
   it("accepts a full batch of the largest events within the body limit", async () => {
-    const { app, device, staffId } = await counterApp();
-    const items = Array.from({ length: 30 }, () => ({ orderTypeId: ORDER_TYPE_ID, quantity: 50, unitPriceCents: 66_666, unitCostCents: 99_999_999, catalogVersion: 2_000_000_000 }));
+    const { app, device, staffId, orderTypeId } = await counterApp();
+    const items = Array.from({ length: 30 }, () => ({ orderTypeId, quantity: 50, unitPriceCents: 66_666, unitCostCents: 99_999_999, catalogVersion: 2_000_000_000 }));
+    // The longest card reference v1 accepts, which no card has: refused, but carried in full.
     const events = await Promise.all(
       Array.from({ length: MAX_SYNC_BATCH }, () =>
         visit(device, staffId, { payload: { card: { kind: "qr", token: "Q".repeat(512) }, items, totalCents: 30 * 50 * 66_666 } }),
@@ -138,7 +149,7 @@ describe("sync", () => {
     const body = JSON.stringify({ events });
     expect(body.length).toBeLessThan(SYNC_BODY_LIMIT_BYTES);
     const results = await sync(app, device.accessToken, events);
-    expect(results.every((result) => result.code === "OK")).toBe(true);
+    expect(results.every((result) => result.code === "CARD_NOT_FOUND")).toBe(true);
   });
 
   it("refuses a body over the limit with the shared envelope", async () => {
@@ -198,7 +209,7 @@ describe("sync", () => {
 
   it("never logs event contents", async () => {
     const { app, device, staffId, logs } = await counterApp();
-    const event = await visit(device, staffId, { payload: { card: { kind: "phone", phone: "+96170123456" }, items: [{ orderTypeId: ORDER_TYPE_ID, quantity: 1, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 }], totalCents: 350 } });
+    const event = await visit(device, staffId, { payload: { card: { kind: "phone", phone: "+96170123456" }, items: [{ orderTypeId: lastCafe.orderTypeId, quantity: 1, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 }], totalCents: 350 } });
     await sync(app, device.accessToken, [event, { ...event, eventId: randomUUID() }]);
     const output = logs.join("");
     expect(output).toContain("sync handled");

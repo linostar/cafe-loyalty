@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { CAMERA_FILE } from "./e2e/counter/camera.js";
 
 const host = process.env.E2E_HOST ?? "127.0.0.1";
 const counterPort = Number(process.env.E2E_COUNTER_PORT ?? "4173");
@@ -25,12 +26,22 @@ function previewServer(app: string, port: number): PreviewServer {
 
 export default defineConfig({
   testDir: "e2e",
+  globalSetup: "./e2e/global-setup.ts",
   forbidOnly: isCi,
   retries: 0,
   reporter: isCi ? [["github"], ["html", { open: "never" }]] : "list",
   use: { trace: "retain-on-failure", browserName: "chromium", ...phone },
   projects: [
-    { name: "counter", testMatch: "counter/**/*.spec.ts", use: { baseURL: `http://${host}:${String(counterPort)}` } },
+    {
+      name: "counter",
+      testMatch: "counter/**/*.spec.ts",
+      use: {
+        baseURL: `http://${host}:${String(counterPort)}`,
+        // The phone's camera shows a card QR (e2e/counter/camera.ts), and asking for it is allowed without a prompt.
+        permissions: ["camera"],
+        launchOptions: { args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-video-capture=${CAMERA_FILE}`] },
+      },
+    },
     { name: "dashboard", testMatch: "dashboard/**/*.spec.ts", use: { baseURL: `http://${host}:${String(dashboardPort)}` } },
   ],
   webServer: [previewServer("counter", counterPort), previewServer("dashboard", dashboardPort)],
