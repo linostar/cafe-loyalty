@@ -1,6 +1,6 @@
-import { MAX_SYNC_BATCH, isFinalSyncStatus, readSyncResponse, syncEventSigningPayload } from "@cafe-loyalty/shared";
+import { MAX_SYNC_BATCH, isDeviceRevokedResponse, isFinalSyncStatus, readSyncResponse, syncEventSigningPayload } from "@cafe-loyalty/shared";
 import { z } from "zod";
-import { deviceRequest, signText } from "./device.js";
+import { deviceRequestFor, signText, unpairDevice } from "./device.js";
 import { addQueued, countQueued, getMeta, listQueued, nextSequence, settleQueued, type RejectedEvent } from "./storage.js";
 
 /**
@@ -38,7 +38,8 @@ export interface SyncSummary {
 /**
  * Sends the queue, oldest first, a batch at a time. An event leaves the queue only on applied, duplicate or rejected;
  * a rejected one moves to the error list; anything else (retry_later, no answer, an unknown status) stays (AC 23).
- * Stops at the first batch with an event that must wait, and throws on a failed request, keeping every event.
+ * Stops at the first batch with an event that must wait, and throws on a failed request, keeping every event. A
+ * response saying the device was removed unpairs it (DeviceUnpairedError) once that batch is settled.
  */
 async function drain(): Promise<SyncSummary> {
   let settled = 0;
@@ -47,7 +48,7 @@ async function drain(): Promise<SyncSummary> {
     if (batch.length === 0) {
       return { settled, remaining: 0 };
     }
-    const body = await deviceRequest("POST", "/api/device/sync", z.unknown(), { events: batch.map((queued) => queued.event) });
+    const { body, keyId } = await deviceRequestFor("POST", "/api/device/sync", z.unknown(), { events: batch.map((queued) => queued.event) });
     const results = readSyncResponse(batch.length, body);
     const done: number[] = [];
     const rejected: RejectedEvent[] = [];
@@ -64,6 +65,10 @@ async function drain(): Promise<SyncSummary> {
     });
     await settleQueued(done, rejected);
     settled += done.length;
+    // The owner removed this phone: what it sent is held for review, and it unpairs now (AC 21).
+    if (isDeviceRevokedResponse(body)) {
+      return unpairDevice(keyId, "revoked");
+    }
     if (done.length < batch.length) {
       return { settled, remaining: await countQueued() };
     }

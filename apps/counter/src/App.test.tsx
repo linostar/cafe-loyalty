@@ -91,6 +91,25 @@ describe("Counter App", () => {
     expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
   });
 
+  it("asks before pairing a phone with another café discards what it still has to send there", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/pair");
+    await storePairedDevice({ paired: false, unpairedReason: "pairing_required", cafe: { id: "0f0f0f0f-0000-4000-8000-000000000000", name: "Elsewhere" } });
+    await addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} });
+    await workingApi((call) =>
+      call.path === "/api/device/pair" && (call.body as { previous?: unknown }).previous !== undefined ? { status: 409, body: envelope("PAIRED_ELSEWHERE") } : undefined,
+    );
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Pairing code"), { target: { value: "ABCD-1234-EFGH" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pair this phone" }));
+    expect(await screen.findByText(/still paired with Elsewhere and has 1 item waiting to send there/)).toBeInTheDocument();
+    expect(await getMeta("device")).toMatchObject({ cafe: { name: "Elsewhere" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start over and discard it" }));
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+    expect(await getMeta("device")).toMatchObject({ cafe: CAFE, paired: true });
+    expect(screen.getByText("Nothing waiting to send.")).toBeInTheDocument();
+  });
+
   it("explains a code that is not 12 characters without calling the server", async () => {
     setOnline(true);
     window.history.replaceState(null, "", "/");

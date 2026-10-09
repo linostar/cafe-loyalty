@@ -1,6 +1,6 @@
 import { deviceStaffSchema, normalizePairingCode } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { DeviceUnpairedError, RequestError, deviceRequest, pairDevice } from "./device.js";
+import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequest, pairDevice } from "./device.js";
 import { attemptPin } from "./pin.js";
 import {
   clearRejected,
@@ -122,11 +122,48 @@ function useFragmentCode(): string {
   return code;
 }
 
-function PairScreen({ device, onPaired, onBusy }: { device: DeviceRecord | undefined; onPaired: () => void; onBusy: (busy: boolean) => void }) {
+interface PairScreenProps {
+  device: DeviceRecord | undefined;
+  /** Events waiting to be sent, which starting over (pairing with another café) would discard. */
+  waiting: number;
+  onPaired: () => void;
+  onBusy: (busy: boolean) => void;
+}
+
+function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
   const fromLink = useFragmentCode();
   const [code, setCode] = useState(fromLink);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the code is for another café than the phone's: starting over needs a confirmation if it loses events. */
+  const [elsewhere, setElsewhere] = useState<{ code: string; cafeName: string } | null>(null);
+
+  const pair = (normalized: string, startOver: boolean) => {
+    setPending(true);
+    setError(null);
+    pairDevice(normalized, { startOver }).then(
+      () => {
+        setPending(false);
+        setElsewhere(null);
+        setCode("");
+        onPaired();
+      },
+      (caught: unknown) => {
+        setPending(false);
+        if (caught instanceof PairedElsewhereError && waiting === 0) {
+          // Nothing waits to be sent, so nothing is lost by starting over.
+          pair(normalized, true);
+        } else if (caught instanceof PairedElsewhereError) {
+          setElsewhere({ code: normalized, cafeName: caught.cafeName });
+        } else if (caught instanceof RequestError || caught instanceof DeviceUnpairedError) {
+          setError(caught.message);
+        } else {
+          console.error("Pairing failed", caught);
+          setError("Pairing failed on this phone. Reload the page and try again.");
+        }
+      },
+    );
+  };
   const inputId = useId();
   const errorId = `${inputId}-error`;
 
@@ -154,6 +191,35 @@ function PairScreen({ device, onPaired, onBusy }: { device: DeviceRecord | undef
       </h2>
       {intro}
       <p>On the owner&apos;s dashboard, open Devices and create a pairing code. Scan its QR code with this phone&apos;s camera, or type the code here.</p>
+      {elsewhere === null ? null : (
+        <div role="alert" className="warning-box">
+          <p>
+            This phone is still paired with {elsewhere.cafeName} and has {String(waiting)} {waiting === 1 ? "item" : "items"} waiting to send there. Pair it with{" "}
+            {elsewhere.cafeName} first to send {waiting === 1 ? "it" : "them"}. Starting over here discards {waiting === 1 ? "it" : "them"} for good.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="danger"
+              disabled={pending}
+              onClick={() => {
+                pair(elsewhere.code, true);
+              }}
+            >
+              Start over and discard {waiting === 1 ? "it" : "them"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                setElsewhere(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -162,24 +228,7 @@ function PairScreen({ device, onPaired, onBusy }: { device: DeviceRecord | undef
             setError("Enter the 12-character code shown on the owner's dashboard.");
             return;
           }
-          setPending(true);
-          setError(null);
-          pairDevice(normalized).then(
-            () => {
-              setPending(false);
-              setCode("");
-              onPaired();
-            },
-            (caught: unknown) => {
-              setPending(false);
-              if (caught instanceof RequestError || caught instanceof DeviceUnpairedError) {
-                setError(caught.message);
-              } else {
-                console.error("Pairing failed", caught);
-                setError("Pairing failed on this phone. Reload the page and try again.");
-              }
-            },
-          );
+          pair(normalized, false);
         }}
       >
         <label htmlFor={inputId}>Pairing code</label>
@@ -481,6 +530,7 @@ export function App() {
       content = (
         <PairScreen
           device={stored?.device}
+          waiting={pending}
           onBusy={setBusy}
           onPaired={() => {
             window.history.replaceState(null, "", "/");

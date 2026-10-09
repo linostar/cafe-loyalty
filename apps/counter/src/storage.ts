@@ -23,6 +23,8 @@ export interface DeviceRecord {
 export interface StoredToken {
   accessToken: string;
   expiresAt: string;
+  /** The device key the token was issued for: a token of an earlier pairing is never used for a newer one. */
+  keyId: string;
 }
 
 /** A barista as the device knows them: the PBKDF2 hash of their PIN, never the PIN (AC 19). */
@@ -68,6 +70,8 @@ interface MetaValues {
   sequence: number;
   /** The barista signed in on this device, until someone switches. */
   barista: { staffId: string };
+  /** The issuedAt (ms) of the last renewal sent, shared by every tab: the server refuses one that is not later. */
+  lastIssuedAt: number;
 }
 
 type MetaKey = keyof MetaValues;
@@ -79,6 +83,14 @@ const LOCKOUTS = "lockouts";
 
 let opening: Promise<IDBDatabase> | undefined;
 const listeners = new Set<() => void>();
+/** Tells the counter's other tabs about changes, so a tab never acts on what another tab replaced (unpaired, re-paired). */
+let channel: BroadcastChannel | undefined;
+
+function notify(): void {
+  for (const listener of listeners) {
+    listener();
+  }
+}
 
 function promised<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -147,15 +159,18 @@ async function transact<T>(stores: string[], mode: IDBTransactionMode, work: (tr
   }
   await committed;
   if (mode === "readwrite") {
-    for (const listener of listeners) {
-      listener();
-    }
+    notify();
+    channel?.postMessage("changed");
   }
   return result;
 }
 
 /** Calls `listener` after every change to the stored data; returns the unsubscribe function. */
 export function onStorageChange(listener: () => void): () => void {
+  if (channel === undefined && typeof BroadcastChannel !== "undefined") {
+    channel = new BroadcastChannel(DB_NAME);
+    channel.onmessage = notify;
+  }
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -175,6 +190,70 @@ export async function deleteMeta(...keys: MetaKey[]): Promise<void> {
     for (const key of keys) {
       await promised(transaction.objectStore(META).delete(key));
     }
+  });
+}
+
+/**
+ * Saves a pairing in one step: the device and its first token, without the baristas when the café changed, and
+ * without the queue when the phone started over (its events belonged to another café).
+ */
+export async function storePairing(device: DeviceRecord, token: StoredToken, options: { forgetStaff: boolean; forgetQueue: boolean }): Promise<void> {
+  await transact([META, QUEUE], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    await promised(meta.put(device, "device"));
+    await promised(meta.put(token, "token"));
+    if (options.forgetStaff) {
+      await promised(meta.delete("staff"));
+      await promised(meta.delete("barista"));
+    }
+    if (options.forgetQueue) {
+      await promised(transaction.objectStore(QUEUE).clear());
+    }
+  });
+}
+
+/** Stores a renewed token, unless the phone was paired again with another key meanwhile (then the token is dropped). */
+export function storeToken(token: StoredToken): Promise<boolean> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const device = await promised(meta.get("device") as IDBRequest<DeviceRecord | undefined>);
+    if (device?.paired !== true || device.keyId !== token.keyId) {
+      return false;
+    }
+    await promised(meta.put(token, "token"));
+    return true;
+  });
+}
+
+/**
+ * Marks the device of key `keyId` unpaired, keeping its key and queue; a removed device also forgets the PIN hashes and
+ * the barista (AC 21). Does nothing when the phone was paired again with another key meanwhile.
+ */
+export function storeUnpaired(keyId: string, reason: "revoked" | "pairing_required"): Promise<boolean> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const device = await promised(meta.get("device") as IDBRequest<DeviceRecord | undefined>);
+    if (device?.keyId !== keyId) {
+      return false;
+    }
+    await promised(meta.put({ ...device, paired: false, unpairedReason: reason }, "device"));
+    await promised(meta.delete("token"));
+    if (reason === "revoked") {
+      await promised(meta.delete("staff"));
+      await promised(meta.delete("barista"));
+    }
+    return true;
+  });
+}
+
+/** Takes the next renewal time: now, or just after the last one any tab sent. */
+export function nextIssuedAt(): Promise<number> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const last = (await promised(meta.get("lastIssuedAt") as IDBRequest<number | undefined>)) ?? 0;
+    const next = Math.max(Date.now(), last + 1);
+    await promised(meta.put(next, "lastIssuedAt"));
+    return next;
   });
 }
 
@@ -236,6 +315,8 @@ export async function deleteLockout(staffId: string): Promise<void> {
 
 /** Closes the connection, so the next call opens the database afresh (tests replace the IndexedDB factory). */
 export async function closeStorage(): Promise<void> {
+  channel?.close();
+  channel = undefined;
   const current = opening;
   opening = undefined;
   if (current !== undefined) {

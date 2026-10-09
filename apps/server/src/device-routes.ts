@@ -52,8 +52,8 @@ const builtAtSchema = z.iso.datetime({ offset: false });
 
 /**
  * Refuses a new action from a counter build made more than COUNTER_SUPPORT_DAYS before this release, or one that
- * does not say when it was built (AC 26). Renewing the token and syncing the queue never call this, so an old build
- * can always hand over what it recorded; once its queue is empty it updates itself.
+ * does not say when it was built (AC 26). Pairing, renewing the token and syncing the queue never call this, so an old
+ * build can always hand over what it recorded; once its queue is empty it updates itself.
  */
 export function requireSupportedBuild(request: FastifyRequest, releaseBuiltAt: Date): void {
   const header = builtAtSchema.safeParse(request.headers[COUNTER_BUILT_AT_HEADER]);
@@ -101,11 +101,12 @@ async function issueDeviceToken(trx: Transaction<Database>, cafeId: string, devi
 }
 
 /**
- * The device a pairing request continues, when `previous` is signed by one of that device's keys in the café the
- * transaction is set to; its row is locked, so renewals and other pairings of it wait. Undefined otherwise.
+ * The device a pairing request continues, when `previous` is signed, over this code and the new key, by one of that
+ * device's keys in the café the transaction is set to; its row is locked, so renewals and other pairings of it wait. Undefined otherwise.
  */
 async function provenDevice(
   trx: Transaction<Database>,
+  code: string,
   previous: { deviceId: string; keyId: string; signature: string },
   publicKey: DevicePublicKeyJwk,
 ): Promise<{ deviceId: string; wasRevoked: boolean } | undefined> {
@@ -116,7 +117,7 @@ async function provenDevice(
     .where("device_id", "=", previous.deviceId)
     .executeTakeFirst();
   const verifier = oldKey === undefined ? undefined : importDeviceKey(oldKey.public_key);
-  if (verifier === undefined || !verifyDeviceSignature(verifier, devicePairProofPayload(previous, publicKey), previous.signature)) {
+  if (verifier === undefined || !verifyDeviceSignature(verifier, devicePairProofPayload(code, previous, publicKey), previous.signature)) {
     return undefined;
   }
   const device = await trx.selectFrom("devices").select("revoked_at").where("id", "=", previous.deviceId).forUpdate().executeTakeFirstOrThrow();
@@ -260,10 +261,11 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
    * Pairs a device: proves the code, registers the device's public key and issues an access token (AC 17). A device
    * that proves it holds one of its old keys (`previous`) keeps its id, so its queue still syncs (AC 18); its other
    * keys are retired and its old tokens dropped. A proof that fails, or names a device of another café, pairs a new
-   * device instead.
+   * device instead. A phone whose old key belongs to another café is refused (PAIRED_ELSEWHERE) without using the
+   * code, since it may still hold that café's unsent events; it pairs here only without `previous`. Any counter build
+   * may pair, so an old one that must pair again can still hand over its queue (AC 26).
    */
   app.post("/device/pair", { config: { access: "public" } }, async (request, reply) => {
-    requireSupportedBuild(request, options.releaseBuiltAt);
     const client = clientKey(request.ip);
     reserveFailure(limits.pairFailuresPerIp, client, reply);
     const body = parseInput(pairRequestSchema, request.body);
@@ -281,6 +283,12 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       request.log.info("pairing refused: unknown code");
       throw invalidCode();
     }
+    const previousKeyId = body.previous?.keyId;
+    // Which café the phone's old key belongs to, whatever the code's café (only the key id is needed to look).
+    const previousKey =
+      previousKeyId === undefined
+        ? undefined
+        : await withLookup(db, { deviceKeyId: previousKeyId }, (trx) => trx.selectFrom("device_keys").select("cafe_id").where("id", "=", previousKeyId).executeTakeFirst());
     const outcome = await withCafe(db, found.cafe_id, async (trx) => {
       // Locked, so parallel guesses are checked and counted one at a time and the fifth wrong one always burns it.
       const code = await trx
@@ -307,9 +315,12 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
         await audit(trx, { cafeId: found.cafe_id, actorType: "system", actorId: null, action: "pairing_code.burned", entityType: "pairing_code", entityId: found.id });
         return { kind: "burned" } as const;
       }
+      if (previousKey !== undefined && previousKey.cafe_id !== found.cafe_id) {
+        return { kind: "elsewhere" } as const;
+      }
       // Deleting the code is what uses it, so it pairs one device only.
       await trx.deleteFrom("pairing_codes").where("id", "=", found.id).execute();
-      const previous = body.previous === undefined ? undefined : await provenDevice(trx, body.previous, body.publicKey);
+      const previous = body.previous === undefined ? undefined : await provenDevice(trx, body.code, body.previous, body.publicKey);
       let deviceId: string;
       if (previous === undefined) {
         deviceId = (await trx.insertInto("devices").values({ cafe_id: found.cafe_id, name: code.device_name }).returning("id").executeTakeFirstOrThrow()).id;
@@ -342,6 +353,15 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       });
       return { kind: "paired", repaired: previous !== undefined, paired: { deviceId, keyId: key.id, deviceName: code.device_name, cafe, ...token } } as const;
     });
+    if (outcome.kind === "elsewhere") {
+      // The code was right: not a failed pairing from this address.
+      limits.pairFailuresPerIp.refund(client);
+      request.log.info({ cafeId: found.cafe_id }, "pairing refused: phone still paired with another café");
+      throw new ApiError(
+        "PAIRED_ELSEWHERE",
+        "This phone is still paired with another café and may hold stamps it has not sent there. Pair it with that café first, or start over on the phone.",
+      );
+    }
     if (outcome.kind !== "paired") {
       const log = { cafeId: found.cafe_id, outcome: outcome.kind };
       if (outcome.kind === "burned") {

@@ -1,6 +1,6 @@
 import { MAX_SYNC_BATCH, syncEventSigningPayload } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
-import { countQueued, listQueued, listRejected } from "./storage.js";
+import { countQueued, getMeta, listQueued, listRejected } from "./storage.js";
 import { recordEvent, syncQueue } from "./sync.js";
 import { fakeApi, storePairedDevice, verifies } from "./test-helpers.js";
 
@@ -51,6 +51,15 @@ describe("syncQueue", () => {
     expect(await syncQueue()).toEqual({ settled: 3, remaining: 3 });
     expect((await listQueued(10)).map((entry) => entry.sequence)).toEqual([4, 5, 6]);
     expect(await listRejected()).toMatchObject([{ type: "staff.pin_lockout", code: "CLOCK_SKEW" }]);
+  });
+
+  it("unpairs at once when the answer says the owner removed the phone, after settling what it sent (AC 21)", async () => {
+    await storePairedDevice();
+    await record(1);
+    fakeApi(() => ({ status: 200, body: { results: [{ index: 0, eventId: null, status: "applied", code: "HELD_FOR_REVIEW" }], deviceRevoked: true } }));
+    await expect(syncQueue()).rejects.toMatchObject({ name: "DeviceUnpairedError", reason: "revoked" });
+    expect(await countQueued()).toBe(0);
+    expect(await getMeta("device")).toMatchObject({ paired: false, unpairedReason: "revoked" });
   });
 
   it("keeps every event when the request fails", async () => {

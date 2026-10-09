@@ -65,13 +65,14 @@ describe("deviceTokenSigningPayload", () => {
 });
 
 describe("devicePairProofPayload", () => {
-  it("is domain-separated from token renewals and bound to the new key", () => {
+  it("is domain-separated from token renewals and bound to the code and the new key", () => {
     const previous = { deviceId: "0B9A3C4D-1E2F-4A5B-8C7D-6E5F4A3B2C1D", keyId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40" };
     const key = { kty: "EC" as const, crv: "P-256" as const, x: "X".repeat(43), y: "Y".repeat(43) };
-    expect(devicePairProofPayload(previous, key)).toBe(
-      `cafe-loyalty/device-pair-proof/v1\n0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d\n6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40\n${"X".repeat(43)}\n${"Y".repeat(43)}`,
+    expect(devicePairProofPayload("ABCD1234EFGH", previous, key)).toBe(
+      `cafe-loyalty/device-pair-proof/v1\nABCD1234EFGH\n0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d\n6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40\n${"X".repeat(43)}\n${"Y".repeat(43)}`,
     );
-    expect(devicePairProofPayload(previous, { ...key, y: "Z".repeat(43) })).not.toBe(devicePairProofPayload(previous, key));
+    expect(devicePairProofPayload("ABCD1234EFGH", previous, { ...key, y: "Z".repeat(43) })).not.toBe(devicePairProofPayload("ABCD1234EFGH", previous, key));
+    expect(devicePairProofPayload("ABCD1234EFGJ", previous, key)).not.toBe(devicePairProofPayload("ABCD1234EFGH", previous, key));
   });
 
   it("travels as an optional previous device in the pairing request", () => {

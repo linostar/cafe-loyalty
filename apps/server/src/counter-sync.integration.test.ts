@@ -91,6 +91,7 @@ describe("sync", () => {
       await visit({ ...device, privateKey: other.privateKey }, staffId),
       await visit({ ...device, deviceId: randomUUID() }, staffId),
       await visit(device, staffId, { occurredAt: new Date(now + 10 * 60 * 1000).toISOString() }),
+      await visit(device, staffId, { occurredAt: new Date(now + 25 * 60 * 60 * 1000).toISOString() }),
       await visit(device, staffId, { occurredAt: new Date(now - 31 * 24 * 60 * 60 * 1000).toISOString() }),
       await visit(device, randomUUID()),
       { eventId: "not-an-id" },
@@ -104,6 +105,8 @@ describe("sync", () => {
       { status: "retry_later", code: "UNSUPPORTED_EVENT" },
       { status: "rejected", code: "SIGNATURE_INVALID" },
       { status: "rejected", code: "INVALID_EVENT" },
+      // A phone clock a little fast: kept for later. A day or more off, or a month old: refused.
+      { status: "retry_later", code: "CLOCK_AHEAD" },
       { status: "rejected", code: "CLOCK_SKEW" },
       { status: "rejected", code: "CLOCK_SKEW" },
       { status: "rejected", code: "INVALID_EVENT" },
@@ -202,7 +205,8 @@ describe("review queue", () => {
     const { app, as, device, staffId } = await counterApp();
     const event = await visit(device, staffId);
     await as("POST", `/api/devices/${device.deviceId}/revoke`);
-    expect(await sync(app, device.accessToken, [event])).toEqual([{ status: "applied", code: "HELD_FOR_REVIEW" }]);
+    const handedOver = await app.inject({ method: "POST", url: "/api/device/sync", headers: withBearer(device.accessToken), payload: { events: [event] } });
+    expect(handedOver.json()).toEqual({ results: [{ index: 0, eventId: event.eventId, status: "applied", code: "HELD_FOR_REVIEW" }], deviceRevoked: true });
     expect((await app.inject({ method: "GET", url: "/api/device/staff", headers: withBearer(device.accessToken) })).json()).toMatchObject({ code: "DEVICE_REVOKED" });
     await context.admin.query("UPDATE app.device_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [hashToken(device.accessToken)]);
     const expired = await app.inject({ method: "POST", url: "/api/device/sync", headers: withBearer(device.accessToken), payload: { events: [event] } });
@@ -218,16 +222,21 @@ describe("review queue", () => {
     const { app, as, device, staffId } = await counterApp();
     await as("POST", `/api/staff/${staffId}/revoke`);
     const events = await Promise.all(Array.from({ length: REVIEW_PAGE_SIZE + 3 }, () => visit(device, staffId)));
-    await sync(app, device.accessToken, events.slice(0, REVIEW_PAGE_SIZE));
+    await sync(app, device.accessToken, events.slice(0, REVIEW_PAGE_SIZE + 1));
     const first = reviewQueueSchema.parse((await as("GET", "/api/review-queue")).json());
     expect(first.items).toHaveLength(REVIEW_PAGE_SIZE);
+    expect(first.nextCursor).not.toBeNull();
     // Events that sync while the owner is paging join the end: no duplicates, no gaps.
-    await sync(app, device.accessToken, events.slice(REVIEW_PAGE_SIZE));
+    await sync(app, device.accessToken, events.slice(REVIEW_PAGE_SIZE + 1));
     const second = reviewQueueSchema.parse((await as("GET", `/api/review-queue?cursor=${first.nextCursor ?? ""}`)).json());
     expect(second).toMatchObject({ nextCursor: null });
     expect(second.items).toHaveLength(3);
     expect(new Set([...first.items, ...second.items].map((item) => item.id)).size).toBe(REVIEW_PAGE_SIZE + 3);
     expect((await as("GET", "/api/review-queue?cursor=bm90LWEtY3Vyc29y")).json()).toMatchObject({ code: "VALIDATION_FAILED" });
+    const impossible = Buffer.from(JSON.stringify(["2026-02-30T25:61:00.000000Z", randomUUID()])).toString("base64url");
+    const refused = await as("GET", `/api/review-queue?cursor=${impossible}`);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ code: "VALIDATION_FAILED" });
   });
 
   it("stays within its café", async () => {
@@ -242,16 +251,16 @@ describe("review queue", () => {
 });
 
 describe("pairing again", () => {
-  async function pairAgain(setup: Awaited<ReturnType<typeof counterApp>>, previous: PairedDevice | undefined) {
-    const code = (await setup.as("POST", "/api/devices/pairing-codes", { deviceName: "Front counter" })).json<{ code: string }>().code;
+  async function pairAgain(setup: Awaited<ReturnType<typeof counterApp>>, previous: PairedDevice | undefined, code?: string) {
+    code ??= (await setup.as("POST", "/api/devices/pairing-codes", { deviceName: "Front counter" })).json<{ code: string }>().code;
     const { privateKey, publicJwk } = await deviceKeyPair();
     const response = await setup.app.inject({
       method: "POST",
       url: "/api/device/pair",
       headers: CURRENT_BUILD,
-      payload: { code, publicKey: publicJwk, ...(previous === undefined ? {} : { previous: await pairProof(previous, publicJwk) }) },
+      payload: { code, publicKey: publicJwk, ...(previous === undefined ? {} : { previous: await pairProof(previous, code, publicJwk) }) },
     });
-    expect(response.statusCode).toBe(201);
+    expect(response.statusCode, response.body).toBe(201);
     const body = pairResponseSchema.parse(response.json());
     return { deviceId: body.deviceId, keyId: body.keyId, accessToken: body.accessToken, privateKey };
   }
@@ -293,18 +302,47 @@ describe("pairing again", () => {
     expect((await as("GET", "/api/devices")).json()).toMatchObject({ devices: [{ id: device.deviceId, revoked: false }] });
   });
 
-  it("pairs a new device when the proof does not check out or names another café's device", async () => {
+  it("pairs a new device when the proof does not check out", async () => {
     const setup = await counterApp();
-    const elsewhere = await counterApp();
     const forged = { ...setup.device, privateKey: (await deviceKeyPair()).privateKey };
     expect((await pairAgain(setup, forged)).deviceId).not.toBe(setup.device.deviceId);
-    expect((await pairAgain(setup, elsewhere.device)).deviceId).not.toBe(elsewhere.device.deviceId);
+  });
+
+  it("refuses a proof made for another code, so a captured one cannot be reused", async () => {
+    const setup = await counterApp();
+    const first = (await setup.as("POST", "/api/devices/pairing-codes", { deviceName: "Front counter" })).json<{ code: string }>().code;
+    const second = (await setup.as("POST", "/api/devices/pairing-codes", { deviceName: "Front counter" })).json<{ code: string }>().code;
+    const { publicJwk } = await deviceKeyPair();
+    const response = await setup.app.inject({
+      method: "POST",
+      url: "/api/device/pair",
+      headers: CURRENT_BUILD,
+      payload: { code: second, publicKey: publicJwk, previous: await pairProof(setup.device, first, publicJwk) },
+    });
+    expect(pairResponseSchema.parse(response.json()).deviceId).not.toBe(setup.device.deviceId);
+  });
+
+  it("will not move a phone holding another café's identity without it starting over, and keeps the code", async () => {
+    const setup = await counterApp();
+    const elsewhere = await counterApp();
+    const code = (await setup.as("POST", "/api/devices/pairing-codes", { deviceName: "Front counter" })).json<{ code: string }>().code;
+    const { publicJwk } = await deviceKeyPair();
+    const refused = await setup.app.inject({
+      method: "POST",
+      url: "/api/device/pair",
+      headers: CURRENT_BUILD,
+      payload: { code, publicKey: publicJwk, previous: await pairProof(elsewhere.device, code, publicJwk) },
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ code: "PAIRED_ELSEWHERE" });
+    // Starting over (no previous identity) pairs a new device with the same, still unused code.
+    expect((await pairAgain(setup, undefined, code)).deviceId).not.toBe(elsewhere.device.deviceId);
   });
 });
 
 describe("counter builds", () => {
-  it("serve new actions only to builds from the last 14 days, and let any build renew and sync (AC 26)", async () => {
-    const { app, device, staffId } = await counterApp();
+  it("serve new actions only to builds from the last 14 days, and let any build pair, renew and sync (AC 26)", async () => {
+    const { app, as, device, staffId } = await counterApp();
     const old = { [COUNTER_BUILT_AT_HEADER]: new Date(RELEASE_BUILT_AT.getTime() - 15 * 24 * 60 * 60 * 1000).toISOString() };
     const auth = { authorization: `Bearer ${device.accessToken}` };
     for (const headers of [{ ...auth, ...old }, auth, { ...auth, [COUNTER_BUILT_AT_HEADER]: "last week" }]) {
@@ -319,5 +357,9 @@ describe("counter builds", () => {
     expect(synced.json()).toMatchObject({ results: [{ code: "OK" }] });
     const renewed = await app.inject({ method: "POST", url: "/api/device/token", headers: old, payload: await signedRenewal(device) });
     expect(renewed.statusCode).toBe(200);
+    // An old build that must pair again can, to hand over its queue.
+    const code = (await as("POST", "/api/devices/pairing-codes", { deviceName: "Old phone" })).json<{ code: string }>().code;
+    const repaired = await app.inject({ method: "POST", url: "/api/device/pair", headers: old, payload: { code, publicKey: (await deviceKeyPair()).publicJwk } });
+    expect(repaired.statusCode).toBe(201);
   });
 });

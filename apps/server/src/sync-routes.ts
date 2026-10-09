@@ -24,6 +24,8 @@ const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 /** How far ahead of the server's clock an event's occurredAt may be (AC 25). */
 export const SYNC_FUTURE_SKEW_MS = 5 * MINUTE_MS;
+/** An event further ahead than SYNC_FUTURE_SKEW_MS, up to this, waits (CLOCK_AHEAD) instead of being refused. */
+export const SYNC_FUTURE_WAIT_MS = 24 * 60 * MINUTE_MS;
 /** How old an event may be when it arrives: a week offline, then time to pair again, with room to spare (AC 25). */
 export const SYNC_MAX_EVENT_AGE_MS = 30 * DAY_MS;
 /** Bytes one sync request may carry: a full batch of the largest version 1 events is about 0.5 MB. */
@@ -46,8 +48,11 @@ const cursorSchema = z
       const parsed = z
         .tuple([z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/), z.uuid()])
         .safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
-      if (parsed.success) {
-        return { receivedAt: parsed.data[0], id: parsed.data[1] };
+      // A real date and time (2026-02-30 is not): checked here, so PostgreSQL never sees an impossible one.
+      const [receivedAt = "", id = ""] = parsed.success ? parsed.data : [];
+      const date = new Date(receivedAt);
+      if (parsed.success && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 23) === receivedAt.slice(0, 23)) {
+        return { receivedAt, id };
       }
     } catch {
       // Reported below.
@@ -125,8 +130,12 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
     }
     const occurredAt = Date.parse(event.occurredAt);
     const serverNow = Date.now();
-    if (occurredAt > serverNow + SYNC_FUTURE_SKEW_MS || occurredAt < serverNow - SYNC_MAX_EVENT_AGE_MS) {
+    if (occurredAt > serverNow + SYNC_FUTURE_WAIT_MS || occurredAt < serverNow - SYNC_MAX_EVENT_AGE_MS) {
       return "CLOCK_SKEW";
+    }
+    // A phone whose clock runs a little fast: the event becomes acceptable as time passes, so it is kept, not lost.
+    if (occurredAt > serverNow + SYNC_FUTURE_SKEW_MS) {
+      return "CLOCK_AHEAD";
     }
     const staff = await trx.selectFrom("staff").select("revoked_at").where("id", "=", event.staffId).forShare().executeTakeFirst();
     if (staff === undefined) {
@@ -211,12 +220,18 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
       for (const result of results) {
         outcomes[result.code] = (outcomes[result.code] ?? 0) + 1;
       }
-      request.log.info({ cafeId: device.cafeId, deviceId: device.deviceId, events: results.length, outcomes }, "sync handled");
-      return { results };
+      request.log.info({ cafeId: device.cafeId, deviceId: device.deviceId, events: results.length, outcomes, revoked: device.revoked }, "sync handled");
+      // A removed device learns it at once, after handing over its queue (AC 21).
+      return device.revoked ? { results, deviceRevoked: true } : { results };
     },
   );
 
-  /** Held events, oldest first, a page at a time. A late sync only adds to the end, so paging never repeats or skips. */
+  /**
+   * Held events, oldest first, a page at a time. Events arriving later get later received_at times (the clock at
+   * insert), so they join the end and paging never repeats one.
+   * ponytail: a held event inserted just before but committed just after the owner loads a page can sort behind that
+   * page and only shows after a reload; a commit-ordered sequence would close that millisecond window.
+   */
   app.get("/review-queue", { config: { access: "owner" } }, async (request): Promise<ReviewQueue> => {
     const owner = ownerOf(request);
     const { cursor } = parseInput(reviewQuery, request.query);

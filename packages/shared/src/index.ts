@@ -101,6 +101,7 @@ export {
   SYNC_RESULT_CODES,
   SYNC_STATUSES,
   cardReferenceSchema,
+  isDeviceRevokedResponse,
   isFinalSyncStatus,
   parseSyncEvent,
   readSyncResponse,

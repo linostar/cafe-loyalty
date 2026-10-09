@@ -28,7 +28,8 @@ CREATE TABLE sync_events (
   schema_version integer NOT NULL CHECK (schema_version >= 1),
   sequence integer NOT NULL CHECK (sequence >= 0),
   occurred_at timestamptz NOT NULL,
-  received_at timestamptz NOT NULL DEFAULT now(),
+  -- The clock at insert, not the transaction's start, so events that arrive later sort later (review queue paging).
+  received_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   status text NOT NULL CHECK (status IN ('applied', 'held', 'discarded')),
   -- Set when the event was held; kept once the owner accepts (applied) or discards it.
   hold_reason text CHECK (hold_reason IN ('device_revoked', 'staff_revoked')),

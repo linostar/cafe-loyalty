@@ -54,7 +54,7 @@ export async function storePairedDevice(overrides: Partial<DeviceRecord> = {}): 
     ...overrides,
   };
   await setMeta("device", device);
-  await setMeta("token", { accessToken: "a".repeat(43), expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() });
+  await setMeta("token", { accessToken: "a".repeat(43), expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), keyId: device.keyId });
   return { device, publicKey: keys.publicKey };
 }
 

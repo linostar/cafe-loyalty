@@ -1,6 +1,13 @@
 import { randomBytes, randomUUID, webcrypto } from "node:crypto";
 import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
-import { COUNTER_BUILT_AT_HEADER, devicePairProofPayload, deviceTokenSigningPayload, syncEventSigningPayload, type DevicePublicKeyJwk } from "@cafe-loyalty/shared";
+import {
+  COUNTER_BUILT_AT_HEADER,
+  devicePairProofPayload,
+  deviceTokenSigningPayload,
+  normalizePairingCode,
+  syncEventSigningPayload,
+  type DevicePublicKeyJwk,
+} from "@cafe-loyalty/shared";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, expect } from "vitest";
@@ -125,10 +132,11 @@ export async function signedEvent(device: Pick<PairedDevice, "deviceId" | "keyId
   return { ...raw, signature: await signText(device.privateKey, syncEventSigningPayload(raw)) };
 }
 
-/** The `previous` proof a device sends when pairing again: its old key signs over the new public key. */
-export async function pairProof(device: Pick<PairedDevice, "deviceId" | "keyId" | "privateKey">, publicKey: webcrypto.JsonWebKey) {
+/** The `previous` proof a device sends when pairing again with `code`: its old key signs over the code and the new public key. */
+export async function pairProof(device: Pick<PairedDevice, "deviceId" | "keyId" | "privateKey">, code: string, publicKey: webcrypto.JsonWebKey) {
   const previous = { deviceId: device.deviceId, keyId: device.keyId };
-  return { ...previous, signature: await signText(device.privateKey, devicePairProofPayload(previous, publicKey as DevicePublicKeyJwk)) };
+  const payload = devicePairProofPayload(normalizePairingCode(code) ?? code, previous, publicKey as DevicePublicKeyJwk);
+  return { ...previous, signature: await signText(device.privateKey, payload) };
 }
 
 /**

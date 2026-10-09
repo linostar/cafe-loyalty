@@ -13,7 +13,9 @@ import { useApiHarness, withBearer } from "./testing/api-harness.js";
 const context = useApiHarness();
 const releaseBuiltAt = process.env.BUILT_AT === undefined ? new Date() : new Date(process.env.BUILT_AT);
 const fixtures = await loadSyncFixtures();
-const supported = fixtures.filter(({ fixture }) => inSupportWindow(fixture.builtAt, releaseBuiltAt));
+const newest = fixtures.reduce<(typeof fixtures)[number] | undefined>((latest, entry) => (latest === undefined || entry.fixture.builtAt > latest.fixture.builtAt ? entry : latest), undefined);
+// Every release in the window, and always the newest: the counter of the latest release is in use whatever its age.
+const supported = fixtures.filter((entry) => entry === newest || inSupportWindow(entry.fixture.builtAt, releaseBuiltAt));
 
 /** The café, barista, device and key the fixture's events name, with an access token for that device. */
 async function seed(fixture: SyncFixture): Promise<string> {

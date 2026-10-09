@@ -248,8 +248,10 @@ export const SYNC_RESULT_CODES = {
   IDEMPOTENCY_CONFLICT: "rejected",
   INVALID_EVENT: "rejected",
   SIGNATURE_INVALID: "rejected",
-  /** occurredAt outside the accepted clock-skew window (AC 25). */
+  /** occurredAt outside the accepted clock-skew window (AC 25): more than a day ahead, or too old. */
   CLOCK_SKEW: "rejected",
+  /** occurredAt a little ahead of the server's clock (the phone's clock runs fast): send it again later. */
+  CLOCK_AHEAD: "retry_later",
   /** Type or version unknown to this server, e.g. after a rollback (AC 26). */
   UNSUPPORTED_EVENT: "retry_later",
   /** The server could not process it now; send it again later. */
@@ -270,7 +272,13 @@ export type SyncResult = z.output<typeof syncResultSchema>;
 
 export const syncResponseSchema = z.object({
   results: z.array(syncResultSchema),
+  /** Set when the owner removed this device: its events were held for review, and it must now unpair (AC 21). */
+  deviceRevoked: z.boolean().optional(),
 });
+
+/** Whether a sync response says the device was removed; anything unreadable says no. */
+export const isDeviceRevokedResponse = (body: unknown): boolean =>
+  typeof body === "object" && body !== null && "deviceRevoked" in body && body.deviceRevoked === true;
 
 export type SyncResponse = z.output<typeof syncResponseSchema>;
 

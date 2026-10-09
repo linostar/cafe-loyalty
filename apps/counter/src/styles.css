@@ -58,6 +58,17 @@ form > button,
   gap: 0.5rem;
 }
 
+.warning-box {
+  padding: 0.5rem 1rem;
+  border-inline-start: 4px solid #a51d2d;
+  background: #fbeeee;
+}
+
+button.danger {
+  border-color: #a51d2d;
+  color: #a51d2d;
+}
+
 .choices {
   display: grid;
   gap: 0.5rem;
