@@ -41,7 +41,7 @@ CREATE TABLE apple_pass_registrations (
   pass_id uuid NOT NULL,
   -- SHA-256 of the device library identifier.
   device_library_hash bytea NOT NULL CHECK (octet_length(device_library_hash) = 32),
-  push_token text NOT NULL CHECK (push_token ~ '^[0-9a-f]{16,256}$'),
+  push_token text NOT NULL CHECK (push_token ~ '^[0-9a-f]{16,200}$'),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (pass_id, device_library_hash),

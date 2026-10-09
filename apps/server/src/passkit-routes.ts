@@ -16,7 +16,7 @@ export interface PasskitRoutesOptions {
 
 const AUTHORIZATION = /^ApplePass ([A-Za-z0-9_-]{43})$/;
 const DEVICE_LIBRARY_ID = /^[A-Za-z0-9._-]{1,128}$/;
-const PUSH_TOKEN = /^[0-9A-Fa-f]{16,256}$/;
+const PUSH_TOKEN = /^[0-9A-Fa-f]{16,200}$/;
 /** A lastUpdated tag this service gave out: a transaction id (xid8, at most 2^64 - 1). */
 const isTag = (value: string): boolean => /^[0-9]{1,20}$/.test(value) && BigInt(value) <= 0xffffffffffffffffn;
 /** Devices kept per pass (a phone, a watch, a few replaced phones): older ones go, so one pass never fans out widely. */
