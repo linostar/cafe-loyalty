@@ -31,6 +31,12 @@ export const SYNC_FUTURE_SKEW_MS = 5 * MINUTE_MS;
 export const SYNC_FUTURE_WAIT_MS = 24 * 60 * MINUTE_MS;
 /** How old an event may be when it arrives: a week offline, then time to pair again, with room to spare (AC 25). */
 export const SYNC_MAX_EVENT_AGE_MS = 30 * DAY_MS;
+/**
+ * A visit that arrives this long after it happened is held for the owner (late_sync): its time is the device's to set
+ * and decides the daily cap and the cooldown, so a misused device could otherwise backdate visits for more stamps.
+ * Two days covers a weekend offline; a phone offline longer needs one approval.
+ */
+export const SYNC_LATE_VISIT_MS = 2 * DAY_MS;
 /** Bytes one sync request may carry: a full batch of the largest version 1 events is about 0.5 MB. */
 export const SYNC_BODY_LIMIT_BYTES = 1024 * 1024;
 /** Most held events one page of the review queue shows (AC 40). */
@@ -166,7 +172,8 @@ async function recordEvent(db: Kysely<Database>, secrets: CustomerSecrets, devic
       deviceRow.revoked_at !== null || key.revoked_at !== null ? "device_revoked" : staff.revoked_at !== null ? "staff_revoked" : null;
     // A lockout report changes nothing; it is security information for the owner, so it is audited at once, saying
     // when it came from a removed phone or barista, and never held. Actions are held (AC 21).
-    const holdReason = event.type === "staff.pin_lockout" ? null : revokedBy;
+    const late = event.type === "visit.recorded" && occurredAt < serverNow - SYNC_LATE_VISIT_MS;
+    const holdReason = event.type === "staff.pin_lockout" ? null : (revokedBy ?? (late ? "late_sync" : null));
     // A visit's card and items are checked before it is recorded; a refusal is kept, held or not.
     const plan = event.type === "visit.recorded" ? await planVisit(trx, secrets, device.cafeId, event.payload) : undefined;
     const refusal = plan?.status === "refused" ? plan.code : null;

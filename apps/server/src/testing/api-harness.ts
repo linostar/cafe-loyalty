@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, expect } from "vitest";
 import type { RouteAccess } from "../access.js";
 import { apiRoutes } from "../api.js";
 import { customerPages } from "../customer-pages.js";
+import { hashToken, newToken } from "../credentials.js";
 import { encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "../customer-crypto.js";
 import { buildApp } from "../app.js";
 import { BackgroundTasks } from "../background.js";
@@ -291,8 +292,9 @@ export function useApiHarness() {
      * A card of `cafeId` as signup makes it, with its QR signed by the test keys. With `phone`, the card is linked to
      * that number, and `phoneConfirmed` marks it as already scanned at a counter (so it may be stamped by phone).
      */
-    issueCard: async (cafeId: string, options: { phone?: string; phoneConfirmed?: boolean } = {}): Promise<{ cardId: string; qr: string }> => {
+    issueCard: async (cafeId: string, options: { phone?: string; phoneConfirmed?: boolean } = {}): Promise<{ cardId: string; qr: string; webSecret: string }> => {
       let customerId: string | null = null;
+      const webSecret = newToken();
       if (options.phone !== undefined) {
         const encrypted = encryptPhone(TEST_SECRETS, options.phone);
         const { rows } = await context.admin.query<{ id: string }>(
@@ -304,10 +306,10 @@ export function useApiHarness() {
       const { rows } = await context.admin.query<{ id: string }>(
         `INSERT INTO app.cards (cafe_id, customer_id, web_secret_hash, privacy_accepted_at, phone_confirmed_at)
          VALUES ($1, $2, $3, now(), CASE WHEN $4 THEN now() END) RETURNING id`,
-        [cafeId, customerId, randomBytes(32), options.phoneConfirmed === true],
+        [cafeId, customerId, hashToken(webSecret), options.phoneConfirmed === true],
       );
       const cardId = rows[0]?.id ?? "missing";
-      return { cardId, qr: signCardQr(TEST_SECRETS, { cardId, cafeId, epoch: 1 }) };
+      return { cardId, qr: signCardQr(TEST_SECRETS, { cardId, cafeId, epoch: 1 }), webSecret };
     },
 
     auditActions: async (cafeId: string): Promise<string[]> => {

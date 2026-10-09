@@ -1,7 +1,7 @@
 import { formatCardQr, type DeviceCatalog } from "@cafe-loyalty/shared";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { listQueued } from "./storage.js";
+import { getMeta, listQueued, setMeta } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice } from "./test-helpers.js";
 import { CounterScreen } from "./visit.js";
 
@@ -45,10 +45,12 @@ describe("visits", () => {
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
     fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
     expect(screen.getByText("Total $10.50 · 2 stamps")).toBeInTheDocument();
-    expect(onBusy).toHaveBeenLastCalledWith(true);
+    await waitFor(() => {
+      expect(onBusy).toHaveBeenLastCalledWith(true);
+    });
     fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Visit saved: 2 stamps for this card.");
+    expect(await screen.findByText("Visit saved, earning up to 2 stamps. It is sent as soon as the phone is online.")).toBeInTheDocument();
     const [queued] = await listQueued(10);
     expect(queued?.event).toMatchObject({
       type: "visit.recorded",
@@ -65,7 +67,9 @@ describe("visits", () => {
     });
     // The order is closed: nothing typed, nothing chosen, so the app may update again.
     expect(screen.getByLabelText("Or the customer's mobile number")).toHaveValue("");
-    expect(onBusy).toHaveBeenLastCalledWith(false);
+    await waitFor(() => {
+      expect(onBusy).toHaveBeenLastCalledWith(false);
+    });
   });
 
   it("asks for a card and a valid number before saving", async () => {
@@ -110,7 +114,7 @@ describe("rewards", () => {
   });
 
   it("are given for a scanned card, and a retry after a lost answer reuses the same redemption (AC 31)", async () => {
-    await counter();
+    const { onBusy } = await counter();
     let lose = true;
     const calls = fakeApi((call) => {
       if (lose) {
@@ -124,15 +128,36 @@ describe("rewards", () => {
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The reward was not confirmed");
+    // Kept on the phone and marked busy, so neither a reload nor an update loses it.
+    expect(await getMeta("pendingRedemption")).toMatchObject({ cardQr: cardOf(CAFE.id) });
+    // The busy flag passes through two effects (the panel's, then the screen's).
+    await waitFor(() => {
+      expect(onBusy).toHaveBeenLastCalledWith(true);
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await Promise.resolve();
     });
-    expect(await screen.findByRole("status")).toHaveTextContent("Reward given: Free coffee. 1 stamp left on the card.");
+    expect(await screen.findByText("Reward given: Free coffee. 1 stamp left on the card.")).toBeInTheDocument();
+    expect(await getMeta("pendingRedemption")).toBeUndefined();
+    await waitFor(() => {
+      expect(onBusy).toHaveBeenLastCalledWith(false);
+    });
     const bodies = calls.map((call) => call.body as { eventId: string; cardQr: string });
     expect(bodies).toHaveLength(2);
     expect(bodies[1]?.eventId).toBe(bodies[0]?.eventId);
     expect(bodies[0]?.cardQr).toBe(cardOf(CAFE.id));
+  });
+
+  it("must try an unconfirmed one again after a reload, with the same event id, before giving another", async () => {
+    await setMeta("pendingRedemption", { eventId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d", cardQr: cardOf(CAFE.id) });
+    await counter();
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scan card for a reward" })).not.toBeInTheDocument();
+    const calls = fakeApi(() => ({ status: 200, body: { stampsUsed: 9, stampsLeft: 0, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Reward given: Free coffee. 0 stamps left on the card.")).toBeInTheDocument();
+    expect(calls[0]?.body).toMatchObject({ eventId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d" });
   });
 
   it("show why the server refused one", async () => {

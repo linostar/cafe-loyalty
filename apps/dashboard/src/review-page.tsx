@@ -12,6 +12,7 @@ const TYPE_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit
 const REASONS: Readonly<Record<SyncHoldReason, string>> = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
+  late_sync: "that reached the server more than two days later",
 };
 
 /** What an item is, for its buttons and for the confirmation after a decision. */
@@ -81,8 +82,8 @@ export function ReviewPage() {
         Review
       </h2>
       <p>
-        When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting. Accept what you trust and discard the
-        rest.
+        When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two
+        days after they happened. Accept what you trust and discard the rest.
       </p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />

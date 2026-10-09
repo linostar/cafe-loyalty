@@ -339,8 +339,12 @@ export function readSyncResponse(eventCount: number, body: unknown): ClientSyncR
   return results;
 }
 
-/** Why an event was held for the owner's review instead of applied (AC 21). */
-export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked"] as const;
+/**
+ * Why an event was held for the owner's review instead of applied: a revoked device or staff member (AC 21), or a
+ * visit that arrived more than two days after it happened (its time is the device's to set, and decides the daily
+ * cap and the cooldown).
+ */
+export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked", "late_sync"] as const;
 
 export type SyncHoldReason = (typeof SYNC_HOLD_REASONS)[number];
 

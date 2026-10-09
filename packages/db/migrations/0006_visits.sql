@@ -15,8 +15,12 @@ CREATE FUNCTION stamp_cooldown_window(stamped_at timestamptz) RETURNS tstzrange
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
   AS $$ SELECT pg_catalog.tstzrange(stamped_at, stamped_at + interval '30 minutes') $$;
 
--- A refused event (unknown card, a card replaced by recovery, an unconfirmed phone number) is kept with its code.
+-- A refused event (unknown card, a card replaced by recovery, an unconfirmed phone number) is kept with its code. A
+-- visit that arrives more than two days after it happened is held for the owner (late_sync): the daily cap and the
+-- cooldown go by the visit's own time, which the device sets, so backdated visits must not stamp unseen.
 ALTER TABLE sync_events
+  DROP CONSTRAINT sync_events_hold_reason_check,
+  ADD CONSTRAINT sync_events_hold_reason_check CHECK (hold_reason IN ('device_revoked', 'staff_revoked', 'late_sync')),
   ADD COLUMN result_code text CHECK (result_code ~ '^[A-Z][A-Z_]{0,63}$'),
   ADD CONSTRAINT sync_events_cafe_id_id_key UNIQUE (cafe_id, id),
   DROP CONSTRAINT sync_events_status_check,

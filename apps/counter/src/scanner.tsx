@@ -1,5 +1,5 @@
 import jsQR from "jsqr";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 /** How often a camera frame is checked for a QR code. */
 const SCAN_INTERVAL_MS = 200;
@@ -26,7 +26,14 @@ function cameraProblem(error: unknown): string {
  */
 export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onScan: (text: string) => void; onCancel: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const helpId = useId();
   const [problem, setProblem] = useState<string | null>(null);
+
+  // The keyboard lands on the way out of the scanner, which is all it can do here.
+  useEffect(() => {
+    cancel.current?.focus();
+  }, []);
   const reported = useRef(onScan);
   useEffect(() => {
     reported.current = onScan;
@@ -57,6 +64,10 @@ export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onSc
           await element.play();
         } catch (caught) {
           console.error("Starting the camera preview failed", caught);
+          // The camera is no use without its preview: switch it off now, not when the scanner closes.
+          for (const track of opened.getTracks()) {
+            track.stop();
+          }
           if (isActive()) {
             setProblem(cameraProblem(caught));
           }
@@ -99,9 +110,15 @@ export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onSc
 
   return (
     <div className="scanner">
-      <p id="scanner-help">{problem ?? `Point the camera at the ${purpose}.`}</p>
-      {problem === null ? <video ref={video} className="camera" muted playsInline aria-describedby="scanner-help" /> : null}
-      <button type="button" onClick={onCancel}>
+      {problem === null ? (
+        <p id={helpId}>Point the camera at the {purpose}.</p>
+      ) : (
+        <p id={helpId} role="alert" className="field-error">
+          {problem}
+        </p>
+      )}
+      {problem === null ? <video ref={video} className="camera" muted playsInline aria-describedby={helpId} /> : null}
+      <button ref={cancel} type="button" onClick={onCancel}>
         Cancel
       </button>
     </div>

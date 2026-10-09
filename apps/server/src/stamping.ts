@@ -132,7 +132,9 @@ export async function applyVisit(trx: Transaction<Database>, cafeId: string, vis
     .select(["card_id", "identified_by", "device_id", "staff_id", "occurred_at", "stamps_earned"])
     .where("id", "=", visitId)
     .executeTakeFirstOrThrow();
-  const card = visit.card_id === null ? undefined : await trx.selectFrom("cards").select("id").where("id", "=", visit.card_id).forUpdate().executeTakeFirst();
+  // NO KEY UPDATE: inserting the visit already took KEY SHARE on the card (its foreign key), which FOR UPDATE would
+  // wait on in another device's transaction doing the same, a deadlock. Two of these still go one at a time.
+  const card = visit.card_id === null ? undefined : await trx.selectFrom("cards").select("id").where("id", "=", visit.card_id).forNoKeyUpdate().executeTakeFirst();
   let outcome: Exclude<VisitOutcome, "held" | "discarded">;
   if (card === undefined) {
     outcome = "card_gone";
@@ -171,7 +173,8 @@ export async function applyVisit(trx: Transaction<Database>, cafeId: string, vis
       action: "card.stamped",
       entityType: "card",
       entityId: card.id,
-      changes: { visitId, staffId: visit.staff_id, stamps },
+      // No visit id: once the card is deleted, its visits must not be linkable back to it through the log (AC 9).
+      changes: { staffId: visit.staff_id, stamps },
     });
   } else if (card !== undefined && visit.identified_by === "qr") {
     // Scanned at the counter: the card may be stamped by phone number from now on, even if this visit added none.
@@ -246,7 +249,12 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           }
           return { redemption: { stampsUsed: earlier.stamps_used, stampsLeft: earlier.stamps_left, ...names }, created: false };
         }
-        const staff = await trx.selectFrom("staff").select("revoked_at").where("id", "=", body.staffId).executeTakeFirst();
+        // Locked and read here, so a revocation committed since the access check cannot slip through (AC 21).
+        const deviceRow = await trx.selectFrom("devices").select("revoked_at").where("id", "=", device.deviceId).forShare().executeTakeFirstOrThrow();
+        if (deviceRow.revoked_at !== null) {
+          throw new ApiError("DEVICE_REVOKED", "The owner removed this device. Pair it again from the owner's dashboard to use it.");
+        }
+        const staff = await trx.selectFrom("staff").select("revoked_at").where("id", "=", body.staffId).forShare().executeTakeFirst();
         if (staff?.revoked_at !== null) {
           throw removedStaff();
         }
@@ -266,13 +274,23 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           .returning("stamps")
           .executeTakeFirst();
         if (updated === undefined) {
+          // The same redemption, sent twice at once, may have taken the stamps while this one waited: its answer is this one's.
+          const first = await trx
+            .selectFrom("redemptions")
+            .select(["card_id", "stamps_used", "stamps_left"])
+            .where("device_id", "=", device.deviceId)
+            .where("event_id", "=", body.eventId)
+            .executeTakeFirst();
+          if (first?.card_id === card.cardId) {
+            return { redemption: { stampsUsed: first.stamps_used, stampsLeft: first.stamps_left, ...names }, created: false };
+          }
           const current = await trx.selectFrom("cards").select("stamps").where("id", "=", card.cardId).executeTakeFirstOrThrow();
           throw new ApiError(
             "CONFLICT",
             `This card has ${String(current.stamps)} of the ${String(program.stamps_required)} stamps a reward needs. Add stamps first.`,
           );
         }
-        const { id } = await trx
+        await trx
           .insertInto("redemptions")
           .values({
             cafe_id: device.cafeId,
@@ -283,8 +301,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
             stamps_used: program.stamps_required,
             stamps_left: updated.stamps,
           })
-          .returning("id")
-          .executeTakeFirstOrThrow();
+          .execute();
         await audit(trx, {
           cafeId: device.cafeId,
           actorType: "device",
@@ -292,7 +309,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           action: "card.redeemed",
           entityType: "card",
           entityId: card.cardId,
-          changes: { redemptionId: id, staffId: body.staffId, stampsUsed: program.stamps_required },
+          changes: { staffId: body.staffId, stampsUsed: program.stamps_required },
         });
         return { redemption: { stampsUsed: program.stamps_required, stampsLeft: updated.stamps, ...names }, created: true };
       });

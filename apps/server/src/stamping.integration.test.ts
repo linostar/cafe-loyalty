@@ -3,7 +3,7 @@ import { withCafe } from "@cafe-loyalty/db";
 import { COUNTER_BUILT_AT_HEADER, deviceCatalogSchema, redemptionSchema, syncResponseSchema } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { signCardQr } from "./customer-crypto.js";
-import { DAILY_STAMP_CAP } from "./stamping.js";
+import { DAILY_STAMP_CAP, STAMP_COOLDOWN_MINUTES } from "./stamping.js";
 import { TEST_SECRETS, signedEvent, useApiHarness, withBearer, withCookie, type PairedDevice } from "./testing/api-harness.js";
 
 const context = useApiHarness();
@@ -102,7 +102,7 @@ describe("stamping", () => {
         await visit(app, token, { at: new Date(start.getTime() + 10 * MINUTE) }),
         // Recorded offline earlier and synced late: still inside the first visit's window.
         await visit(app, token, { at: new Date(start.getTime() - 20 * MINUTE) }),
-        await visit(app, token, { at: new Date(start.getTime() + 31 * MINUTE) }),
+        await visit(app, token, { at: new Date(start.getTime() + (STAMP_COOLDOWN_MINUTES + 1) * MINUTE) }),
       ]),
     ).toEqual([
       { status: "applied", code: "OK" },
@@ -245,15 +245,46 @@ describe("stamping", () => {
     expect(await auditActions(app.owner.cafeId)).toContain("card.stamped");
   });
 
-  it("keeps visits but no link to a deleted card, and accepting one later adds nothing (AC 9)", async () => {
+  it("holds a visit that arrives more than two days after it happened for the owner", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    expect(await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: new Date(Date.now() - 3 * 24 * 60 * MINUTE) })])).toEqual([
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+    ]);
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string }[] }>().items;
+    expect(queue).toMatchObject([{ reason: "late_sync" }]);
+    await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`);
+    expect(await stampsOf(card.cardId)).toBe(2);
+  });
+
+  it("keeps visits and redemptions but no link to a card its holder deletes, and accepting one later adds nothing (AC 9)", async () => {
     const app = await cafeApp();
     const card = await issueCard(app.owner.cafeId);
     await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: new Date(Date.now() - 2 * 60 * MINUTE) })]);
+    await context.admin.query("UPDATE app.cards SET stamps = 3 WHERE id = $1", [card.cardId]);
+    const redeemed = await app.app.inject({
+      method: "POST",
+      url: "/api/device/redemptions",
+      headers: withBearer(app.device.accessToken),
+      payload: { eventId: randomUUID(), staffId: app.staffId, cardQr: card.qr },
+    });
+    expect(redeemed.statusCode).toBe(201);
     await app.as("POST", `/api/staff/${app.staffId}/revoke`);
     await sync(app, [await visit(app, { kind: "qr", token: card.qr })]);
-    await context.admin.query("DELETE FROM app.cards WHERE id = $1", [card.cardId]);
+    // The card holder deletes the card from its own page, as the app role.
+    const deleted = await app.app.inject({
+      method: "POST",
+      url: `/c/${card.webSecret}/delete`,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "confirm=yes",
+    });
+    expect(deleted.statusCode).toBe(200);
     const { rows } = await context.admin.query<{ card_id: string | null }>("SELECT card_id FROM app.visits WHERE cafe_id = $1", [app.owner.cafeId]);
     expect(rows).toEqual([{ card_id: null }, { card_id: null }]);
+    const { rows: redemptions } = await context.admin.query<{ card_id: string | null }>("SELECT card_id FROM app.redemptions WHERE cafe_id = $1", [
+      app.owner.cafeId,
+    ]);
+    expect(redemptions).toEqual([{ card_id: null }]);
     const held = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string }[] }>().items[0]?.id ?? "";
     expect((await app.as("POST", `/api/review-queue/${held}/accept`)).statusCode).toBe(204);
     const { rows: outcomes } = await context.admin.query<{ outcome: string }>("SELECT outcome FROM app.visits WHERE cafe_id = $1 ORDER BY occurred_at", [
@@ -291,13 +322,17 @@ describe("redemption", () => {
     expect(await auditActions(app.owner.cafeId)).toContain("card.redeemed");
   });
 
-  it("redeems once when the same redemption arrives twice at the same moment", async () => {
+  it("redeems once when the same redemption arrives twice at the same moment, and answers both the same", async () => {
     const app = await cafeApp();
-    const card = await cardWithStamps(app, 9);
-    const eventId = randomUUID();
-    const replies = await Promise.all([redeem(app, card.qr, eventId), redeem(app, card.qr, eventId)]);
-    expect(replies.map((reply) => reply.statusCode).sort()).toEqual([200, 201]);
-    expect(await stampsOf(card.cardId)).toBe(6);
+    for (const stamps of [9, 4]) {
+      const card = await cardWithStamps(app, stamps);
+      const eventId = randomUUID();
+      const replies = await Promise.all([redeem(app, card.qr, eventId), redeem(app, card.qr, eventId)]);
+      expect(replies.map((reply) => reply.statusCode).sort()).toEqual([200, 201]);
+      const [first, second] = replies;
+      expect(first.json()).toEqual(second.json());
+      expect(await stampsOf(card.cardId)).toBe(stamps - 3);
+    }
   });
 
   it("refuses another card under the same event id, a removed barista and a card that is not this café's", async () => {

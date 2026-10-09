@@ -150,10 +150,17 @@ describe("Counter App", () => {
     setOnline(false);
     window.history.replaceState(null, "", "/");
     fakeApi(() => ({ status: 404, body: envelope("NOT_FOUND") }));
-    await settleQueued([], [{ eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", code: "CLOCK_SKEW", rejectedAt: "2026-10-01T08:05:00.000Z" }]);
+    await settleQueued(
+      [],
+      [
+        { eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", code: "CLOCK_SKEW", rejectedAt: "2026-10-01T08:05:00.000Z" },
+        { eventId: "e2", type: "visit.recorded", occurredAt: "2026-10-01T08:10:00.000Z", code: "PHONE_NOT_CONFIRMED", rejectedAt: "2026-10-01T08:15:00.000Z" },
+      ],
+    );
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Not accepted by the server" })).toBeInTheDocument();
     expect(screen.getByText(/Visit from .*: the phone's clock was wrong/)).toBeInTheDocument();
+    expect(screen.getByText(/Visit from .*: this number is not confirmed yet; scan the customer's card once/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "Not accepted by the server" })).not.toBeInTheDocument();

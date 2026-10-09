@@ -59,7 +59,7 @@ test("records a visit for a phone number and sends it, priced as the menu showed
   await expect(page.getByText("Total $6.00 · 2 stamps")).toBeVisible();
   await page.getByLabel("Or the customer's mobile number").fill("70 123 456");
   await page.getByRole("button", { name: "Record visit" }).click();
-  await expect(page.getByText("Visit saved: 2 stamps for this card.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Visit saved, earning up to 2 stamps.", { exact: false })).toBeVisible();
   await expect
     .poll(() => synced)
     .toMatchObject([
@@ -82,14 +82,16 @@ test("scans the customer's card with the camera for a visit", async ({ page }) =
 });
 
 test("gives a reward for a scanned card online, and refuses one offline (AC 31)", async ({ page, context }) => {
+  const redeemed: unknown[] = [];
   await signedIn(page, {
     "POST /api/device/redemptions": async (route) => {
-      expect(json(route)).toMatchObject({ staffId: RAMI.id, cardQr: CAMERA_CARD_QR });
+      redeemed.push(json(route));
       await route.fulfill({ status: 201, json: { stampsUsed: 9, stampsLeft: 2, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } });
     },
   });
   await page.getByRole("button", { name: "Scan card for a reward" }).click();
   await expect(page.getByText("Reward given: Free coffee. 2 stamps left on the card.")).toBeVisible({ timeout: 15_000 });
+  expect(redeemed).toMatchObject([{ staffId: RAMI.id, cardQr: CAMERA_CARD_QR }]);
 
   await context.setOffline(true);
   await expect(page.getByText("Rewards need an internet connection. Connect the phone, then try again.")).toBeVisible();
