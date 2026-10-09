@@ -57,6 +57,16 @@ describe("RateLimiter", () => {
     expect(limiter.check("sami@example.com 203.0.113.1")).toBe(60);
   });
 
+  it("stays fast when the table is full of live keys", () => {
+    const limiter = new RateLimiter(1, 60_000, () => 0);
+    const started = performance.now();
+    for (let index = 0; index < 100_000; index += 1) {
+      limiter.hit(`key-${String(index)}`);
+    }
+    // Constant-time pruning takes well under a second; the old full scan per new key took minutes at this size.
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
   it("forgets expired keys once many are tracked", () => {
     let now = 0;
     const limiter = new RateLimiter(1, 1_000, () => now);

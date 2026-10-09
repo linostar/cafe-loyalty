@@ -1,5 +1,3 @@
-/** Beyond this many tracked keys, expired windows are pruned before a new key is added. */
-const PRUNE_THRESHOLD = 10_000;
 /** Hard cap on tracked keys (some are attacker-chosen, such as emails): the oldest windows are dropped beyond it. */
 const MAX_KEYS = 50_000;
 
@@ -29,9 +27,7 @@ export class RateLimiter {
     const now = this.now();
     let window = this.windows.get(key);
     if (window === undefined || window.resetAt <= now) {
-      if (this.windows.size >= PRUNE_THRESHOLD) {
-        this.prune(now);
-      }
+      this.prune(now);
       // Maps iterate in insertion order, so this drops the longest-tracked keys first.
       for (const oldest of this.windows.keys()) {
         if (this.windows.size < MAX_KEYS) {
@@ -65,11 +61,17 @@ export class RateLimiter {
     }
   }
 
+  /**
+   * Drops expired windows from the front. Every window has the same length and a key is re-inserted when its window
+   * restarts, so insertion order is expiry order and the scan stops at the first live window: constant work per new
+   * key, however many are tracked. (If the clock steps back, a few expired windows may linger until the cap.)
+   */
   private prune(now: number): void {
     for (const [key, window] of this.windows) {
-      if (window.resetAt <= now) {
-        this.windows.delete(key);
+      if (window.resetAt > now) {
+        return;
       }
+      this.windows.delete(key);
     }
   }
 }
