@@ -99,6 +99,17 @@ describe("Dashboard App", () => {
     expect(section).toHaveTextContent("(Asia/Beirut)");
     const rows = within(table).getAllByRole("row");
     expect(rows.map((row) => row.firstElementChild?.textContent)).toEqual(["Hour", "09:00", "10:00", "11:00"]);
+    // ISO weekdays from Monday, as the server indexes them: data column 5 is Saturday.
+    expect(within(rows[0] ?? table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "Hour",
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun",
+    ]);
     const saturdayNine = within(rows[1] ?? table).getAllByRole("cell")[5];
     expect(saturdayNine).toHaveTextContent("8");
     expect(saturdayNine).toHaveClass("level-4");
@@ -109,6 +120,59 @@ describe("Dashboard App", () => {
     await waitFor(() => {
       expect(loads()).toBe(2);
     });
+    // And every hour after that, not just once.
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    await waitFor(() => {
+      expect(loads()).toBe(3);
+    });
+  });
+
+  it("keeps the hours shown when a reload fails, says so without an alert, and tries again 5 minutes later", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let loads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) => {
+        if (path !== "/api/cafe/visit-hours") {
+          return Promise.resolve(path === "/api/auth/session" ? respond(200, SESSION) : (homeData(path) ?? unauthenticated()));
+        }
+        loads += 1;
+        return loads === 2 ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve(respond(200, visitHours([[5, 9, loads === 1 ? 8 : 9]])));
+      }),
+    );
+    render(<App />);
+    const section = await screen.findByRole("region", { name: "Busy and quiet hours" });
+    expect(await within(section).findByRole("cell", { name: "8" })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(await within(section).findByText(/Could not update these hours: Could not reach the server/)).toHaveTextContent("tries again in 5 minutes");
+    expect(within(section).getByRole("cell", { name: "8" })).toBeInTheDocument();
+    expect(within(section).queryByRole("alert")).toBeNull();
+    expect(section).toHaveTextContent("(Asia/Beirut)");
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(await within(section).findByRole("cell", { name: "9" })).toBeInTheDocument();
+    expect(within(section).queryByText(/Could not update these hours/)).toBeNull();
+    // Back to hourly once a load succeeds again.
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+    expect(loads).toBe(3);
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+    await waitFor(() => {
+      expect(loads).toBe(4);
+    });
+  });
+
+  it("says when the hours cannot be loaded at all, and when it tries again", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) =>
+        path === "/api/cafe/visit-hours"
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : Promise.resolve(path === "/api/auth/session" ? respond(200, SESSION) : (homeData(path) ?? unauthenticated())),
+      ),
+    );
+    render(<App />);
+    const section = await screen.findByRole("region", { name: "Busy and quiet hours" });
+    expect(await within(section).findByRole("alert")).toHaveTextContent("Could not load the busy and quiet hours: Could not reach the server.");
+    expect(within(section).getByRole("alert")).toHaveTextContent("This page tries again in 5 minutes.");
   });
 
   it("says so when there are no member visits yet", async () => {

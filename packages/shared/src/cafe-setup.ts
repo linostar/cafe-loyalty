@@ -217,7 +217,10 @@ export const walletDeliveriesSchema = z.object({
   ),
 });
 
-/** The busy and quiet hours cover this many whole weeks up to now, so every weekday and hour is counted equally often. */
+/**
+ * The busy and quiet hours cover this many whole weeks up to now, so every weekday and hour is counted equally often,
+ * except the local hour a daylight-saving change skips (none) or repeats (two real hours).
+ */
 export const VISIT_HOURS_WEEKS = 4;
 
 /**
