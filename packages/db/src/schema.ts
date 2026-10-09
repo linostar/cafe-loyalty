@@ -189,6 +189,8 @@ export interface CardsTable {
   email_lookup: ColumnType<Buffer | null, never, Buffer | null>;
   /** When the card was first scanned at a counter: only then may it be stamped by phone number. */
   phone_confirmed_at: ColumnType<Date | null, never, Date>;
+  /** When another card here signed up with the same number: from then on this card is never stamped by number. */
+  phone_disputed_at: ColumnType<Date | null, never, Date>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -344,6 +346,7 @@ export const TABLE_COLUMNS = {
     "email",
     "email_lookup",
     "phone_confirmed_at",
+    "phone_disputed_at",
     "created_at",
     "updated_at",
   ],

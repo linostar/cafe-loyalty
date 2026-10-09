@@ -64,7 +64,7 @@ export interface Lockout {
   lockedUntil: number | null;
 }
 
-interface MetaValues {
+export interface MetaValues {
   device: DeviceRecord;
   token: StoredToken;
   staff: StaffEntry[];
@@ -80,7 +80,8 @@ interface MetaValues {
    * A redemption sent without a confirmed answer: kept until it gets one, so trying again (even after a reload or an
    * update) reuses its event id and can never give the reward twice (AC 31).
    */
-  pendingRedemption: { eventId: string; cardQr: string };
+  /** A reward sent without a confirmed answer; startedAt (ISO) tells the barista which customer it was for. */
+  pendingRedemption: { eventId: string; cardQr: string; startedAt: string };
 }
 
 type MetaKey = keyof MetaValues;

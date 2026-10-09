@@ -84,11 +84,13 @@ describe("stamping", () => {
       { line: 0, quantity: 2, unit_price_cents: 300, unit_cost_cents: 90, catalog_version: 1, stamps_each: 1 },
       { line: 1, quantity: 1, unit_price_cents: 450, unit_cost_cents: 150, catalog_version: 1, stamps_each: 0 },
     ]);
-    const { rows: audits } = await context.admin.query<{ actor_id: string; changes: Record<string, unknown> }>(
-      "SELECT actor_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'card.stamped'",
+    // Against the visit, never the card, so deleting the card leaves no link in the log either (AC 9).
+    const { rows: audits } = await context.admin.query<{ actor_id: string; entity_type: string; entity_id: string; changes: Record<string, unknown> }>(
+      "SELECT actor_id, entity_type, entity_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'visit.stamped'",
       [app.owner.cafeId],
     );
-    expect(audits).toEqual([{ actor_id: app.device.deviceId, changes: expect.objectContaining({ staffId: app.staffId, stamps: 2 }) as unknown }]);
+    const { rows: visits } = await context.admin.query<{ id: string }>("SELECT id FROM app.visits WHERE card_id = $1", [card.cardId]);
+    expect(audits).toEqual([{ actor_id: app.device.deviceId, entity_type: "visit", entity_id: visits[0]?.id, changes: { staffId: app.staffId, stamps: 2 } }]);
   });
 
   it("adds no stamps within 30 minutes of a card's last stamps, in either order, but keeps the visit (AC 30)", async () => {
@@ -165,22 +167,36 @@ describe("stamping", () => {
     expect(error).toBe("23P01");
   });
 
-  it("stops adding stamps at the device's daily cap, counted per day in the café's time zone (AC 30)", async () => {
+  it("stops adding stamps at each device's daily cap, counted per day in the café's time zone (AC 30)", async () => {
     const app = await cafeApp();
+    const other = await pairDevice(app.app, app.owner, "Counter 2");
     const ten = await app.addType("Box of ten", 10);
     const box = (quantity: number) => [{ orderTypeId: ten, quantity, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1 }];
-    const cards = await Promise.all(Array.from({ length: 3 }, () => issueCard(app.owner.cafeId)));
-    const at = new Date();
-    const yesterday = new Date(at.getTime() - 24 * 60 * MINUTE);
+    const cards = await Promise.all(Array.from({ length: 4 }, () => issueCard(app.owner.cafeId)));
+    const qr = (index: number) => ({ kind: "qr" as const, token: cards[index]?.qr ?? "" });
+    // The café's last midnight, from PostgreSQL's own time zone rules: a few minutes either side are two café days but
+    // one UTC day (Beirut is two or three hours ahead), on any date, daylight-saving changeovers included.
+    const { rows } = await context.admin.query<{ midnight: Date; time_zone: string }>(
+      "SELECT date_trunc('day', (now() - interval '5 minutes') AT TIME ZONE time_zone) AT TIME ZONE time_zone AS midnight, time_zone FROM app.cafes WHERE id = $1",
+      [app.owner.cafeId],
+    );
+    expect(rows[0]?.time_zone).toBe("Asia/Beirut");
+    const midnight = rows[0]?.midnight.getTime() ?? 0;
+    const at = (minutes: number) => new Date(midnight + minutes * MINUTE);
     expect(
       await sync(app, [
-        await visit(app, { kind: "qr", token: cards[0]?.qr ?? "" }, { at, items: box(DAILY_STAMP_CAP / 10) }),
-        await visit(app, { kind: "qr", token: cards[1]?.qr ?? "" }, { at, items: box(1) }),
-        await visit(app, { kind: "qr", token: cards[2]?.qr ?? "" }, { at: yesterday, items: box(1) }),
+        await visit(app, qr(0), { at: at(-1), items: box(DAILY_STAMP_CAP / 10) }),
+        await visit(app, qr(1), { at: at(-2), items: box(1) }),
+        // The next café day, though the same UTC day.
+        await visit(app, qr(2), { at: at(1), items: box(1) }),
       ]),
     ).toEqual([
       { status: "applied", code: "OK" },
       { status: "applied", code: "DAILY_STAMP_CAP" },
+      { status: "applied", code: "OK" },
+    ]);
+    // Another device's cap is its own.
+    expect(await sync(app, [await visit(app, qr(3), { at: at(-3), items: box(1), device: other })], other.accessToken)).toEqual([
       { status: "applied", code: "OK" },
     ]);
     expect(await stampsOf(cards[1]?.cardId ?? "")).toBe(0);
@@ -193,8 +209,43 @@ describe("stamping", () => {
     expect(await sync(app, [byPhone])).toEqual([{ status: "rejected", code: "PHONE_NOT_CONFIRMED" }]);
     expect(await sync(app, [byPhone])).toEqual([{ status: "rejected", code: "PHONE_NOT_CONFIRMED" }]);
     await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: new Date(Date.now() - 60 * MINUTE) })]);
+    // The stored refusal, though the number now works: a resend never turns into stamps.
+    expect(await sync(app, [byPhone])).toEqual([{ status: "rejected", code: "PHONE_NOT_CONFIRMED" }]);
     expect(await sync(app, [await visit(app, { kind: "phone", phone: "+96170111222" })])).toEqual([{ status: "applied", code: "OK" }]);
     expect(await stampsOf(card.cardId)).toBe(4);
+  });
+
+  it("confirms a card's number on a scan that added no stamps", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId, { phone: "+96170111333" });
+    const cakeOnly = [{ orderTypeId: app.cake, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 1 }];
+    await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: new Date(Date.now() - 60 * MINUTE), items: cakeOnly })]);
+    expect(await visitsOf(card.cardId)).toMatchObject([{ outcome: "no_stamps" }]);
+    expect(await sync(app, [await visit(app, { kind: "phone", phone: "+96170111333" })])).toEqual([{ status: "applied", code: "OK" }]);
+    expect(await stampsOf(card.cardId)).toBe(2);
+  });
+
+  it("stops stamping a number by phone once a second card here signs up with it, scanned or not", async () => {
+    const app = await cafeApp();
+    const join = (await app.as("GET", "/api/cafe/join")).json<{ joinUrl: string }>().joinUrl;
+    const code = /\/join\/([0-9a-f]{32})$/.exec(join)?.[1] ?? "missing";
+    const signUpWith = (phone: string) =>
+      app.app.inject({
+        method: "POST",
+        url: `/join/${code}`,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: new URLSearchParams({ phone, privacy: "yes", lang: "en" }).toString(),
+      });
+    expect((await signUpWith("70 404 505")).statusCode).toBe(303);
+    const { rows } = await context.admin.query<{ id: string }>("SELECT id FROM app.cards WHERE cafe_id = $1", [app.owner.cafeId]);
+    const qr = { kind: "qr" as const, token: signCardQr(TEST_SECRETS, { cardId: rows[0]?.id ?? "", cafeId: app.owner.cafeId, epoch: 1 }) };
+    await sync(app, [await visit(app, qr, { at: new Date(Date.now() - 60 * MINUTE) })]);
+    expect(await sync(app, [await visit(app, { kind: "phone", phone: "+96170404505" })])).toEqual([{ status: "applied", code: "OK" }]);
+    // Someone else signs up here with the same number: the first card keeps its QR, but not the number.
+    expect((await signUpWith("70 404 505")).statusCode).toBe(303);
+    await sync(app, [await visit(app, qr, { at: new Date(Date.now() - 120 * MINUTE) })]);
+    expect(await sync(app, [await visit(app, { kind: "phone", phone: "+96170404505" })])).toEqual([{ status: "rejected", code: "PHONE_DISPUTED" }]);
+    expect(await stampsOf(rows[0]?.id ?? "")).toBe(6);
   });
 
   it("refuses unknown or forged cards, another café's cards, replaced QR codes and unknown order types", async () => {
@@ -238,11 +289,11 @@ describe("stamping", () => {
     ]);
     expect(await stampsOf(card.cardId)).toBe(0);
     const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string }[] }>().items;
-    expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).statusCode).toBe(204);
-    expect((await app.as("POST", `/api/review-queue/${queue[1]?.id ?? ""}/discard`)).statusCode).toBe(204);
+    expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "OK" });
+    expect((await app.as("POST", `/api/review-queue/${queue[1]?.id ?? ""}/discard`)).json()).toEqual({ outcome: null });
     expect(await stampsOf(card.cardId)).toBe(2);
     expect((await visitsOf(card.cardId)).map((row) => row.outcome)).toEqual(["stamped", "discarded"]);
-    expect(await auditActions(app.owner.cafeId)).toContain("card.stamped");
+    expect(await auditActions(app.owner.cafeId)).toContain("visit.stamped");
   });
 
   it("holds a visit that arrives more than two days after it happened for the owner", async () => {
@@ -285,8 +336,12 @@ describe("stamping", () => {
       app.owner.cafeId,
     ]);
     expect(redemptions).toEqual([{ card_id: null }]);
+    // Nor does the log name the card anywhere but its own create and delete rows.
+    const { rows: logged } = await context.admin.query<{ action: string }>("SELECT action FROM app.audit_log WHERE entity_id = $1 ORDER BY id", [card.cardId]);
+    expect(logged.map((row) => row.action)).toEqual(["card.deleted"]);
     const held = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string }[] }>().items[0]?.id ?? "";
-    expect((await app.as("POST", `/api/review-queue/${held}/accept`)).statusCode).toBe(204);
+    // The owner is told the accepted visit added nothing.
+    expect((await app.as("POST", `/api/review-queue/${held}/accept`)).json()).toEqual({ outcome: "CARD_GONE" });
     const { rows: outcomes } = await context.admin.query<{ outcome: string }>("SELECT outcome FROM app.visits WHERE cafe_id = $1 ORDER BY occurred_at", [
       app.owner.cafeId,
     ]);
@@ -319,7 +374,24 @@ describe("redemption", () => {
     const again = await redeem(app, card.qr);
     expect(again.statusCode).toBe(409);
     expect(again.json()).toMatchObject({ code: "CONFLICT", message: expect.stringContaining("1 of the 3 stamps") as unknown });
-    expect(await auditActions(app.owner.cafeId)).toContain("card.redeemed");
+    expect(await auditActions(app.owner.cafeId)).toContain("reward.redeemed");
+  });
+
+  it("answers a retry from a build that aged out since, and refuses that build a new redemption (AC 26)", async () => {
+    const app = await cafeApp();
+    const card = await cardWithStamps(app, 6);
+    const eventId = randomUUID();
+    expect((await redeem(app, card.qr, eventId)).statusCode).toBe(201);
+    const fromOldBuild = (id: string) =>
+      app.app.inject({
+        method: "POST",
+        url: "/api/device/redemptions",
+        headers: { authorization: `Bearer ${app.device.accessToken}`, [COUNTER_BUILT_AT_HEADER]: "2020-01-01T00:00:00Z" },
+        payload: { eventId: id, staffId: app.staffId, cardQr: card.qr },
+      });
+    expect((await fromOldBuild(eventId)).statusCode).toBe(200);
+    expect((await fromOldBuild(randomUUID())).statusCode).toBe(426);
+    expect(await stampsOf(card.cardId)).toBe(3);
   });
 
   it("redeems once when the same redemption arrives twice at the same moment, and answers both the same", async () => {

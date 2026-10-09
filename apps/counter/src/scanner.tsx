@@ -9,22 +9,22 @@ export function decodeQr(image: { data: Uint8ClampedArray; width: number; height
   return jsQR(image.data, image.width, image.height, { inversionAttempts: "dontInvert" })?.data ?? null;
 }
 
-function cameraProblem(error: unknown): string {
+function cameraProblem(error: unknown, noCamera: string): string {
   const name = error instanceof DOMException ? error.name : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
     return "The camera is not allowed. Allow this site to use the camera in the browser's settings, then try again.";
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
-    return "No camera was found on this phone.";
+    return `No camera was found on this phone. ${noCamera}`;
   }
   return "The camera could not start. Close other apps that use it, then try again.";
 }
 
 /**
  * Shows the back camera and reports the first QR code it sees, reading frames on the phone (nothing leaves it). The
- * camera is released when the scanner closes.
+ * camera is released when the scanner closes. `noCamera` is what to do instead on a phone without one.
  */
-export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onScan: (text: string) => void; onCancel: () => void }) {
+export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: string; noCamera: string; onScan: (text: string) => void; onCancel: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const helpId = useId();
@@ -35,9 +35,11 @@ export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onSc
     cancel.current?.focus();
   }, []);
   const reported = useRef(onScan);
+  const noCameraText = useRef(noCamera);
   useEffect(() => {
     reported.current = onScan;
-  }, [onScan]);
+    noCameraText.current = noCamera;
+  }, [onScan, noCamera]);
 
   useEffect(() => {
     let stream: MediaStream | undefined;
@@ -69,7 +71,7 @@ export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onSc
             track.stop();
           }
           if (isActive()) {
-            setProblem(cameraProblem(caught));
+            setProblem(cameraProblem(caught, noCameraText.current));
           }
           return;
         }
@@ -95,7 +97,7 @@ export function QrScanner({ purpose, onScan, onCancel }: { purpose: string; onSc
       (caught: unknown) => {
         console.error("Opening the camera failed", caught);
         if (isActive()) {
-          setProblem(cameraProblem(caught));
+          setProblem(cameraProblem(caught, noCameraText.current));
         }
       },
     );

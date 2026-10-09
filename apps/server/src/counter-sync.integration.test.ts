@@ -137,19 +137,26 @@ describe("sync", () => {
     expect(rows).toEqual([{ late: true }]);
   });
 
-  it("accepts a full batch of the largest events within the body limit", async () => {
-    const { app, device, staffId, orderTypeId } = await counterApp();
-    const items = Array.from({ length: 30 }, () => ({ orderTypeId, quantity: 50, unitPriceCents: 66_666, unitCostCents: 99_999_999, catalogVersion: 2_000_000_000 }));
-    // The longest card reference v1 accepts, which no card has: refused, but carried in full.
+  it("accepts a full batch of the largest events within the body limit, and stores the largest visit", async () => {
+    const { app, owner, device, staffId, orderTypeId, qr } = await counterApp();
+    const items = Array.from({ length: 30 }, () => ({ orderTypeId, quantity: 50, unitPriceCents: 66_666, unitCostCents: 99_999_999, catalogVersion: 2_147_483_647 }));
+    // The longest card reference v1 accepts, which no card has: refused, but carried in full. The last one is a real
+    // card, so the largest items and numbers v1 accepts are stored too.
     const events = await Promise.all(
-      Array.from({ length: MAX_SYNC_BATCH }, () =>
-        visit(device, staffId, { payload: { card: { kind: "qr", token: "Q".repeat(512) }, items, totalCents: 30 * 50 * 66_666 } }),
+      Array.from({ length: MAX_SYNC_BATCH }, (_, index) =>
+        visit(device, staffId, {
+          payload: { card: { kind: "qr", token: index === MAX_SYNC_BATCH - 1 ? qr : "Q".repeat(512) }, items, totalCents: 30 * 50 * 66_666 },
+        }),
       ),
     );
     const body = JSON.stringify({ events });
     expect(body.length).toBeLessThan(SYNC_BODY_LIMIT_BYTES);
     const results = await sync(app, device.accessToken, events);
-    expect(results.every((result) => result.code === "CARD_NOT_FOUND")).toBe(true);
+    expect(results.map((result) => result.code)).toEqual([...Array.from({ length: MAX_SYNC_BATCH - 1 }, () => "CARD_NOT_FOUND"), "OK"]);
+    const { rows } = await context.admin.query("SELECT count(*)::int AS lines, max(catalog_version) AS version FROM app.visit_items WHERE cafe_id = $1", [
+      owner.cafeId,
+    ]);
+    expect(rows).toEqual([{ lines: 30, version: 2_147_483_647 }]);
   });
 
   it("refuses a body over the limit with the shared envelope", async () => {
@@ -233,7 +240,8 @@ describe("review queue", () => {
     const queue = reviewQueueSchema.parse((await as("GET", "/api/review-queue")).json());
     expect(queue).toMatchObject({ items: [{ type: "visit.recorded", deviceName: "Counter 1", staffName: "Rami", reason: "staff_revoked" }], nextCursor: null });
     const id = queue.items[0]?.id ?? "missing";
-    expect((await as("POST", `/api/review-queue/${id}/accept`)).statusCode).toBe(204);
+    // A visit whose items earn no stamps: accepted, and it says so.
+    expect((await as("POST", `/api/review-queue/${id}/accept`)).json()).toEqual({ outcome: "OK" });
     expect((await as("POST", `/api/review-queue/${id}/discard`)).json()).toMatchObject({ code: "NOT_FOUND" });
     expect(reviewQueueSchema.parse((await as("GET", "/api/review-queue")).json()).items).toEqual([]);
     expect(await ledger(device.deviceId)).toEqual([expect.objectContaining({ status: "applied", hold_reason: "staff_revoked" })]);
@@ -253,7 +261,7 @@ describe("review queue", () => {
 
     const queue = reviewQueueSchema.parse((await as("GET", "/api/review-queue")).json());
     expect(queue.items).toMatchObject([{ reason: "device_revoked" }]);
-    expect((await as("POST", `/api/review-queue/${queue.items[0]?.id ?? "missing"}/discard`)).statusCode).toBe(204);
+    expect((await as("POST", `/api/review-queue/${queue.items[0]?.id ?? "missing"}/discard`)).json()).toEqual({ outcome: null });
     expect(await ledger(device.deviceId)).toEqual([expect.objectContaining({ status: "discarded" })]);
   });
 

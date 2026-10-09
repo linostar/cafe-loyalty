@@ -57,6 +57,7 @@ const REJECTION_REASONS: Readonly<Record<string, string>> = {
   CARD_NOT_FOUND: "the card is not a card of this café; scan the customer's card again next time",
   CARD_REPLACED: "the card was moved to another phone; ask the customer to show the card on their new phone",
   PHONE_NOT_CONFIRMED: "this number is not confirmed yet; scan the customer's card once, then their number works too",
+  PHONE_DISPUTED: "another card at this café signed up with this number, so it cannot be stamped by number; scan the customer's card",
   UNKNOWN_ORDER_TYPE: "something ordered is no longer on the café's menu",
   INVALID_EVENT: "the server could not accept it as recorded",
   SIGNATURE_INVALID: "this phone's signature did not check out",

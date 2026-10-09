@@ -325,6 +325,15 @@ ${errorBlock(errors.privacy, "privacy-error")}
         // The same form, sent at the same moment, created the card first.
         return;
       }
+      if (linked === undefined) {
+        // The number already has a card here, so one of the two may not be the number's owner: that card is never
+        // stamped by number again (PHONE_DISPUTED), only by its QR. The minimum signup time hides this extra step (AC 5).
+        await trx
+          .updateTable("cards")
+          .set({ phone_disputed_at: sql<Date>`coalesce(phone_disputed_at, ${now()})` })
+          .where("customer_id", "=", customer.id)
+          .execute();
+      }
       await audit(trx, { cafeId: cafe.id, actorType: "system", actorId: null, action: "card.created", entityType: "card", entityId: created.id, changes: { source: "customer" } });
     });
     request.log.info({ cafeId: cafe.id }, "customer card created");

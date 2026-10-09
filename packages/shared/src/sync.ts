@@ -45,7 +45,8 @@ export const visitItemSchema = z.object({
   quantity: z.number().int().min(1).max(50),
   unitPriceCents: centsSchema,
   unitCostCents: centsSchema,
-  catalogVersion: z.number().int().min(1),
+  // Stored as a PostgreSQL integer, like the café's own catalog_version.
+  catalogVersion: z.number().int().min(1).max(2_147_483_647),
 });
 
 export type VisitItem = z.output<typeof visitItemSchema>;
@@ -258,6 +259,8 @@ export const SYNC_RESULT_CODES = {
   CARD_REPLACED: "rejected",
   /** Stamping by phone number needs the card scanned once at the counter first (numbers are not verified). */
   PHONE_NOT_CONFIRMED: "rejected",
+  /** Another card here signed up with the same number, so neither is stamped by number: scan the card instead. */
+  PHONE_DISPUTED: "rejected",
   /** An item names an order type this café does not have. */
   UNKNOWN_ORDER_TYPE: "rejected",
   INVALID_EVENT: "rejected",
@@ -364,5 +367,9 @@ export const reviewItemSchema = z.object({
 /** A page of the review queue, oldest first; `nextCursor` fetches the next page (AC 40). */
 export const reviewQueueSchema = z.object({ items: z.array(reviewItemSchema), nextCursor: z.string().nullable() });
 
+/** The answer to accepting or discarding a held event: an accepted visit's result code (OK, STAMP_COOLDOWN, …), else null. */
+export const reviewDecisionSchema = z.object({ outcome: z.string().min(1).max(64).nullable() });
+
 export type ReviewItem = z.output<typeof reviewItemSchema>;
+export type ReviewDecision = z.output<typeof reviewDecisionSchema>;
 export type ReviewQueue = z.output<typeof reviewQueueSchema>;

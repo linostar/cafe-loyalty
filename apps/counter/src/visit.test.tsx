@@ -72,15 +72,41 @@ describe("visits", () => {
     });
   });
 
-  it("asks for a card and a valid number before saving", async () => {
+  it("asks for a card and a valid number before saving, tying a bad number to its field", async () => {
     await counter();
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Scan the customer's card, or enter their mobile number.");
-    fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "12" } });
+    const field = screen.getByLabelText("Or the customer's mobile number");
+    expect(field).not.toHaveAttribute("aria-invalid");
+    fireEvent.change(field, { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Enter a Lebanese mobile number");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Enter a Lebanese mobile number, such as 70 123 456.");
     expect(await listQueued(10)).toEqual([]);
+  });
+
+  it("keeps the keyboard on a stepper at its limit, where it changes nothing", async () => {
+    await counter();
+    const less = screen.getByRole("button", { name: "One less Coffee" });
+    less.focus();
+    expect(less).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(less);
+    expect(less).toHaveFocus();
+    expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
+  });
+
+  it("names what the owner took off sale while the order was open, and leaves it out", async () => {
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    const props = { device, barista, online: true, onBusy: vi.fn() };
+    const { rerender } = render(<CounterScreen {...props} catalog={CATALOG} />);
+    fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+    fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+    rerender(<CounterScreen {...props} catalog={{ ...CATALOG, orderTypes: [COFFEE] }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("No longer on sale, so left out of this order: Cake. The total does not include it.");
+    expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
   });
 
   it("takes this café's scanned card and refuses another café's or a code that is not a card", async () => {
@@ -127,7 +153,11 @@ describe("rewards", () => {
     nextScan = cardOf(CAFE.id);
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The reward was not confirmed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^The reward started at .+ was not confirmed\. Do not give it yet: check the connection, then press Try again\.$/);
+    // The keyboard lands on the next step.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Try again" })).toHaveFocus();
+    });
     // Kept on the phone and marked busy, so neither a reload nor an update loses it.
     expect(await getMeta("pendingRedemption")).toMatchObject({ cardQr: cardOf(CAFE.id) });
     // The busy flag passes through two effects (the panel's, then the screen's).
@@ -139,6 +169,9 @@ describe("rewards", () => {
       await Promise.resolve();
     });
     expect(await screen.findByText("Reward given: Free coffee. 1 stamp left on the card.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toHaveFocus();
+    });
     expect(await getMeta("pendingRedemption")).toBeUndefined();
     await waitFor(() => {
       expect(onBusy).toHaveBeenLastCalledWith(false);
@@ -149,14 +182,19 @@ describe("rewards", () => {
     expect(bodies[0]?.cardQr).toBe(cardOf(CAFE.id));
   });
 
-  it("must try an unconfirmed one again after a reload, with the same event id, before giving another", async () => {
-    await setMeta("pendingRedemption", { eventId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d", cardQr: cardOf(CAFE.id) });
+  it("must try an unconfirmed one again after a reload, with the same event id, saying which one it was", async () => {
+    const startedAt = "2026-10-09T08:42:00.000Z";
+    const shown = new Intl.DateTimeFormat("en-GB", { timeStyle: "short" }).format(new Date(startedAt));
+    await setMeta("pendingRedemption", { eventId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d", cardQr: cardOf(CAFE.id), startedAt });
     await counter();
     expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(`A reward started at ${shown} was not confirmed.`);
     expect(screen.queryByRole("button", { name: "Scan card for a reward" })).not.toBeInTheDocument();
     const calls = fakeApi(() => ({ status: 200, body: { stampsUsed: 9, stampsLeft: 0, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } }));
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("Reward given: Free coffee. 0 stamps left on the card.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(`The earlier reward, started at ${shown}, was given: Free coffee. 0 stamps left on that card. If that customer did not get it, tell the owner.`),
+    ).toBeInTheDocument();
     expect(calls[0]?.body).toMatchObject({ eventId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d" });
   });
 
@@ -168,5 +206,8 @@ describe("rewards", () => {
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This card has 4 of the 9 stamps a reward needs.");
     expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeEnabled();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toHaveFocus();
+    });
   });
 });

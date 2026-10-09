@@ -2,10 +2,11 @@ import { formatUsd, normalizePhoneInput, parseCardQr, redemptionSchema, visitIte
 import { useEffect, useId, useRef, useState } from "react";
 import { DeviceUnpairedError, RequestError, deviceRequest } from "./device.js";
 import { QrScanner } from "./scanner.js";
-import { deleteMeta, getMeta, setMeta, type DeviceRecord, type StaffEntry } from "./storage.js";
+import { deleteMeta, getMeta, setMeta, type DeviceRecord, type MetaValues, type StaffEntry } from "./storage.js";
 import { recordEvent } from "./sync.js";
 
 type CardChoice = { kind: "qr"; token: string } | { kind: "phone"; phone: string };
+type StoredRedemption = MetaValues["pendingRedemption"];
 /** Which of the counter's two uses of the camera is open; only one at a time. */
 type ScanPurpose = "visit" | "reward";
 
@@ -35,18 +36,24 @@ interface VisitFormProps {
 /** Records a visit offline: what was ordered and whose card, by QR or phone number (AC 22, 30, 32). */
 function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: VisitFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  /** The name of everything put in the order, to name it if the owner takes it off sale meanwhile. */
+  const [names, setNames] = useState<Record<string, string>>({});
   const [scanned, setScanned] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  /** What is wrong, and whether it is the phone number (then tied to that field). */
+  const [problem, setProblem] = useState<{ text: string; phone: boolean } | null>(null);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const phoneId = useId();
+  const problemId = useId();
   const scanButton = useRef<HTMLButtonElement>(null);
   const recordButton = useRef<HTMLButtonElement>(null);
 
   const items = catalog.orderTypes.filter((type) => (quantities[type.id] ?? 0) > 0).map((type) => ({ type, quantity: quantities[type.id] ?? 0 }));
-  // Taken off sale by the owner while this order was open: left out, and said so.
-  const dropped = Object.entries(quantities).some(([id, quantity]) => quantity > 0 && !catalog.orderTypes.some((type) => type.id === id));
+  // Taken off sale by the owner while this order was open: left out, and said so by name.
+  const dropped = Object.entries(quantities)
+    .filter(([id, quantity]) => quantity > 0 && !catalog.orderTypes.some((type) => type.id === id))
+    .map(([id]) => names[id] ?? "An item");
   const stamps = items.reduce((sum, item) => sum + item.quantity * item.type.stampsEarned, 0);
   const lines = items.map(({ type, quantity }) => ({
     orderTypeId: type.id,
@@ -62,12 +69,17 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     onBusy(open || saving);
   }, [open, saving, onBusy]);
 
-  const change = (id: string, delta: number) => {
+  // Clamped here: the steppers stay focusable at 0 and 50 (aria-disabled), so a click there changes nothing.
+  const change = (type: { id: string; nameEn: string }, delta: number) => {
     setNotice("");
-    setQuantities((current) => ({ ...current, [id]: Math.max(0, Math.min(50, (current[id] ?? 0) + delta)) }));
+    setNames((current) => ({ ...current, [type.id]: type.nameEn }));
+    setQuantities((current) => ({ ...current, [type.id]: Math.max(0, Math.min(50, (current[type.id] ?? 0) + delta)) }));
   };
 
   const record = () => {
+    if (saving) {
+      return;
+    }
     setProblem(null);
     let card: CardChoice;
     if (scanned !== null) {
@@ -75,14 +87,17 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     } else {
       const e164 = normalizePhoneInput(phone);
       if (e164 === null) {
-        setProblem(phone === "" ? "Scan the customer's card, or enter their mobile number." : "Enter a Lebanese mobile number, such as 70 123 456.");
+        setProblem({
+          text: phone === "" ? "Scan the customer's card, or enter their mobile number." : "Enter a Lebanese mobile number, such as 70 123 456.",
+          phone: phone !== "",
+        });
         return;
       }
       card = { kind: "phone", phone: e164 };
     }
     const payload = visitRecordedV1PayloadSchema.safeParse({ card, items: lines, totalCents: total ?? -1 });
     if (!payload.success) {
-      setProblem(items.length === 0 ? "Add what the customer ordered first." : "This order is too large to record. Split it into two visits.");
+      setProblem({ text: items.length === 0 ? "Add what the customer ordered first." : "This order is too large to record. Split it into two visits.", phone: false });
       return;
     }
     setSaving(true);
@@ -98,7 +113,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       (caught: unknown) => {
         console.error("Recording the visit failed", caught);
         setSaving(false);
-        setProblem("The visit could not be saved on this phone. Reload the page and record it again.");
+        setProblem({ text: "The visit could not be saved on this phone. Reload the page and record it again.", phone: false });
       },
     );
   };
@@ -109,6 +124,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         <h3 id="scan-title">Scan the customer&apos;s card</h3>
         <QrScanner
           purpose="customer's loyalty card QR code"
+          noCamera="Enter the customer's mobile number instead."
           onCancel={() => {
             onScanner(null);
             requestAnimationFrame(() => scanButton.current?.focus());
@@ -117,7 +133,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
             onScanner(null);
             const read = readCardQr(text, device.cafe.id);
             if ("problem" in read) {
-              setProblem(read.problem);
+              setProblem({ text: read.problem, phone: false });
               requestAnimationFrame(() => scanButton.current?.focus());
             } else {
               setScanned(read.token);
@@ -148,9 +164,9 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 <button
                   type="button"
                   aria-label={`One less ${type.nameEn}`}
-                  disabled={quantity === 0}
+                  aria-disabled={quantity === 0}
                   onClick={() => {
-                    change(type.id, -1);
+                    change(type, -1);
                   }}
                 >
                   −
@@ -159,9 +175,9 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 <button
                   type="button"
                   aria-label={`One more ${type.nameEn}`}
-                  disabled={quantity === 50}
+                  aria-disabled={quantity === 50}
                   onClick={() => {
-                    change(type.id, 1);
+                    change(type, 1);
                   }}
                 >
                   +
@@ -171,7 +187,11 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           );
         })}
       </ul>
-      {dropped ? <p className="warning">Something in this order is no longer on sale and was left out. Check the order.</p> : null}
+      {dropped.length === 0 ? null : (
+        <p role="alert" className="warning">
+          No longer on sale, so left out of this order: {dropped.join(", ")}. The total does not include {dropped.length === 1 ? "it" : "them"}.
+        </p>
+      )}
       <p aria-live="polite">
         Total {formatUsd(total ?? 0, "en")} · {plural(stamps, "stamp", "stamps")}
       </p>
@@ -211,6 +231,8 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
               inputMode="tel"
               autoComplete="off"
               value={phone}
+              aria-invalid={problem?.phone === true ? true : undefined}
+              aria-describedby={problem?.phone === true ? problemId : undefined}
               onChange={(event) => {
                 setPhone(event.target.value);
                 setNotice("");
@@ -220,13 +242,14 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         ) : null}
       </div>
       {problem === null ? null : (
-        <p role="alert" className="field-error">
-          {problem}
+        <p id={problemId} role="alert" className="field-error">
+          {problem.text}
         </p>
       )}
       {/* Always in the page, so a new notice is announced. */}
       <p role="status">{notice}</p>
-      <button ref={recordButton} type="button" disabled={saving} onClick={record}>
+      {/* aria-disabled, not disabled: the keyboard stays on it while the visit saves. */}
+      <button ref={recordButton} type="button" aria-disabled={saving} onClick={record}>
         {saving ? "Saving…" : "Record visit"}
       </button>
     </section>
@@ -237,6 +260,12 @@ interface RewardMessage {
   text: string;
   problem: boolean;
 }
+
+/** A redemption sent without a confirmed answer yet; `earlier` when it was found on the phone after a reload. */
+type PendingReward = StoredRedemption & { earlier: boolean };
+
+const clock = new Intl.DateTimeFormat("en-GB", { timeStyle: "short" });
+const startedAt = (attempt: StoredRedemption) => clock.format(new Date(attempt.startedAt));
 
 interface RedeemPanelProps {
   device: DeviceRecord;
@@ -254,18 +283,30 @@ interface RedeemPanelProps {
  * never gives the reward twice.
  */
 function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onBusy }: RedeemPanelProps) {
-  const [pending, setPending] = useState<{ eventId: string; cardQr: string } | null>(null);
+  const [pending, setPending] = useState<PendingReward | null>(null);
   const [message, setMessage] = useState<RewardMessage | null>(null);
   const [sending, setSending] = useState(false);
-  const scanButton = useRef<HTMLButtonElement>(null);
+  /** Bumped whenever the scanner closes or an attempt ends: the keyboard goes back to the panel's button. */
+  const [refocus, setRefocus] = useState(0);
+  /** "Scan card for a reward" or "Try again", whichever is shown. */
+  const actionButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (refocus > 0) {
+      actionButton.current?.focus();
+    }
+  }, [refocus]);
 
   useEffect(() => {
     let current = true;
     getMeta("pendingRedemption").then(
       (stored) => {
         if (current && stored !== undefined) {
-          setPending(stored);
-          setMessage({ text: "A reward was not confirmed before. Try it again before giving another.", problem: true });
+          setPending({ ...stored, earlier: true });
+          setMessage({
+            text: `A reward started at ${startedAt(stored)} was not confirmed. Press Try again to find out whether that customer got it, before giving another.`,
+            problem: true,
+          });
         }
       },
       (caught: unknown) => {
@@ -281,41 +322,54 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
     onBusy(pending !== null || sending || scanner === "reward");
   }, [pending, sending, scanner, onBusy]);
 
-  const settle = (text: string, problem: boolean) => {
+  /** Ends an attempt: the message, and the keyboard back on the panel's button. */
+  const finish = (text: string, problem: boolean) => {
     setSending(false);
-    setPending(null);
     setMessage({ text, problem });
+    setRefocus((turn) => turn + 1);
+  };
+
+  /** The server's answer, so the redemption is done with either way. */
+  const settle = (text: string, problem: boolean) => {
+    setPending(null);
+    finish(text, problem);
     deleteMeta("pendingRedemption").catch((caught: unknown) => {
       console.error("Clearing the unconfirmed reward failed", caught);
     });
   };
 
-  const send = async (attempt: { eventId: string; cardQr: string }) => {
+  const send = async (attempt: PendingReward) => {
     setSending(true);
     setMessage(null);
     try {
       // Kept before it is sent: if the answer is lost, the same redemption is tried again.
-      await setMeta("pendingRedemption", attempt);
+      await setMeta("pendingRedemption", { eventId: attempt.eventId, cardQr: attempt.cardQr, startedAt: attempt.startedAt });
     } catch (caught) {
       console.error("Keeping the reward failed", caught);
-      setSending(false);
-      setMessage({ text: "The reward could not be started on this phone. Reload the page and try again.", problem: true });
+      finish("The reward could not be started on this phone. Reload the page and try again.", true);
       return;
     }
     setPending(attempt);
+    // One from before a reload may be for a customer who has left: the barista is told which one it was.
+    const earlier = attempt.earlier ? `The earlier reward, started at ${startedAt(attempt)},` : null;
     try {
       const redemption = await deviceRequest("POST", "/api/device/redemptions", redemptionSchema, { eventId: attempt.eventId, staffId: barista.id, cardQr: attempt.cardQr });
-      settle(`Reward given: ${redemption.rewardNameEn}. ${plural(redemption.stampsLeft, "stamp", "stamps")} left on the card.`, false);
+      const left = plural(redemption.stampsLeft, "stamp", "stamps");
+      settle(
+        earlier === null
+          ? `Reward given: ${redemption.rewardNameEn}. ${left} left on the card.`
+          : `${earlier} was given: ${redemption.rewardNameEn}. ${left} left on that card. If that customer did not get it, tell the owner.`,
+        false,
+      );
     } catch (caught) {
       if (caught instanceof RequestError && caught.failure.retryable) {
-        setSending(false);
-        setMessage({ text: `The reward was not confirmed: ${caught.message} Try again.`, problem: true });
+        // Nothing sends it again by itself, and whether it was given is unknown until it is.
+        finish(`The reward started at ${startedAt(attempt)} was not confirmed. Do not give it yet: check the connection, then press Try again.`, true);
       } else if (caught instanceof RequestError || caught instanceof DeviceUnpairedError) {
-        settle(caught.message, true);
+        settle(earlier === null ? caught.message : `${earlier} was not given: ${caught.message}`, true);
       } else {
         console.error("Redeeming failed", caught);
-        setSending(false);
-        setMessage({ text: "The reward could not be confirmed on this phone. Try again.", problem: true });
+        finish("The reward could not be confirmed on this phone. Reload the page, then press Try again.", true);
       }
     }
   };
@@ -332,27 +386,30 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
       {scanner === "reward" ? (
         <QrScanner
           purpose="customer's loyalty card QR code"
+          noCamera="Rewards need the card scanned: give them from a phone with a camera."
           onCancel={() => {
             onScanner(null);
-            requestAnimationFrame(() => scanButton.current?.focus());
+            setRefocus((turn) => turn + 1);
           }}
           onScan={(text) => {
             onScanner(null);
             const read = readCardQr(text, device.cafe.id);
-            requestAnimationFrame(() => scanButton.current?.focus());
             if ("problem" in read) {
-              setMessage({ text: read.problem, problem: true });
+              finish(read.problem, true);
             } else {
-              void send({ eventId: crypto.randomUUID(), cardQr: read.token });
+              void send({ eventId: crypto.randomUUID(), cardQr: read.token, startedAt: new Date().toISOString(), earlier: false });
             }
           }}
         />
       ) : (
         <>
-          {online ? null : <p className="warning">Rewards need an internet connection. Connect the phone, then try again.</p>}
+          {/* Always in the page, so going offline is announced. */}
+          <p role="status" className={online ? undefined : "warning"}>
+            {online ? "" : "Rewards need an internet connection. Connect the phone, then try again."}
+          </p>
           {pending === null ? (
             <button
-              ref={scanButton}
+              ref={actionButton}
               type="button"
               disabled={!online || sending || scanner !== null}
               onClick={() => {
@@ -364,6 +421,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
             </button>
           ) : (
             <button
+              ref={actionButton}
               type="button"
               disabled={!online || sending}
               onClick={() => {

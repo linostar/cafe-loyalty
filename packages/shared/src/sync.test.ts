@@ -120,6 +120,12 @@ describe("parseSyncEvent", () => {
     expect(parseSyncEvent(visitEvent({ sequence: MAX_SYNC_SEQUENCE + 1 })).status).toBe("invalid");
   });
 
+  it("caps an item's catalog version at what the server stores", () => {
+    const item = (catalogVersion: number) => ({ items: [{ orderTypeId: ids.orderType, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion }] });
+    expect(parseSyncEvent(visitEvent({}, item(2_147_483_647))).status).toBe("valid");
+    expect(parseSyncEvent(visitEvent({}, item(2_147_483_648))).status).toBe("invalid");
+  });
+
   it("accepts a PIN lockout report (AC 19)", () => {
     const lockout = visitEvent({ type: "staff.pin_lockout", payload: { failedAttempts: 5, lockedUntil: "2026-10-08T07:30:30.000Z" } });
     expect(parseSyncEvent(lockout)).toMatchObject({ status: "valid", event: { type: "staff.pin_lockout", payload: { failedAttempts: 5 } } });

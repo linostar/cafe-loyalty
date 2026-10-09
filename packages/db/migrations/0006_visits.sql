@@ -15,6 +15,9 @@ CREATE FUNCTION stamp_cooldown_window(stamped_at timestamptz) RETURNS tstzrange
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
   AS $$ SELECT pg_catalog.tstzrange(stamped_at, stamped_at + interval '30 minutes') $$;
 
+-- payload_hash (0005) is an HMAC keyed with the phone lookup pepper from here on, not a plain SHA-256: visits and
+-- their items store everything else of a phone visit's signed bytes, so a plain hash would give the number away to
+-- anyone with a copy of the database. The server computes it; nothing in the schema changes.
 -- A refused event (unknown card, a card replaced by recovery, an unconfirmed phone number) is kept with its code. A
 -- visit that arrives more than two days after it happened is held for the owner (late_sync): the daily cap and the
 -- cooldown go by the visit's own time, which the device sets, so backdated visits must not stamp unseen.
@@ -34,8 +37,13 @@ ALTER TABLE sync_events
     OR (hold_reason IS NOT NULL AND status IN ('applied', 'discarded') AND reviewed_at IS NOT NULL AND reviewed_by IS NOT NULL)
   );
 
--- Stamping by phone number needs a card first seen at the counter by its QR (phone numbers are not verified).
-ALTER TABLE cards ADD COLUMN phone_confirmed_at timestamptz;
+-- Stamping by phone number needs a card first seen at the counter by its QR (phone numbers are not verified). A scan
+-- proves who holds the card, not who owns the number: when a second card here signs up with the same number, the
+-- number is disputed and its card is never stamped by number again (QR only), so a squatter cannot keep the stamps
+-- the number's owner asks for.
+ALTER TABLE cards
+  ADD COLUMN phone_confirmed_at timestamptz,
+  ADD COLUMN phone_disputed_at timestamptz;
 
 CREATE TABLE visits (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,6 +130,6 @@ GRANT SELECT, INSERT ON visits TO cl_app;
 GRANT UPDATE (stamps_added, outcome) ON visits TO cl_app;
 GRANT SELECT, INSERT ON visit_items TO cl_app;
 GRANT SELECT, INSERT ON redemptions TO cl_app;
-GRANT UPDATE (stamps, phone_confirmed_at) ON cards TO cl_app;
+GRANT UPDATE (stamps, phone_confirmed_at, phone_disputed_at) ON cards TO cl_app;
 REVOKE ALL ON FUNCTION stamp_cooldown_window(timestamptz) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION stamp_cooldown_window(timestamptz) TO cl_app;

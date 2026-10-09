@@ -17,12 +17,17 @@ export const DAILY_STAMP_CAP = 300;
 type CardReference = VisitRecordedV1Event["payload"]["card"];
 type VisitItem = VisitRecordedV1Event["payload"]["items"][number];
 
-export type CardLookup = { status: "found"; cardId: string } | { status: "refused"; code: "CARD_NOT_FOUND" | "CARD_REPLACED" | "PHONE_NOT_CONFIRMED" };
+type CardRefusal = "CARD_NOT_FOUND" | "CARD_REPLACED" | "PHONE_NOT_CONFIRMED" | "PHONE_DISPUTED";
+
+export type CardLookup = { status: "found"; cardId: string } | { status: "refused"; code: CardRefusal };
 
 /**
  * This café's card for a scanned QR or a typed phone number, under the café the transaction is set to. A QR must be
  * genuine, of this café and of the card's current epoch (AC 7, 8). A phone number finds the card through this café's
- * own cards (AC 3) and works only for a card already confirmed by a QR scan, since numbers are not verified.
+ * own cards (AC 3) and works only for a card already confirmed by a QR scan, since numbers are not verified, and
+ * never once another card here signed up with the same number (a scan proves who holds a card, not whose number it is).
+ * ponytail: a squatter who deletes the disputed card and signs up again starts undisputed; a per-café record of
+ * disputed numbers would close that, at the cost of their stamps each time.
  */
 export async function findCard(trx: Transaction<Database>, secrets: CustomerSecrets, cafeId: string, card: CardReference): Promise<CardLookup> {
   if (card.kind === "qr") {
@@ -39,17 +44,20 @@ export async function findCard(trx: Transaction<Database>, secrets: CustomerSecr
   const row = await trx
     .selectFrom("cards")
     .innerJoin("customers", "customers.id", "cards.customer_id")
-    .select(["cards.id", "cards.phone_confirmed_at"])
+    .select(["cards.id", "cards.phone_confirmed_at", "cards.phone_disputed_at"])
     .where("customers.phone_lookup", "=", phoneLookup(secrets, card.phone))
     .executeTakeFirst();
   if (row === undefined) {
     return { status: "refused", code: "CARD_NOT_FOUND" };
   }
+  if (row.phone_disputed_at !== null) {
+    return { status: "refused", code: "PHONE_DISPUTED" };
+  }
   return row.phone_confirmed_at === null ? { status: "refused", code: "PHONE_NOT_CONFIRMED" } : { status: "found", cardId: row.id };
 }
 
 export type VisitPlan =
-  | { status: "refused"; code: "CARD_NOT_FOUND" | "CARD_REPLACED" | "PHONE_NOT_CONFIRMED" | "UNKNOWN_ORDER_TYPE" }
+  | { status: "refused"; code: CardRefusal | "UNKNOWN_ORDER_TYPE" }
   | { status: "ready"; cardId: string; identifiedBy: "qr" | "phone"; stampsEach: ReadonlyMap<string, number>; stampsEarned: number };
 
 /**
@@ -148,13 +156,23 @@ export async function applyVisit(trx: Transaction<Database>, cafeId: string, vis
       .where("stamps_added", ">", 0)
       .where(sql<boolean>`stamp_cooldown_window(occurred_at) && stamp_cooldown_window(${visit.occurred_at})`)
       .executeTakeFirst();
+    // The visit's café day as two instants first, so the sum reads only that day through visits_device_day_idx.
+    const day = await trx
+      .selectFrom("cafes")
+      .select([
+        sql<Date>`date_trunc('day', ${visit.occurred_at}::timestamptz AT TIME ZONE time_zone) AT TIME ZONE time_zone`.as("starts"),
+        sql<Date>`(date_trunc('day', ${visit.occurred_at}::timestamptz AT TIME ZONE time_zone) + interval '1 day') AT TIME ZONE time_zone`.as("ends"),
+      ])
+      .where("id", "=", cafeId)
+      .executeTakeFirstOrThrow();
     const today = await trx
       .selectFrom("visits")
-      .innerJoin("cafes", "cafes.id", "visits.cafe_id")
-      .select(sql<number>`coalesce(sum(visits.stamps_added), 0)::int`.as("stamps"))
-      .where("visits.device_id", "=", visit.device_id)
-      .where("visits.stamps_added", ">", 0)
-      .where(sql<boolean>`(visits.occurred_at AT TIME ZONE cafes.time_zone)::date = (${visit.occurred_at}::timestamptz AT TIME ZONE cafes.time_zone)::date`)
+      .select(sql<number>`coalesce(sum(stamps_added), 0)::int`.as("stamps"))
+      .where("cafe_id", "=", cafeId)
+      .where("device_id", "=", visit.device_id)
+      .where("stamps_added", ">", 0)
+      .where("occurred_at", ">=", day.starts)
+      .where("occurred_at", "<", day.ends)
       .executeTakeFirstOrThrow();
     outcome = recent !== undefined ? "cooldown" : today.stamps + visit.stamps_earned > DAILY_STAMP_CAP ? "daily_cap" : "stamped";
   }
@@ -166,16 +184,9 @@ export async function applyVisit(trx: Transaction<Database>, cafeId: string, vis
       .set({ stamps: sql<number>`stamps + ${stamps}`, ...(visit.identified_by === "qr" ? { phone_confirmed_at: sql<Date>`coalesce(phone_confirmed_at, ${now()})` } : {}) })
       .where("id", "=", card.id)
       .execute();
-    await audit(trx, {
-      cafeId,
-      actorType: "device",
-      actorId: visit.device_id,
-      action: "card.stamped",
-      entityType: "card",
-      entityId: card.id,
-      // No visit id: once the card is deleted, its visits must not be linkable back to it through the log (AC 9).
-      changes: { staffId: visit.staff_id, stamps },
-    });
+    // Logged against the visit, never the card: the visit loses its card when the card is deleted, and the log must
+    // not keep the link (AC 9).
+    await audit(trx, { cafeId, actorType: "device", actorId: visit.device_id, action: "visit.stamped", entityType: "visit", entityId: visitId, changes: { staffId: visit.staff_id, stamps } });
   } else if (card !== undefined && visit.identified_by === "qr") {
     // Scanned at the counter: the card may be stamped by phone number from now on, even if this visit added none.
     await trx.updateTable("cards").set({ phone_confirmed_at: sql<Date>`coalesce(phone_confirmed_at, ${now()})` }).where("id", "=", card.id).execute();
@@ -229,7 +240,6 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
    * once per event id, so a retry after a lost answer gets the first answer and never a second reward.
    */
   app.post("/device/redemptions", { config: { access: "device" } }, async (request, reply) => {
-    requireSupportedBuild(request, options.releaseBuiltAt);
     const device = deviceOf(request);
     const body = parseInput(redemptionRequestSchema, request.body);
     const redeem = () =>
@@ -249,6 +259,9 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           }
           return { redemption: { stampsUsed: earlier.stamps_used, stampsLeft: earlier.stamps_left, ...names }, created: false };
         }
+        // After the replay: a build that aged out since still learns whether its redemption was given, and a 426 means
+        // it was not.
+        requireSupportedBuild(request, options.releaseBuiltAt);
         // Locked and read here, so a revocation committed since the access check cannot slip through (AC 21).
         const deviceRow = await trx.selectFrom("devices").select("revoked_at").where("id", "=", device.deviceId).forShare().executeTakeFirstOrThrow();
         if (deviceRow.revoked_at !== null) {
@@ -290,7 +303,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
             `This card has ${String(current.stamps)} of the ${String(program.stamps_required)} stamps a reward needs. Add stamps first.`,
           );
         }
-        await trx
+        const created = await trx
           .insertInto("redemptions")
           .values({
             cafe_id: device.cafeId,
@@ -301,14 +314,16 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
             stamps_used: program.stamps_required,
             stamps_left: updated.stamps,
           })
-          .execute();
+          .returning("id")
+          .executeTakeFirstOrThrow();
+        // Against the redemption, never the card (AC 9), as for stamps.
         await audit(trx, {
           cafeId: device.cafeId,
           actorType: "device",
           actorId: device.deviceId,
-          action: "card.redeemed",
-          entityType: "card",
-          entityId: card.cardId,
+          action: "reward.redeemed",
+          entityType: "redemption",
+          entityId: created.id,
           changes: { staffId: body.staffId, stampsUsed: program.stamps_required },
         });
         return { redemption: { stampsUsed: program.stamps_required, stampsLeft: updated.stamps, ...names }, created: true };

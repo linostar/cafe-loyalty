@@ -37,6 +37,12 @@ button {
   font: inherit;
 }
 
+/* Unavailable but still focusable, so the keyboard stays where it was (a stepper at its limit, a visit saving). */
+button[aria-disabled="true"] {
+  color: GrayText;
+  cursor: not-allowed;
+}
+
 form > button,
 .actions {
   margin-block-start: 1rem;

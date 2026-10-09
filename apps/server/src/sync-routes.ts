@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { withCafe, type Database } from "@cafe-loyalty/db";
 import {
   ApiError,
@@ -7,6 +7,7 @@ import {
   syncEventSigningPayload,
   syncRequestSchema,
   syncResult,
+  type ReviewDecision,
   type ReviewQueue,
   type SyncHoldReason,
   type SyncResult,
@@ -119,7 +120,9 @@ async function recordEvent(db: Kysely<Database>, secrets: CustomerSecrets, devic
   } catch {
     return syncResult(index, event.eventId, "INVALID_EVENT");
   }
-  const payloadHash = createHash("sha256").update(signed).digest();
+  // Keyed: the ledger and the visit tables hold everything else of a phone visit's signed bytes, so a plain hash would
+  // let anyone with a copy of the database find the number by trying them all (AC 6).
+  const payloadHash = createHmac("sha256", secrets.phoneLookupPepper).update("sync-event:").update(signed).digest();
   const code = await withCafe(db, device.cafeId, async (trx): Promise<SyncResultCode> => {
     // Locked first, so a revocation cannot slip in between reading it and recording the event, and so the device's
     // events are recorded one at a time (its daily stamp count stays exact).
@@ -340,10 +343,10 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
   });
 
   for (const decision of ["accept", "discard"] as const) {
-    app.post(`/review-queue/:id/${decision}`, { config: { access: "owner" } }, async (request, reply) => {
+    app.post(`/review-queue/:id/${decision}`, { config: { access: "owner" } }, async (request): Promise<ReviewDecision> => {
       const owner = ownerOf(request);
       const { id } = parseInput(idParams, request.params);
-      await withCafe(db, owner.cafeId, async (trx) => {
+      const outcome = await withCafe(db, owner.cafeId, async (trx): Promise<SyncResultCode | null> => {
         const held = await trx.selectFrom("sync_events").select(["type", "hold_reason", "status"]).where("id", "=", id).forUpdate().executeTakeFirst();
         if (held?.status !== "held") {
           throw alreadyDecided();
@@ -356,7 +359,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         // A held visit is applied now, by its own time, or dropped (AC 21).
         const visit =
           held.type === "visit.recorded" ? await trx.selectFrom("visits").select(["id", "device_id"]).where("sync_event_id", "=", id).executeTakeFirst() : undefined;
-        let outcome: SyncResultCode | undefined;
+        let outcome: SyncResultCode | null = null;
         if (visit !== undefined && decision === "accept") {
           // The device's row, as a sync takes it, so its daily stamp count stays exact.
           await trx.selectFrom("devices").select("id").where("id", "=", visit.device_id).forNoKeyUpdate().executeTakeFirstOrThrow();
@@ -371,11 +374,13 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
           action: decision === "accept" ? "sync_event.accepted" : "sync_event.discarded",
           entityType: "sync_event",
           entityId: id,
-          changes: { type: held.type, holdReason: held.hold_reason, ...(outcome === undefined ? {} : { outcome }) },
+          changes: { type: held.type, holdReason: held.hold_reason, ...(outcome === null ? {} : { outcome }) },
         });
+        return outcome;
       });
-      request.log.info({ cafeId: owner.cafeId, decision }, "held event reviewed");
-      return reply.code(204).send();
+      request.log.info({ cafeId: owner.cafeId, decision, outcome }, "held event reviewed");
+      // An accepted visit may still add no stamps (cooldown, daily cap, deleted card): the owner is told which.
+      return { outcome };
     });
   }
 

@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 import { addQueued, getMeta, setMeta, settleQueued } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice, type ApiCall, type FakeReply } from "./test-helpers.js";
+import { useServiceWorkerUpdate } from "./updates.js";
+
+// The service worker runs only in production builds; this records whether the App lets a waiting build take over.
+vi.mock("./updates.js", () => ({ useServiceWorkerUpdate: vi.fn(() => ({ waiting: false, error: null })) }));
 
 const RAMI_ID = "2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e";
 const PAIRED = {
@@ -164,6 +168,27 @@ describe("Counter App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "Not accepted by the server" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("holds back a waiting build while an order is open at the counter (AC 29)", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/pair#code=ABCD-1234-EFGH");
+    const coffee = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
+    const catalog = { catalogVersion: 1, orderTypes: [coffee], program: null };
+    await workingApi((call) => (call.path === "/api/device/catalog" ? { status: 200, body: catalog } : undefined));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pair this phone" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rami" }));
+    await enterPin("482913");
+    const canApply = () => vi.mocked(useServiceWorkerUpdate).mock.lastCall?.[0];
+    fireEvent.click(await screen.findByRole("button", { name: "One more Coffee" }));
+    await waitFor(() => {
+      expect(canApply()).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "One less Coffee" }));
+    await waitFor(() => {
+      expect(canApply()).toBe(true);
     });
   });
 
