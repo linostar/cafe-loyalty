@@ -122,3 +122,15 @@ button.danger {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+.signup-qr {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #ffffff;
+}
+
+.link {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+}

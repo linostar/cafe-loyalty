@@ -17,13 +17,15 @@ export interface ApiOptions {
   dashboardUrl: string;
   /** Public counter app address (pairing QR codes). */
   counterUrl: string;
+  /** This server's public address (café signup QR codes). */
+  publicUrl: string;
 }
 
 /** Every API route, behind the access control each declares. Register with `{ prefix: "/api" }`. */
 export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (error?: Error) => void): void {
   registerAccessControl(app, options.db);
   void app.register(ownerAuthRoutes, { prefix: "/auth", db: options.db, mailer: options.mailer, background: options.background, dashboardUrl: options.dashboardUrl });
-  void app.register(cafeRoutes, { db: options.db });
+  void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl });
   void app.register(staffRoutes, { db: options.db });
   void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl });
   done();

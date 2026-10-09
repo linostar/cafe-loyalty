@@ -16,6 +16,8 @@ import { parseInput } from "./http-errors.js";
 
 export interface CafeRoutesOptions {
   db: Kysely<Database>;
+  /** This server's public address; the café's signup QR opens its /join page. */
+  publicUrl: string;
 }
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
@@ -63,6 +65,32 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
   app.get("/cafe", { config: { access: "owner" } }, async (request) => {
     const { cafeId } = ownerOf(request);
     return withCafe(db, cafeId, (trx) => loadSetup(trx, cafeId));
+  });
+
+  const joinLink = (code: string) => ({ joinUrl: new URL(`/join/${code}`, options.publicUrl).toString() });
+
+  /** The café's customer signup link, for the QR printed at the counter (AC 4). */
+  app.get("/cafe/join", { config: { access: "owner" } }, async (request) => {
+    const { cafeId } = ownerOf(request);
+    const cafe = await withCafe(db, cafeId, (trx) => trx.selectFrom("cafes").select("join_code").where("id", "=", cafeId).executeTakeFirstOrThrow());
+    return joinLink(cafe.join_code);
+  });
+
+  /** Replaces the signup code, so the old printed QR stops working (for example after it was misused). */
+  app.post("/cafe/join/rotate", { config: { access: "owner" } }, async (request) => {
+    const owner = ownerOf(request);
+    const cafe = await withCafe(db, owner.cafeId, async (trx) => {
+      const updated = await trx
+        .updateTable("cafes")
+        .set({ join_code: sql<string>`replace(gen_random_uuid()::text, '-', '')` })
+        .where("id", "=", owner.cafeId)
+        .returning("join_code")
+        .executeTakeFirstOrThrow();
+      await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "cafe.join_code_rotated", entityType: "cafe", entityId: owner.cafeId });
+      return updated;
+    });
+    request.log.info({ cafeId: owner.cafeId }, "cafe join code rotated");
+    return joinLink(cafe.join_code);
   });
 
   app.patch("/cafe", { config: { access: "owner" } }, async (request) => {

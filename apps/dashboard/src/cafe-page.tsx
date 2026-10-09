@@ -1,7 +1,8 @@
-import { cafeSetupSchema, formatUsd, type CafeSetup, type OrderType } from "@cafe-loyalty/shared";
+import { cafeSetupSchema, formatUsd, joinLinkSchema, type CafeSetup, type OrderType } from "@cafe-loyalty/shared";
 import { useState } from "react";
+import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
-import { Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -208,6 +209,40 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
   );
 }
 
+/** The QR customers scan at the counter to get a card (AC 4), for printing; replacing it retires the old one. */
+function SignupQr() {
+  const [state, setLink] = useApiData("/api/cafe/join", joinLinkSchema);
+  const { pending, error, submit } = useSubmit();
+  if (state.status !== "loaded") {
+    return <PageStatus state={state} />;
+  }
+  const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(state.data.joinUrl, { border: 4 }))}`;
+  return (
+    <section aria-labelledby="signup-qr-title">
+      <h3 id="signup-qr-title" tabIndex={-1} data-focus-after-change>
+        Customer signup QR
+      </h3>
+      <p>Print this and put it at the counter. Customers scan it to get their loyalty card.</p>
+      <img className="signup-qr" src={qr} alt="QR code customers scan to get a loyalty card" width={200} height={200} />
+      <p className="link">{state.data.joinUrl}</p>
+      <FormError message={error} />
+      <p>Replace the code only if the printed one was misused: the old one stops working at once.</p>
+      <ConfirmButton
+        label="Replace code"
+        confirmLabel="Yes, replace the code"
+        pending={pending}
+        onConfirm={() => {
+          void submit(() => apiRequest("POST", "/api/cafe/join/rotate", joinLinkSchema)).then((result) => {
+            if (result.ok) {
+              setLink(result.value);
+            }
+          });
+        }}
+      />
+    </section>
+  );
+}
+
 /** `/cafe`: the café's name, loyalty program and order types (AC 1). */
 export function CafePage() {
   const [state, setSetup] = useApiData("/api/cafe", cafeSetupSchema);
@@ -229,6 +264,7 @@ export function CafePage() {
       <h2 id="cafe-page-title">Café</h2>
       {saved === null ? null : <Notice>{saved}</Notice>}
       <CafeNameForm name={setup.cafe.name} save={save} />
+      <SignupQr />
       <ProgramForm program={setup.program} save={save} />
       <section aria-labelledby="order-types-title">
         <h3 id="order-types-title">Order types</h3>

@@ -7,11 +7,33 @@ const PROGRAM = { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewa
 
 const json = (route: Route): unknown => route.request().postDataJSON();
 
+const JOIN = { joinUrl: "https://card.example.test/join/0123456789abcdef0123456789abcdef" };
+
+test("shows the printable signup QR and replaces the code after confirming", async ({ page }) => {
+  const replaced = { joinUrl: "https://card.example.test/join/fedcba9876543210fedcba9876543210" };
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: PROGRAM, orderTypes: [] }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "POST /api/cafe/join/rotate": reply(200, replaced),
+  });
+  await page.goto("/cafe");
+  const qr = page.getByRole("img", { name: "QR code customers scan to get a loyalty card" });
+  await expect(qr).toBeVisible();
+  expect(await qr.evaluate((image: HTMLImageElement) => image.naturalWidth > 0)).toBe(true);
+  await expect(page.getByText(JOIN.joinUrl)).toBeVisible();
+  await page.getByRole("button", { name: "Replace code" }).click();
+  await page.getByRole("button", { name: "Yes, replace the code" }).click();
+  await expect(page.getByText(replaced.joinUrl)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Customer signup QR" })).toBeFocused();
+});
+
 test("saves the program, then adds and edits an order type", async ({ page }) => {
   let setup: { cafe: typeof CAFE; program: typeof PROGRAM | null; orderTypes: (typeof ESPRESSO)[] } = { cafe: CAFE, program: null, orderTypes: [] };
   await mockApi(page, {
     "GET /api/auth/session": reply(200, SESSION),
     "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
     "PUT /api/cafe/program": async (route) => {
       expect(json(route)).toEqual(PROGRAM);
       setup = { ...setup, program: PROGRAM };
@@ -53,7 +75,11 @@ test("saves the program, then adds and edits an order type", async ({ page }) =>
 });
 
 test("explains a price that is not an amount without calling the server", async ({ page }) => {
-  await mockApi(page, { "GET /api/auth/session": reply(200, SESSION), "GET /api/cafe": reply(200, { cafe: CAFE, program: PROGRAM, orderTypes: [] }) });
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: PROGRAM, orderTypes: [] }),
+    "GET /api/cafe/join": reply(200, JOIN),
+  });
   await page.goto("/cafe");
   const add = page.getByRole("form", { name: "Add an order type" });
   await add.getByLabel("Name (English)").fill("Latte");

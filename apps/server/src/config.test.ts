@@ -2,6 +2,9 @@ import { EnvError } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { loadServerConfig } from "./config.js";
 
+const KEY_A = Buffer.alloc(32, 1).toString("base64");
+const KEY_B = Buffer.alloc(32, 2).toString("base64");
+
 const valid = {
   NODE_ENV: "test",
   HOST: "127.0.0.1",
@@ -10,6 +13,10 @@ const valid = {
   DATABASE_URL: "postgres://app:secret@127.0.0.1:5432/cafe_loyalty",
   DASHBOARD_URL: "https://dashboard.example.com",
   COUNTER_URL: "https://counter.example.com",
+  PUBLIC_URL: "https://card.example.com",
+  PHONE_LOOKUP_PEPPER: KEY_A,
+  PHONE_ENCRYPTION_KEYS: `p2:${KEY_B},p1:${KEY_A}`,
+  CARD_QR_KEYS: `q1:${KEY_A}`,
   SMTP_HOST: "smtp.example.com",
   SMTP_PORT: "587",
   SMTP_SECURE: "false",
@@ -28,7 +35,36 @@ describe("loadServerConfig", () => {
       TRUST_PROXY_HOPS: 0,
       SMTP_PORT: 587,
       SMTP_SECURE: false,
+      PHONE_ENCRYPTION_KEYS: [
+        { id: "p2", key: Buffer.alloc(32, 2) },
+        { id: "p1", key: Buffer.alloc(32, 1) },
+      ],
+      CARD_QR_KEYS: [{ id: "q1", key: Buffer.alloc(32, 1) }],
     });
+  });
+
+  it("refuses short secrets and malformed or duplicate keyring entries, without echoing them", () => {
+    for (const bad of [
+      { PHONE_LOOKUP_PEPPER: Buffer.alloc(16).toString("base64") },
+      { PHONE_ENCRYPTION_KEYS: `p1:${Buffer.alloc(16).toString("base64")}` },
+      { CARD_QR_KEYS: `Q1:${KEY_A}` },
+      { CARD_QR_KEYS: `q1:${KEY_A},q1:${KEY_B}` },
+      { CARD_QR_KEYS: "" },
+      { CARD_QR_KEYS: `q1:${KEY_A}!` },
+    ]) {
+      try {
+        loadServerConfig({ ...valid, ...bad });
+        expect.unreachable();
+      } catch (error) {
+        const message = (error as EnvError).message;
+        expect(message).toContain(Object.keys(bad)[0] ?? "");
+        expect(message).not.toContain(KEY_A);
+      }
+    }
+  });
+
+  it("requires an https PUBLIC_URL in production", () => {
+    expect(() => loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", PUBLIC_URL: "http://card.example.com" })).toThrow(/PUBLIC_URL/);
   });
 
   it("rejects a missing HOST and an invalid PORT", () => {

@@ -8,6 +8,7 @@ test.beforeEach(async ({ page }) => {
 const SIGNED_IN = {
   "GET /api/auth/session": reply(200, SESSION),
   "GET /api/cafe": reply(200, { cafe: { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1 }, program: null, orderTypes: [] }),
+  "GET /api/cafe/join": reply(200, { joinUrl: "https://card.example.test/join/0123456789abcdef0123456789abcdef" }),
   "GET /api/staff": reply(200, { staff: [] }),
   "GET /api/devices": reply(200, { devices: [], pairingCodes: [] }),
 };

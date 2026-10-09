@@ -67,19 +67,42 @@ export async function withCafe<T>(db: Kysely<Database>, cafeId: string, work: (t
 }
 
 /**
- * What a caller holds before any café is known: an owner's email (signing in), a token hash (session, invite,
- * reset, device token, pairing code lookup part) or a device's key id (renewing its token).
+ * What a caller holds before any café is known: an owner's email (signing in), a hash (session, invite, reset,
+ * device token, pairing code lookup part, café join code, card web secret, recovery token, or the HMAC of a phone
+ * number or recovery email), a device's key id (renewing its token) or a customer's id (only once the caller has
+ * proved control of that customer's card).
  */
-export type LookupKey = { ownerEmail: string } | { secretHash: Buffer } | { deviceKeyId: string };
+export type LookupKey = { ownerEmail: string } | { secretHash: Buffer } | { deviceKeyId: string } | { customerId: string };
 
 const SECRET_HASH_BYTES = 32;
 
 /**
- * Runs `work` in one read-only transaction with no café set, in which row-level security shows only the rows
- * matching `key`: the owner with that email, the row with that token hash, or the device key with that id. It never shows
- * other rows and cannot write; follow up with withCafe on the café id it returns.
+ * Runs `work` in one transaction with no café set, in which row-level security shows only the rows matching `key`:
+ * the owner with that email, the row with that hash, the device key or the customer with that id. Read-only by
+ * default; "read write" only where a policy keyed on that same value allows writes (customer recovery tokens) or
+ * where the work then switches to the cafés of rows it found (useCafe, customer recovery). Otherwise follow up with
+ * withCafe on the café id it returns.
  */
-export async function withLookup<T>(db: Kysely<Database>, key: LookupKey, work: (trx: Transaction<Database>) => Promise<T>): Promise<T> {
+export async function withLookup<T>(
+  db: Kysely<Database>,
+  key: LookupKey,
+  work: (trx: Transaction<Database>) => Promise<T>,
+  access: "read only" | "read write" = "read only",
+): Promise<T> {
+  return db
+    .transaction()
+    .setAccessMode(access)
+    .execute(async (trx) => {
+      await setLookup(trx, key);
+      return work(trx);
+    });
+}
+
+/**
+ * Sets a lookup key inside a transaction that is already open (for example withCafe's, when signup checks a phone
+ * number). Replaces any earlier key of the same kind for the rest of the transaction.
+ */
+export async function setLookup(trx: Transaction<Database>, key: LookupKey): Promise<void> {
   let setting: string;
   let value: string;
   if ("ownerEmail" in key) {
@@ -92,17 +115,28 @@ export async function withLookup<T>(db: Kysely<Database>, key: LookupKey, work: 
       throw new TenantContextError("A device key id must be a UUID.");
     }
     [setting, value] = ["app.device_key_id", key.deviceKeyId.toLowerCase()];
+  } else if ("customerId" in key) {
+    if (!cafeIdSchema.safeParse(key.customerId).success) {
+      throw new TenantContextError("A customer id must be a UUID.");
+    }
+    [setting, value] = ["app.customer_id", key.customerId.toLowerCase()];
   } else {
     if (key.secretHash.length !== SECRET_HASH_BYTES) {
       throw new TenantContextError("A secret hash must be 32 bytes.");
     }
     [setting, value] = ["app.secret_hash", key.secretHash.toString("hex")];
   }
-  return db
-    .transaction()
-    .setAccessMode("read only")
-    .execute(async (trx) => {
-      await sql`SELECT set_config(${setting}, ${value}, true)`.execute(trx);
-      return work(trx);
-    });
+  await sql`SELECT set_config(${setting}, ${value}, true)`.execute(trx);
+}
+
+/**
+ * Switches the café of an open transaction. Only for one customer's own cards across cafés (card recovery and
+ * deletion), with café ids read from those cards after the customer proved control of them; everything else uses
+ * one withCafe per café.
+ */
+export async function useCafe(trx: Transaction<Database>, cafeId: string): Promise<void> {
+  if (!cafeIdSchema.safeParse(cafeId).success) {
+    throw new TenantContextError("A café id must be a UUID.");
+  }
+  await sql`SELECT set_config('app.cafe_id', ${cafeId.toLowerCase()}, true)`.execute(trx);
 }
