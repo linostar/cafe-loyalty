@@ -1,4 +1,4 @@
-import type { Database } from "@cafe-loyalty/db";
+import type { Database, PgBoss } from "@cafe-loyalty/db";
 import type { FastifyInstance } from "fastify";
 import type { Kysely } from "kysely";
 import { registerAccessControl } from "./access.js";
@@ -26,6 +26,8 @@ export interface ApiOptions {
   releaseBuiltAt: Date;
   /** Card QR keys and the phone lookup pepper, to identify the cards of visits and redemptions. */
   secrets: CustomerSecrets;
+  /** The job queue (send only), for pass updates queued with stamps and redemptions; undefined when it could not start. */
+  jobs: PgBoss | undefined;
 }
 
 /** Every API route, behind the access control each declares. Register with `{ prefix: "/api" }`. */
@@ -35,7 +37,7 @@ export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (erro
   void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl });
   void app.register(staffRoutes, { db: options.db });
   void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl, releaseBuiltAt: options.releaseBuiltAt });
-  void app.register(syncRoutes, { db: options.db, secrets: options.secrets });
-  void app.register(stampingRoutes, { db: options.db, secrets: options.secrets, releaseBuiltAt: options.releaseBuiltAt });
+  void app.register(syncRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs });
+  void app.register(stampingRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs, releaseBuiltAt: options.releaseBuiltAt });
   done();
 }

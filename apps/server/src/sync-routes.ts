@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { withCafe, type Database } from "@cafe-loyalty/db";
+import { withCafe, type Database, type PgBoss } from "@cafe-loyalty/db";
 import {
   ApiError,
   SYNC_RESULT_CODES,
@@ -47,6 +47,8 @@ export interface SyncRoutesOptions {
   db: Kysely<Database>;
   /** To check card QR codes and look up phone numbers of visits. */
   secrets: CustomerSecrets;
+  /** The job queue, for the pass updates of stamped cards. */
+  jobs: PgBoss | undefined;
 }
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
@@ -101,7 +103,7 @@ const alreadyDecided = () => new ApiError("NOT_FOUND", "This event was already a
  * conflict with other content. Actions from a revoked device, a key it had when revoked or a revoked staff member are
  * held for the owner's review (AC 21); PIN lockout reports are audited whatever their source.
  */
-async function recordEvent(db: Kysely<Database>, secrets: CustomerSecrets, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
+async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secrets: CustomerSecrets, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
   const parsed = parseSyncEvent(raw);
   if (parsed.status === "unsupported") {
     return syncResult(index, parsed.eventId, "UNSUPPORTED_EVENT");
@@ -227,7 +229,7 @@ async function recordEvent(db: Kysely<Database>, secrets: CustomerSecrets, devic
       return "HELD_FOR_REVIEW";
     }
     if (visitId !== undefined) {
-      return applyVisit(trx, device.cafeId, visitId);
+      return applyVisit(trx, jobs, device.cafeId, visitId);
     }
     if (event.type === "staff.pin_lockout") {
       await audit(trx, {
@@ -251,6 +253,7 @@ async function recordEvent(db: Kysely<Database>, secrets: CustomerSecrets, devic
 
 async function recordEventSafely(
   db: Kysely<Database>,
+  jobs: PgBoss | undefined,
   secrets: CustomerSecrets,
   device: DeviceContext,
   raw: unknown,
@@ -258,7 +261,7 @@ async function recordEventSafely(
   log: FastifyBaseLogger,
 ): Promise<SyncResult> {
   try {
-    return await recordEvent(db, secrets, device, raw, index);
+    return await recordEvent(db, jobs, secrets, device, raw, index);
   } catch (error) {
     // The device keeps the event and sends it again; the rest of the batch goes on.
     log.error({ err: error, cafeId: device.cafeId, deviceId: device.deviceId, eventIndex: index }, "sync event failed");
@@ -284,7 +287,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
       const body = parseInput(syncRequestSchema, request.body);
       const results: SyncResult[] = [];
       for (const [index, raw] of body.events.entries()) {
-        results.push(await recordEventSafely(db, options.secrets, device, raw, index, request.log));
+        results.push(await recordEventSafely(db, options.jobs, options.secrets, device, raw, index, request.log));
       }
       const outcomes: Record<string, number> = {};
       for (const result of results) {
@@ -363,7 +366,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         if (visit !== undefined && decision === "accept") {
           // The device's row, as a sync takes it, so its daily stamp count stays exact.
           await trx.selectFrom("devices").select("id").where("id", "=", visit.device_id).forNoKeyUpdate().executeTakeFirstOrThrow();
-          outcome = await applyVisit(trx, owner.cafeId, visit.id);
+          outcome = await applyVisit(trx, options.jobs, owner.cafeId, visit.id);
         } else if (visit !== undefined) {
           await trx.updateTable("visits").set({ outcome: "discarded" }).where("id", "=", visit.id).execute();
         }

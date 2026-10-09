@@ -1,15 +1,17 @@
 import { createHmac } from "node:crypto";
-import { setLookup, useCafe, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
+import { setLookup, useCafe, withCafe, withLookup, type Database, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { renderSVG } from "uqr";
+import { APPLE_PASS_LAYOUT_VERSION, applePassToken, buildApplePass, type ApplePassConfig } from "./apple-pass.js";
 import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, count, html, page, pickLang, t, type Lang, type MessageKey, type SafeHtml } from "./customer-html.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
+import { queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 const MINUTE = 60;
@@ -43,6 +45,10 @@ export interface CustomerPagesOptions {
   /** This server's public address: recovery links point at it. */
   publicUrl: string;
   secrets: CustomerSecrets;
+  /** The job queue, for pass updates after a recovery. */
+  jobs: PgBoss | undefined;
+  /** Apple Wallet settings; without them the web card offers no Apple pass. */
+  apple?: ApplePassConfig | undefined;
   /** Overrides for tests: signups per café per hour (default 1,000). */
   limits?: { signupPerCafe?: number };
 }
@@ -68,6 +74,12 @@ const formOf = (request: FastifyRequest): Form =>
     : {};
 
 const queryLang = (request: FastifyRequest): unknown => (request.query as { lang?: unknown } | undefined)?.lang;
+
+/**
+ * Whether the browser is on an Apple device, which can add a pass to Apple Wallet (an iPhone, an iPad, or a Mac with
+ * Wallet through iCloud). Others are not offered a file they cannot open.
+ */
+const onAppleDevice = (request: FastifyRequest): boolean => /\b(iPhone|iPad|iPod|Macintosh)\b/.test(request.headers["user-agent"] ?? "");
 
 const langOf = (request: FastifyRequest): Lang => pickLang(queryLang(request) ?? formOf(request).lang, request.headers["accept-language"]);
 
@@ -102,7 +114,8 @@ export function recoveryEmail(to: string, link: string): EmailMessage {
 }
 
 /**
- * Deletes a card and, if that was its customer's last card anywhere, the customer (the phone number) too (AC 9).
+ * Deletes a card, with its Apple passes and their registrations (foreign key cascades), and, if that was its
+ * customer's last card anywhere, the customer (the phone number) too (AC 9).
  * The customer's ON DELETE RESTRICT foreign key decides "anywhere", since this café's view cannot see other cafés'
  * cards; its refusal (restrict_violation, 23001) is rolled back to a savepoint and leaves the customer for those cards.
  */
@@ -347,10 +360,11 @@ ${errorBlock(errors.privacy, "privacy-error")}
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     const { saved } = request.query as { saved?: string };
-    return sendPage(reply, 200, await cardPage(lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
+    return sendPage(reply, 200, await cardPage(request, lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
   });
 
   async function cardPage(
+    request: FastifyRequest,
     lang: Lang,
     secret: string,
     card: NonNullable<Awaited<ReturnType<typeof findCard>>>,
@@ -372,6 +386,7 @@ ${notice === undefined ? null : html`<p class="notice" role="status">${notice}</
 <p class="stamps">${program === undefined ? count(lang, "stamps", card.stamps) : t(lang, "stampsProgress", { stamps: card.stamps, required: count(lang, "stamps", program.stamps_required) })}</p>
 ${reward === undefined || program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
 <img class="qr" src="${qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
+${options.apple === undefined || !onAppleDevice(request) ? null : html`<p><a class="wallet" href="${path}/apple-pass?lang=${lang}">${t(lang, "addToAppleWallet")}</a></p>`}
 <p>${t(lang, "keepLink")}</p>
 <section aria-labelledby="email-title">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
@@ -407,6 +422,46 @@ ${errorBlock(errors.delete, "delete-error")}
     );
   }
 
+  /**
+   * The card as an Apple Wallet pass (AC 10), for this epoch of the card: the first download records the pass, and
+   * later ones give the same pass (same serial number and token) with the current stamps.
+   */
+  app.get("/c/:secret/apple-pass", async (request, reply) => {
+    const { apple } = options;
+    if (apple === undefined) {
+      throw new PageError(404, "notFound");
+    }
+    const { secret } = request.params as { secret: string };
+    const card = await cardOrGone(secret);
+    const token = applePassToken(secrets, secret);
+    const found = await withCafe(db, card.cafe_id, async (trx) => {
+      await trx
+        .insertInto("apple_passes")
+        .values({ cafe_id: card.cafe_id, card_id: card.id, epoch: card.epoch, auth_token_hash: hashToken(token), layout_version: APPLE_PASS_LAYOUT_VERSION })
+        .onConflict((conflict) => conflict.columns(["card_id", "epoch"]).doNothing())
+        .execute();
+      return {
+        pass: await trx.selectFrom("apple_passes").select("id").where("card_id", "=", card.id).where("epoch", "=", card.epoch).executeTakeFirstOrThrow(),
+        stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
+        cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
+        program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
+      };
+    });
+    const pkpass = buildApplePass(apple, options.publicUrl, {
+      serialNumber: found.pass.id,
+      authenticationToken: token,
+      cafeName: found.cafe.name,
+      stamps: found.stamps,
+      program:
+        found.program === undefined
+          ? undefined
+          : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
+      qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
+    });
+    request.log.info({ cafeId: card.cafe_id }, "apple pass downloaded");
+    return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("content-disposition", 'attachment; filename="card.pkpass"').send(pkpass);
+  });
+
   /** Sets or removes the card's recovery email (AC 8). */
   app.post("/c/:secret/email", async (request, reply) => {
     const { secret } = request.params as { secret: string };
@@ -416,7 +471,7 @@ ${errorBlock(errors.delete, "delete-error")}
     const raw = formOf(request).email?.trim() ?? "";
     const parsed = raw === "" ? null : ownerEmailSchema.safeParse(raw);
     if (parsed !== null && !parsed.success) {
-      return sendPage(reply, 400, await cardPage(lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
+      return sendPage(reply, 400, await cardPage(request, lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
     }
     const email = parsed === null ? null : parsed.data;
     await withCafe(db, card.cafe_id, async (trx) => {
@@ -457,7 +512,7 @@ ${errorBlock(errors.delete, "delete-error")}
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     if (formOf(request).confirm !== "yes") {
-      return sendPage(reply, 400, await cardPage(lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
+      return sendPage(reply, 400, await cardPage(request, lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
     }
     await withCafe(db, card.cafe_id, (trx) => deleteCard(trx, card));
     request.log.info({ cafeId: card.cafe_id }, "customer card deleted");
@@ -575,8 +630,9 @@ ${errorBlock(error, "email-error")}
 
   /**
    * Uses a recovery link once: restore gives every card with that email a new epoch and a new web link, so the old
-   * QR codes and links stop working (AC 8); delete removes those cards and any phone number left without a card
-   * (AC 9). All in one transaction across the customer's cafés.
+   * QR codes and links stop working and the old Apple pass is pushed voided (AC 8); delete removes those cards, their
+   * passes and registrations, and any phone number left without a card (AC 9). All in one transaction across the
+   * customer's cafés.
    */
   app.post("/r/:token", async (request, reply) => {
     const { token } = request.params as { token: string };
@@ -621,6 +677,8 @@ ${errorBlock(error, "email-error")}
             .where("id", "=", card.id)
             .execute();
           await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: "card.restored", entityType: "card", entityId: card.id, changes: { source: "customer" } });
+          // The old phone's pass fetches itself again and finds itself voided (AC 8).
+          await queuePassUpdate(trx, options.jobs, card.cafe_id, card.id);
           const cafe = await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow();
           results.push({ cafeName: cafe.name, secret, cafeId: card.cafe_id });
         }

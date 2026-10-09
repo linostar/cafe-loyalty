@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID, webcrypto } from "node:crypto";
+import { APPLE_PASS_UPDATE_QUEUE, createJobQueue, startJobQueue, type PgBoss } from "@cafe-loyalty/db";
 import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
 import {
   COUNTER_BUILT_AT_HEADER,
@@ -13,6 +14,7 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, expect } from "vitest";
 import type { RouteAccess } from "../access.js";
 import { apiRoutes } from "../api.js";
+import type { ApplePassConfig } from "../apple-pass.js";
 import { customerPages } from "../customer-pages.js";
 import { hashToken, newToken } from "../credentials.js";
 import { encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "../customer-crypto.js";
@@ -20,6 +22,8 @@ import { buildApp } from "../app.js";
 import { BackgroundTasks } from "../background.js";
 import { createOwnerInvite } from "../invites.js";
 import type { EmailMessage, Mailer } from "../mailer.js";
+import { passkitRoutes } from "../passkit-routes.js";
+import { testApplePasses } from "./certificates.js";
 
 export const DASHBOARD_URL = "https://dashboard.example.test";
 export const COUNTER_URL = "https://counter.example.test";
@@ -32,6 +36,9 @@ export const TEST_SECRETS: CustomerSecrets = {
   phoneEncryption: { keys: [{ id: "p1", key: randomBytes(32) }] },
   cardQr: { keys: [{ id: "q1", key: randomBytes(32) }] },
 };
+
+/** Apple Wallet settings with self-signed certificates, fresh per test file. */
+export const TEST_APPLE: ApplePassConfig = testApplePasses();
 
 export class FakeMailer implements Mailer {
   readonly sent: EmailMessage[] = [];
@@ -147,6 +154,7 @@ export async function pairProof(device: Pick<PairedDevice, "deviceId" | "keyId" 
 export function useApiHarness() {
   let testDb: TestDatabase | undefined;
   let admin: pg.Client | undefined;
+  let jobs: PgBoss | undefined;
   const open: Harness[] = [];
   const holders: pg.Client[] = [];
 
@@ -154,9 +162,13 @@ export function useApiHarness() {
     testDb = await createTestDatabase();
     admin = new pg.Client({ connectionString: testDb.adminUrl });
     await admin.connect();
+    // As the server runs it: send only. Jobs stay queued for tests to read (queuedPassUpdates).
+    jobs = createJobQueue(testDb.appUrl, { error: () => undefined, warn: () => undefined }, { applicationName: "server-test", maxConnections: 2, sendOnly: true });
+    await startJobQueue(jobs);
   });
 
   afterAll(async () => {
+    await jobs?.stop({ graceful: false });
     await admin?.end();
     await testDb?.cleanup();
   });
@@ -186,8 +198,26 @@ export function useApiHarness() {
       }
       return admin;
     },
+    get jobs(): PgBoss {
+      if (jobs === undefined) {
+        throw new Error("The job queue starts in beforeAll; use it inside a test.");
+      }
+      return jobs;
+    },
 
-    harness: async (overrides: { customerLimits?: { signupPerCafe?: number }; secrets?: CustomerSecrets } = {}): Promise<Harness> => {
+    /** Apple pass update jobs queued for a café's passes, oldest first: the pass ids, and the job states. */
+    queuedPassUpdates: async (cafeId: string): Promise<{ passId: string; state: string }[]> => {
+      const { rows } = await context.admin.query<{ pass_id: string; state: string }>(
+        "SELECT data->>'passId' AS pass_id, state FROM pgboss.job WHERE name = $1 AND data->>'cafeId' = $2 ORDER BY created_on, id",
+        [APPLE_PASS_UPDATE_QUEUE, cafeId],
+      );
+      return rows.map((row) => ({ passId: row.pass_id, state: row.state }));
+    },
+
+    /** `jobs: null` builds the app as the server runs when its job queue could not start. */
+    harness: async (
+      overrides: { customerLimits?: { signupPerCafe?: number }; secrets?: CustomerSecrets; apple?: ApplePassConfig | null; jobs?: null } = {},
+    ): Promise<Harness> => {
       const logs: string[] = [];
       const routes: RegisteredRoute[] = [];
       const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
@@ -208,15 +238,22 @@ export function useApiHarness() {
         publicUrl: PUBLIC_URL,
         releaseBuiltAt: RELEASE_BUILT_AT,
         secrets: overrides.secrets ?? TEST_SECRETS,
+        jobs: overrides.jobs === null ? undefined : context.jobs,
       });
+      const apple = overrides.apple === null ? undefined : (overrides.apple ?? TEST_APPLE);
       await app.register(customerPages, {
         db: context.testDb.app.db,
         mailer,
         background,
         publicUrl: PUBLIC_URL,
         secrets: overrides.secrets ?? TEST_SECRETS,
+        jobs: overrides.jobs === null ? undefined : context.jobs,
+        apple,
         ...(overrides.customerLimits === undefined ? {} : { limits: overrides.customerLimits }),
       });
+      if (apple !== undefined) {
+        await app.register(passkitRoutes, { prefix: "/passkit", db: context.testDb.app.db, secrets: overrides.secrets ?? TEST_SECRETS, apple, publicUrl: PUBLIC_URL });
+      }
       await app.ready();
       const created = { app, mailer, background, logs, routes };
       open.push(created);

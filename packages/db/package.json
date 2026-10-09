@@ -28,6 +28,7 @@
     "@cafe-loyalty/shared": "workspace:*",
     "kysely": "^0.29.6",
     "pg": "^8.23.1",
+    "pg-boss": "^12.37.0",
     "pino": "^10.4.0",
     "zod": "^4.6.5"
   },

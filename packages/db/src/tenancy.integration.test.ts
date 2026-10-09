@@ -51,7 +51,7 @@ const keyIdOf = (cafeId: string): string => {
   }
   return id;
 };
-/** Ids each café's fixtures share between tables (order type, card, sync event, visit), like ownerIdOf. */
+/** Ids each café's fixtures share between tables (order type, card, sync event, visit, Apple pass), like ownerIdOf. */
 const sharedIds = new Map<string, string>();
 const idOf = (kind: string, cafeId: string): string => {
   const key = `${kind}:${cafeId}`;
@@ -191,6 +191,16 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
         stamps_used: 9,
         stamps_left: 0,
       })
+      .execute(),
+  apple_passes: (trx, cafeId) =>
+    trx
+      .insertInto("apple_passes")
+      .values({ id: idOf("applePass", cafeId), cafe_id: cafeId, card_id: idOf("card", cafeId), epoch: 1, auth_token_hash: randomBytes(32), layout_version: 1 })
+      .execute(),
+  apple_pass_registrations: (trx, cafeId) =>
+    trx
+      .insertInto("apple_pass_registrations")
+      .values({ cafe_id: cafeId, pass_id: idOf("applePass", cafeId), device_library_hash: randomBytes(32), push_token: "ab".repeat(32) })
       .execute(),
 };
 

@@ -1,3 +1,4 @@
+import { base64PemSchema, keyFitsCertificate } from "@cafe-loyalty/db";
 import { loadEnv } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
@@ -43,6 +44,8 @@ const keyringSchema = z
   });
 export const counterUrlSchema = originSchema("counter app", "https://counter.example.com");
 
+const APPLE_KEYS = ["APPLE_PASS_TYPE_ID", "APPLE_TEAM_ID", "APPLE_PASS_CERTIFICATE", "APPLE_PASS_KEY", "APPLE_WWDR_CERTIFICATE"] as const;
+
 const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]),
   HOST: z.string().min(1),
@@ -87,8 +90,31 @@ const serverEnvSchema = z.object({
   EMAIL_FROM: z
     .string()
     .regex(/^(?:[^<>]*<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>|[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+)$/, "Use an address, such as Cafe Loyalty <no-reply@example.com>."),
+  /**
+   * Apple Wallet (AC 10, 11): all five, or none for no Apple passes. The pass type identifier and team id from the
+   * Apple developer account, the pass type certificate and its key (which also sign the worker in to APNs), and
+   * Apple's WWDR intermediate certificate, each PEM base64-encoded on one line.
+   */
+  APPLE_PASS_TYPE_ID: z.string().regex(/^pass(\.[A-Za-z0-9-]+)+$/, "Use the pass type identifier, such as pass.com.example.loyalty.").optional(),
+  APPLE_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, "Use the 10-character team id of the Apple developer account.").optional(),
+  APPLE_PASS_CERTIFICATE: base64PemSchema("certificate").optional(),
+  APPLE_PASS_KEY: base64PemSchema("private key").optional(),
+  APPLE_WWDR_CERTIFICATE: base64PemSchema("certificate").optional(),
 })
   .superRefine((env, context) => {
+    const missingApple = APPLE_KEYS.filter((key) => env[key] === undefined);
+    if (missingApple.length > 0 && missingApple.length < APPLE_KEYS.length) {
+      for (const key of missingApple) {
+        context.addIssue({ code: "custom", path: [key], message: "Set every Apple Wallet variable (APPLE_*), or none (Apple Wallet off)." });
+      }
+    }
+    if (
+      env.APPLE_PASS_CERTIFICATE !== undefined &&
+      env.APPLE_PASS_KEY !== undefined &&
+      !keyFitsCertificate(env.APPLE_PASS_CERTIFICATE, env.APPLE_PASS_KEY)
+    ) {
+      context.addIssue({ code: "custom", path: ["APPLE_PASS_KEY"], message: "Use the private key of APPLE_PASS_CERTIFICATE." });
+    }
     if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
       context.addIssue({ code: "custom", path: ["SMTP_PASSWORD"], message: "Set both SMTP_USER and SMTP_PASSWORD, or neither." });
     }
@@ -110,7 +136,19 @@ const serverEnvSchema = z.object({
       }
     }
   })
-  .transform((env) => ({ ...env, TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS ?? 0, BUILT_AT: env.BUILT_AT === undefined ? new Date() : new Date(env.BUILT_AT) }));
+  .transform(({ APPLE_PASS_TYPE_ID, APPLE_TEAM_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, APPLE_WWDR_CERTIFICATE, ...env }) => ({
+    ...env,
+    TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS ?? 0,
+    BUILT_AT: env.BUILT_AT === undefined ? new Date() : new Date(env.BUILT_AT),
+    applePasses:
+      APPLE_PASS_TYPE_ID === undefined || APPLE_TEAM_ID === undefined || APPLE_PASS_CERTIFICATE === undefined || APPLE_PASS_KEY === undefined || APPLE_WWDR_CERTIFICATE === undefined
+        ? undefined
+        : {
+            passTypeId: APPLE_PASS_TYPE_ID,
+            teamId: APPLE_TEAM_ID,
+            certificates: { signerCert: APPLE_PASS_CERTIFICATE, signerKey: APPLE_PASS_KEY, wwdr: APPLE_WWDR_CERTIFICATE },
+          },
+  }));
 
 export type ServerConfig = z.output<typeof serverEnvSchema>;
 

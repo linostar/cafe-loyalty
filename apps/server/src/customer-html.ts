@@ -61,6 +61,7 @@ button.danger { border-color: #a51d2d; color: #a51d2d; }
 .privacy { font-size: 0.95rem; padding: 0.75rem; background: #f4f4f6; }
 .qr { display: block; width: 100%; max-width: 18rem; height: auto; margin: 1rem auto; background: #fff; }
 .stamps { font-size: 1.25rem; font-weight: 700; }
+.wallet { display: inline-block; padding: 0.6rem 1.2rem; border-radius: 0.5rem; background: #000; color: #fff; text-decoration: none; }
 section { border-block-start: 1px solid #d0d0d7; margin-block-start: 1.5rem; }
 ul { padding-inline-start: 1.25rem; }
 `;
@@ -96,6 +97,15 @@ const MESSAGES = {
     stampsProgress: "{stamps} of {required}",
     qrAlt: "Your card's QR code. Show it to the barista.",
     keepLink: "This page is your card. Bookmark it or add it to your home screen, and do not share its link.",
+    addToAppleWallet: "Add to Apple Wallet",
+    passDescription: "Loyalty card at {cafe}",
+    passStampsLabel: "Stamps",
+    passRewardLabel: "Reward",
+    passAboutLabel: "How it works",
+    passAboutText: "Show this card to the barista to collect stamps. Your stamps update here by themselves.",
+    passMovedLabel: "Card moved",
+    passMovedValue: "Use your new card",
+    passMovedText: "This card was restored on another phone. Use the card there.",
     emailTitle: "Recovery email",
     emailText: "If you lose this phone, we can email you a link to restore your card.",
     emailLabel: "Email",
@@ -152,6 +162,15 @@ const MESSAGES = {
     stampsProgress: "{stamps} من {required}",
     qrAlt: "رمز QR الخاص ببطاقتك. أظهره للباريستا.",
     keepLink: "هذه الصفحة هي بطاقتك. احفظها في المفضلة أو أضفها إلى الشاشة الرئيسية، ولا تشارك رابطها.",
+    addToAppleWallet: "إضافة إلى Apple Wallet",
+    passDescription: "بطاقة الولاء في {cafe}",
+    passStampsLabel: "الأختام",
+    passRewardLabel: "المكافأة",
+    passAboutLabel: "كيف تعمل",
+    passAboutText: "أظهر هذه البطاقة للباريستا لجمع الأختام. تُحدَّث أختامك هنا تلقائياً.",
+    passMovedLabel: "نُقلت البطاقة",
+    passMovedValue: "استخدم بطاقتك الجديدة",
+    passMovedText: "استُعيدت هذه البطاقة على هاتف آخر. استخدم البطاقة هناك.",
     emailTitle: "بريد الاستعادة",
     emailText: "إذا فقدت هذا الهاتف، يمكننا أن نرسل لك رابطاً لاستعادة بطاقتك.",
     emailLabel: "البريد الإلكتروني",

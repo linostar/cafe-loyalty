@@ -1,6 +1,7 @@
 import { EnvError } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { loadServerConfig } from "./config.js";
+import { selfSigned } from "./testing/certificates.js";
 
 const KEY_A = Buffer.alloc(32, 1).toString("base64");
 const KEY_B = Buffer.alloc(32, 2).toString("base64");
@@ -107,6 +108,37 @@ describe("loadServerConfig", () => {
     );
     expect(() => loadServerConfig({ ...valid, EMAIL_FROM: "Cafe Loyalty" })).toThrow(/EMAIL_FROM/);
     expect(loadServerConfig({ ...valid, EMAIL_FROM: "no-reply@example.com" }).EMAIL_FROM).toBe("no-reply@example.com");
+  });
+
+  it("takes Apple Wallet settings all together or not at all, checking the certificates and that the key fits", () => {
+    const signer = selfSigned("Pass Type ID: pass.example.test");
+    const other = selfSigned("Another");
+    const wwdr = selfSigned("WWDR");
+    const b64 = (pem: string) => Buffer.from(pem).toString("base64");
+    const apple = {
+      APPLE_PASS_TYPE_ID: "pass.example.test",
+      APPLE_TEAM_ID: "TEAMID1234",
+      APPLE_PASS_CERTIFICATE: b64(signer.certificate),
+      APPLE_PASS_KEY: b64(signer.privateKey),
+      APPLE_WWDR_CERTIFICATE: b64(wwdr.certificate),
+    };
+    expect(loadServerConfig(valid).applePasses).toBeUndefined();
+    expect(loadServerConfig({ ...valid, ...apple }).applePasses).toEqual({
+      passTypeId: "pass.example.test",
+      teamId: "TEAMID1234",
+      certificates: { signerCert: signer.certificate, signerKey: signer.privateKey, wwdr: wwdr.certificate },
+    });
+    expect(() => loadServerConfig({ ...valid, ...apple, APPLE_WWDR_CERTIFICATE: undefined })).toThrow(/APPLE_WWDR_CERTIFICATE/);
+    expect(() => loadServerConfig({ ...valid, ...apple, APPLE_PASS_KEY: b64(other.privateKey) })).toThrow(/APPLE_PASS_KEY: Use the private key/);
+    try {
+      loadServerConfig({ ...valid, ...apple, APPLE_PASS_KEY: b64("not a key"), APPLE_TEAM_ID: "team" });
+      expect.unreachable();
+    } catch (error) {
+      const message = (error as EnvError).message;
+      expect(message).toContain("APPLE_PASS_KEY");
+      expect(message).toContain("APPLE_TEAM_ID");
+      expect(message).not.toContain(b64("not a key"));
+    }
   });
 
   it("names invalid variables without their values", () => {
