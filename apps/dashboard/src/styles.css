@@ -139,3 +139,47 @@ footer {
   overflow-wrap: anywhere;
   font-family: ui-monospace, monospace;
 }
+
+/* Busy and quiet hours: eight columns fit a 360 px phone; scrolls sideways rather than overflow the page if not. */
+.visit-hours {
+  overflow-x: auto;
+}
+
+.visit-hours table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.visit-hours th,
+.visit-hours td {
+  padding: 0.25rem 0.125rem;
+  text-align: center;
+}
+
+.visit-hours abbr {
+  text-decoration: none;
+}
+
+/* Quiet to busy; every shade keeps its number readable (contrast at least 4.5:1). */
+.visit-hours .level-0 {
+  color: #6b6b72;
+}
+
+.visit-hours .level-1 {
+  background: #e3edf9;
+}
+
+.visit-hours .level-2 {
+  background: #b5cdee;
+}
+
+.visit-hours .level-3 {
+  background: #7fa9e0;
+}
+
+.visit-hours .level-4 {
+  background: #1a5fb4;
+  color: #ffffff;
+}

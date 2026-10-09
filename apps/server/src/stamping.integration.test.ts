@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { withCafe } from "@cafe-loyalty/db";
-import { COUNTER_BUILT_AT_HEADER, deviceCatalogSchema, redemptionSchema, syncResponseSchema } from "@cafe-loyalty/shared";
+import { COUNTER_BUILT_AT_HEADER, deviceCatalogSchema, redemptionSchema, syncResponseSchema, visitHoursSchema, type VisitHours } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
+import { memberVisitHours } from "./cafe-routes.js";
 import { signCardQr } from "./customer-crypto.js";
 import { DAILY_STAMP_CAP, STAMP_COOLDOWN_MINUTES } from "./stamping.js";
 import { TEST_SECRETS, signedEvent, useApiHarness, withBearer, withCookie, type PairedDevice } from "./testing/api-harness.js";
@@ -346,6 +347,93 @@ describe("stamping", () => {
       app.owner.cafeId,
     ]);
     expect(outcomes.map((row) => row.outcome)).toEqual(["stamped", "card_gone"]);
+  });
+});
+
+/** A visit of one cake: it earns no stamps, so any number of them may share a card and a time. */
+const cakeVisit = (app: App, qr: string, at?: Date) =>
+  visit(app, { kind: "qr", token: qr }, { ...(at === undefined ? {} : { at }), items: [{ orderTypeId: app.cake, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 1 }] });
+
+async function visitHoursOf(app: App): Promise<VisitHours> {
+  const response = await app.as("GET", "/api/cafe/visit-hours");
+  expect(response.statusCode).toBe(200);
+  return visitHoursSchema.parse(response.json());
+}
+
+/** The counted cells as [ISO weekday, hour, visits]. */
+const cells = (hours: Pick<VisitHours, "visits">) =>
+  hours.visits.flatMap((day, index) => day.flatMap((visits, hour) => (visits > 0 ? [[index + 1, hour, visits]] : [])));
+
+/** The test's own reading of Beirut's clock (Node's time zone data), to check the server's (PostgreSQL's) against. */
+function beirutCell(instant: Date): [number, number] {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Beirut", weekday: "short", hour: "2-digit", hourCycle: "h23" }).formatToParts(instant);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return [["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(part("weekday")) + 1, Number(part("hour"))];
+}
+
+describe("busy and quiet hours", () => {
+  it("counts the café's own member visits of the last 4 weeks by weekday and hour, deleted cards' included (AC 34)", async () => {
+    const app = await cafeApp();
+    const other = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const deleted = await issueCard(app.owner.cafeId);
+    const happened = new Date(Date.now() - 60 * MINUTE);
+    await sync(app, [await cakeVisit(app, card.qr, happened), await cakeVisit(app, deleted.qr, happened), await cakeVisit(app, card.qr, new Date(Date.now() - 2 * 60 * MINUTE))]);
+    await sync(other, [await cakeVisit(other, (await issueCard(other.owner.cafeId)).qr, happened)]);
+    const removed = await app.app.inject({
+      method: "POST",
+      url: `/c/${deleted.webSecret}/delete`,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "confirm=yes",
+    });
+    expect(removed.statusCode).toBe(200);
+    await context.admin.query("UPDATE app.visits SET occurred_at = now() - interval '29 days' WHERE cafe_id = $1 AND occurred_at < $2", [
+      app.owner.cafeId,
+      new Date(happened.getTime() - MINUTE),
+    ]);
+    const hours = await visitHoursOf(app);
+    expect(hours.timeZone).toBe("Asia/Beirut");
+    expect(Date.parse(hours.to) - Date.parse(hours.from)).toBe(28 * 24 * 60 * MINUTE);
+    expect(cells(hours)).toEqual([[...beirutCell(happened), 2]]);
+    expect(cells(await visitHoursOf(other))).toEqual([[...beirutCell(happened), 1]]);
+  });
+
+  it("puts a visit synced 3 days late in the hour it happened once the owner accepts it, never a discarded one (AC 33)", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const happened = new Date(Date.now() - 3 * 24 * 60 * MINUTE);
+    expect(await sync(app, [await cakeVisit(app, card.qr, happened), await cakeVisit(app, card.qr, happened)])).toEqual([
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+    ]);
+    expect(cells(await visitHoursOf(app))).toEqual([]);
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string }[] }>().items;
+    await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`);
+    await app.as("POST", `/api/review-queue/${queue[1]?.id ?? ""}/discard`);
+    expect(cells(await visitHoursOf(app))).toEqual([[...beirutCell(happened), 1]]);
+  });
+
+  it("follows Beirut's clock across both daylight-saving changeovers (AC 33)", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const instants = ["2026-03-28T21:59:00Z", "2026-03-28T22:00:00Z", "2026-10-24T20:30:00Z", "2026-10-24T21:30:00Z", "2026-10-24T22:00:00Z"];
+    await sync(app, await Promise.all(instants.map(() => cakeVisit(app, card.qr))));
+    const { rows } = await context.admin.query<{ id: string }>("SELECT id FROM app.visits WHERE cafe_id = $1", [app.owner.cafeId]);
+    for (const [index, row] of rows.entries()) {
+      await context.admin.query("UPDATE app.visits SET occurred_at = $2 WHERE id = $1", [row.id, instants[index]]);
+    }
+    const hoursBetween = (from: string, to: string) =>
+      withCafe(context.testDb.app.db, app.owner.cafeId, (trx) => memberVisitHours(trx, app.owner.cafeId, new Date(from), new Date(to)));
+    // Spring forward, Sunday 29 March 2026: midnight becomes 01:00, so the minute after Saturday 23:59 is Sunday 01:00.
+    expect(cells(await hoursBetween("2026-03-28T00:00:00Z", "2026-03-30T00:00:00Z"))).toEqual([
+      [6, 23, 1],
+      [7, 1, 1],
+    ]);
+    // Fall back, Sunday 25 October 2026: midnight becomes Saturday 23:00 again, so that hour holds two real hours.
+    expect(cells(await hoursBetween("2026-10-24T00:00:00Z", "2026-10-26T00:00:00Z"))).toEqual([
+      [6, 23, 2],
+      [7, 0, 1],
+    ]);
   });
 });
 

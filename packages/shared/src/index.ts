@@ -11,6 +11,8 @@ export {
   cafeSetupSchema,
   REPEATED_DELIVERY_FAILURES,
   walletDeliveriesSchema,
+  VISIT_HOURS_WEEKS,
+  visitHoursSchema,
   cafeUpdateSchema,
   deviceCatalogSchema,
   deviceInfoSchema,
@@ -53,6 +55,7 @@ export {
   type StaffMember,
   type TokenRenewalRequest,
   type WalletDeliveries,
+  type VisitHours,
 } from "./cafe-setup.js";
 export { EnvError, loadEnv } from "./env.js";
 export {
@@ -143,4 +146,3 @@ export {
   type VisitItem,
   type VisitRecordedV1Event,
 } from "./sync.js";
-export { BUSINESS_TIME_ZONE, localHourBucket, type LocalHourBucket } from "./time.js";
