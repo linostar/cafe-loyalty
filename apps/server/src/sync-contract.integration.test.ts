@@ -13,7 +13,10 @@ import { useApiHarness, withBearer } from "./testing/api-harness.js";
 const context = useApiHarness();
 const releaseBuiltAt = process.env.BUILT_AT === undefined ? new Date() : new Date(process.env.BUILT_AT);
 const fixtures = await loadSyncFixtures();
-const newest = fixtures.reduce<(typeof fixtures)[number] | undefined>((latest, entry) => (latest === undefined || entry.fixture.builtAt > latest.fixture.builtAt ? entry : latest), undefined);
+const newest = fixtures.reduce<(typeof fixtures)[number] | undefined>(
+  (latest, entry) => (latest === undefined || Date.parse(entry.fixture.builtAt) > Date.parse(latest.fixture.builtAt) ? entry : latest),
+  undefined,
+);
 // Every release in the window, and always the newest: the counter of the latest release is in use whatever its age.
 const supported = fixtures.filter((entry) => entry === newest || inSupportWindow(entry.fixture.builtAt, releaseBuiltAt));
 

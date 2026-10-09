@@ -86,7 +86,7 @@ describe("sync", () => {
     const events = [
       await visit(device, staffId),
       await visit(device, staffId, { payload: { card: { kind: "qr", token: QR_TOKEN }, items: [], totalCents: 0 } }),
-      await visit(device, staffId, { type: "visit.voided" }),
+      await visit(device, staffId, { type: "test.never-supported" }),
       await visit(device, staffId, { schemaVersion: 2 }),
       await visit({ ...device, privateKey: other.privateKey }, staffId),
       await visit({ ...device, deviceId: randomUUID() }, staffId),
@@ -151,6 +151,34 @@ describe("sync", () => {
     });
     expect(response.statusCode).toBe(413);
     expect(response.json()).toMatchObject({ code: "PAYLOAD_TOO_LARGE", retryable: false });
+  });
+
+  it("refuses an event signed with another device's key, even of the same café", async () => {
+    const { app, owner, device, staffId } = await counterApp();
+    const other = await pairDevice(app, owner, "Counter 2");
+    const borrowed = await visit({ ...device, keyId: other.keyId, privateKey: other.privateKey }, staffId);
+    expect(await sync(app, device.accessToken, [borrowed])).toEqual([{ status: "rejected", code: "SIGNATURE_INVALID" }]);
+  });
+
+  it("audits a PIN lockout report at once, even from a removed barista (AC 19)", async () => {
+    const { app, as, owner, device, staffId } = await counterApp();
+    await as("POST", `/api/staff/${staffId}/revoke`);
+    const lockout = await signedEvent(device, {
+      eventId: randomUUID(),
+      staffId,
+      sequence: 1,
+      schemaVersion: 1,
+      type: "staff.pin_lockout",
+      occurredAt: new Date().toISOString(),
+      payload: { failedAttempts: 6, lockedUntil: new Date(Date.now() + 60_000).toISOString() },
+    });
+    expect(await sync(app, device.accessToken, [lockout])).toEqual([{ status: "applied", code: "OK" }]);
+    const { rows } = await context.admin.query<{ changes: Record<string, unknown> }>(
+      "SELECT changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'staff.pin_locked_out'",
+      [owner.cafeId],
+    );
+    expect(rows).toEqual([{ changes: expect.objectContaining({ failedAttempts: 6, reportedAfter: "staff_revoked" }) as unknown }]);
+    expect(reviewQueueSchema.parse((await as("GET", "/api/review-queue")).json()).items).toEqual([]);
   });
 
   it("records a PIN lockout in the audit log (AC 19)", async () => {

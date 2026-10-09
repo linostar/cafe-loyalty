@@ -1,6 +1,6 @@
 import { deviceStaffSchema, normalizePairingCode } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequest, pairDevice } from "./device.js";
+import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequestFor, pairDevice } from "./device.js";
 import { attemptPin } from "./pin.js";
 import {
   clearRejected,
@@ -11,6 +11,7 @@ import {
   listRejected,
   onStorageChange,
   setMeta,
+  storeStaff,
   type DeviceRecord,
   type RejectedEvent,
   type StaffEntry,
@@ -64,15 +65,15 @@ function StatusBar({ online, pending, problem, notice, update }: StatusBarProps)
       <p role="status" aria-live="polite">
         {online ? "Online" : "Offline: stamps are saved on this phone and sync when the connection returns."}
       </p>
-      <p aria-live="polite">{pending === 0 ? "Nothing waiting to send." : `${String(pending)} waiting to send.`}</p>
-      {problem === null ? null : (
-        <p className="warning" aria-live="polite">
-          {problem}
-        </p>
-      )}
-      {notice === null ? null : <p className="warning">{notice}</p>}
-      {update.waiting ? <p>An update is ready. It installs once everything is sent and nobody is typing.</p> : null}
-      {update.error === null ? null : <p className="warning">{update.error}</p>}
+      {/* Not live: it changes with every sync, and the count is there to look at, not to hear. */}
+      <p>{pending === 0 ? "Nothing waiting to send." : `${String(pending)} waiting to send.`}</p>
+      {/* Always in the page, so screen readers announce what appears in it. */}
+      <div aria-live="polite">
+        {problem === null ? null : <p className="warning">{problem}</p>}
+        {notice === null ? null : <p className="warning">{notice}</p>}
+        {update.waiting ? <p>An update is ready. It installs once everything is sent and nobody is typing.</p> : null}
+        {update.error === null ? null : <p className="warning">{update.error}</p>}
+      </div>
       <p className="build">Build {__BUILD_ID__}</p>
     </section>
   );
@@ -170,6 +171,13 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
   useEffect(() => {
     onBusy(pending || code !== "");
   }, [pending, code, onBusy]);
+  // Whatever screen comes next is not busy because of this one.
+  useEffect(
+    () => () => {
+      onBusy(false);
+    },
+    [onBusy],
+  );
 
   let intro: ReactNode = null;
   if (device?.unpairedReason === "revoked") {
@@ -271,6 +279,12 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
   useEffect(() => {
     onBusy(checking || pin !== "");
   }, [checking, pin, onBusy]);
+  useEffect(
+    () => () => {
+      onBusy(false);
+    },
+    [onBusy],
+  );
 
   useEffect(() => {
     let current = true;
@@ -311,9 +325,22 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
   const locked = lockedUntil !== null;
   const shown = locked ? `Too many wrong PINs. ${staff.name} can try again at ${clock.format(new Date(lockedUntil))}.` : message;
 
+  // The PIN field is disabled while locked out: keep focus on the screen, and back in the field when it ends.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const wasLocked = useRef(false);
+  useEffect(() => {
+    if (locked) {
+      heading.current?.focus();
+    } else if (wasLocked.current) {
+      input.current?.focus();
+    }
+    wasLocked.current = locked;
+  }, [locked]);
+
   return (
     <section aria-labelledby="pin-title">
-      <h2 id="pin-title" tabIndex={-1}>
+      <h2 id="pin-title" tabIndex={-1} ref={heading}>
         PIN for {staff.name}
       </h2>
       <form
@@ -347,6 +374,7 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
       >
         <label htmlFor={inputId}>PIN</label>
         <input
+          ref={input}
           id={inputId}
           name="pin"
           type="password"
@@ -414,7 +442,8 @@ export function App() {
   const online = useOnlineStatus();
   const [stored, setStored] = useState<Stored | null>(null);
   const [path, setPath] = useState(window.location.pathname);
-  const [chosen, setChosen] = useState<StaffEntry | null>(null);
+  /** The barista picked to enter a PIN, by id: their entry is always the latest one stored (PIN changed, removed). */
+  const [chosenId, setChosenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -457,24 +486,23 @@ export function App() {
   const refreshStaff = useCallback(
     () =>
       handled(async () => {
-        const { staff } = await deviceRequest("GET", "/api/device/staff", deviceStaffSchema);
-        await setMeta("staff", staff);
-        const signedIn = await getMeta("barista");
-        // A barista the owner removed can no longer work on this phone.
-        if (signedIn !== undefined && !staff.some((member) => member.id === signedIn.staffId)) {
-          await deleteMeta("barista");
-        }
+        const { body, keyId } = await deviceRequestFor("GET", "/api/device/staff", deviceStaffSchema);
+        // Only for the pairing the request was made for; a barista the owner removed is signed out.
+        await storeStaff(keyId, body.staff);
         setNotice(null);
       }),
     [handled],
   );
 
   const sync = useCallback(() => handled(syncQueue), [handled]);
-  const paired = stored?.device?.paired === true;
+  const device = stored?.device;
+  const paired = device?.paired === true;
+  /** The paired device's key: pairing again (even while paired) restarts syncing and loads its café's baristas. */
+  const pairedKey = device?.paired === true ? device.keyId : undefined;
   const pending = stored?.pending ?? 0;
 
   useEffect(() => {
-    if (!paired || !online) {
+    if (pairedKey === undefined || !online) {
       return;
     }
     // Right away (once the effect has run), then on a timer.
@@ -486,7 +514,7 @@ export function App() {
       clearInterval(syncTimer);
       clearInterval(staffTimer);
     };
-  }, [paired, online, sync, refreshStaff]);
+  }, [pairedKey, online, sync, refreshStaff]);
 
   // A newly queued event (such as a lockout report) goes out at once when online.
   useEffect(() => {
@@ -500,6 +528,7 @@ export function App() {
   }, [paired, online, pending, sync]);
 
   const barista = stored?.staff.find((member) => member.id === stored.baristaId);
+  const chosen = stored?.staff.find((member) => member.id === chosenId);
   let screen: Screen;
   if (stored === null) {
     screen = "loading";
@@ -507,7 +536,7 @@ export function App() {
     screen = "pair";
   } else if (barista !== undefined) {
     screen = "home";
-  } else if (chosen === null) {
+  } else if (chosen === undefined) {
     screen = "who";
   } else {
     screen = "pin";
@@ -535,7 +564,7 @@ export function App() {
           onPaired={() => {
             window.history.replaceState(null, "", "/");
             setPath("/");
-            setChosen(null);
+            setChosenId(null);
             setBusy(false);
             setNotice(null);
           }}
@@ -543,23 +572,30 @@ export function App() {
       );
       break;
     case "who":
-      content = <BaristaPicker staff={stored?.staff ?? []} online={online} onChoose={setChosen} />;
+      content = (
+        <BaristaPicker
+          staff={stored?.staff ?? []}
+          online={online}
+          onChoose={(member) => {
+            setChosenId(member.id);
+          }}
+        />
+      );
       break;
     case "pin":
       content =
-        chosen === null ? null : (
+        chosen === undefined ? null : (
           <PinScreen
             staff={chosen}
             onBusy={setBusy}
             onBack={() => {
-              setChosen(null);
-              setBusy(false);
+              setChosenId(null);
             }}
             onSignedIn={() => {
               setBusy(false);
               setMeta("barista", { staffId: chosen.id }).then(
                 () => {
-                  setChosen(null);
+                  setChosenId(null);
                 },
                 (caught: unknown) => {
                   console.error("Saving the barista failed", caught);

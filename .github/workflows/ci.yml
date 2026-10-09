@@ -62,7 +62,11 @@ jobs:
         # The commit time, as the release build will set it: the counter build and the server must agree (AC 26).
         env:
           TZ: UTC
-        run: echo "BUILT_AT=$(git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+        # On its own line, so a failing git log fails the step instead of setting an empty value.
+        run: |
+          built_at=$(git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
+          test -n "$built_at"
+          echo "BUILT_AT=$built_at" >> "$GITHUB_ENV"
 
       - name: Run the test command
         run: pnpm test

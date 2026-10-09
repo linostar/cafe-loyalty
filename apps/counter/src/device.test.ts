@@ -1,7 +1,7 @@
 import { COUNTER_BUILT_AT_HEADER, devicePairProofPayload, deviceTokenSigningPayload, type DevicePublicKeyJwk } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { DeviceUnpairedError, RequestError, deviceRequest, pairDevice, renewToken } from "./device.js";
-import { addQueued, countQueued, getMeta, setMeta } from "./storage.js";
+import { addQueued, countQueued, getMeta, setMeta, storeStaff } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice, verifies } from "./test-helpers.js";
 import { z } from "zod";
 
@@ -168,6 +168,19 @@ describe("tokens", () => {
     fakeApi(() => ({ status: 401, body: envelope("PAIRING_REQUIRED") }));
     await expect(renewToken("a".repeat(43))).rejects.toMatchObject({ reason: "pairing_required" });
     expect(await getMeta("staff")).toHaveLength(1);
+  });
+});
+
+describe("storeStaff", () => {
+  it("keeps only the baristas fetched for the current pairing and signs out a removed one", async () => {
+    const { device } = await storePairedDevice();
+    const rami = await staffEntry("s1", "Rami", "482913");
+    expect(await storeStaff("0d0d0d0d-0000-4000-8000-000000000000", [rami])).toBe(false);
+    expect(await getMeta("staff")).toBeUndefined();
+    await setMeta("barista", { staffId: "gone" });
+    expect(await storeStaff(device.keyId, [rami])).toBe(true);
+    expect(await getMeta("staff")).toEqual([rami]);
+    expect(await getMeta("barista")).toBeUndefined();
   });
 });
 

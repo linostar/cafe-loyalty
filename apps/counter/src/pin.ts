@@ -1,6 +1,6 @@
 import { fromBase64Url, toBase64Url } from "./device.js";
 import { recordEvent } from "./sync.js";
-import { deleteLockout, getLockout, putLockout, type StaffEntry } from "./storage.js";
+import { countPinAttempt, deleteLockout, type StaffEntry } from "./storage.js";
 
 /** Wrong PINs in a row allowed before the device locks that barista out (AC 19). */
 export const PIN_FREE_ATTEMPTS = 4;
@@ -30,24 +30,20 @@ export type PinAttempt = { status: "accepted" } | { status: "wrong"; attemptsLef
  * event, which reports it to the owner at the next sync.
  */
 export async function attemptPin(staff: StaffEntry, pin: string, now = Date.now()): Promise<PinAttempt> {
-  const lockout = await getLockout(staff.id);
-  if (lockout?.lockedUntil != null && lockout.lockedUntil > now) {
-    return { status: "locked", lockedUntil: lockout.lockedUntil };
+  // Counted before the PIN is checked, so wrong PINs typed in several tabs at once are all counted.
+  // ponytail: the lockout trusts the phone's clock; setting it ahead ends a lockout early. A monotonic clock would
+  // not survive reloads; the report at sync still tells the owner.
+  const count = await countPinAttempt(staff.id, now, lockoutDelayMs);
+  if (count.status === "locked") {
+    return count;
   }
   if (await pinMatches(staff, pin)) {
-    if (lockout !== undefined) {
-      await deleteLockout(staff.id);
-    }
+    await deleteLockout(staff.id);
     return { status: "accepted" };
   }
-  const failures = (lockout?.failures ?? 0) + 1;
-  const delay = lockoutDelayMs(failures);
-  if (delay === 0) {
-    await putLockout({ staffId: staff.id, failures, lockedUntil: null });
-    return { status: "wrong", attemptsLeft: PIN_FREE_ATTEMPTS + 1 - failures };
+  if (count.lockedUntil === null) {
+    return { status: "wrong", attemptsLeft: PIN_FREE_ATTEMPTS + 1 - count.failures };
   }
-  const lockedUntil = now + delay;
-  await putLockout({ staffId: staff.id, failures, lockedUntil });
-  await recordEvent("staff.pin_lockout", 1, staff.id, { failedAttempts: failures, lockedUntil: new Date(lockedUntil).toISOString() });
-  return { status: "locked", lockedUntil };
+  await recordEvent("staff.pin_lockout", 1, staff.id, { failedAttempts: count.failures, lockedUntil: new Date(count.lockedUntil).toISOString() });
+  return { status: "locked", lockedUntil: count.lockedUntil };
 }

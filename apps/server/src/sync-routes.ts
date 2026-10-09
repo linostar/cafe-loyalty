@@ -78,8 +78,8 @@ const alreadyDecided = () => new ApiError("NOT_FOUND", "This event was already a
  * Records one event of a sync request in its own transaction, so one event never decides another's outcome (AC 23).
  * The device and café are the token's (AC 25); the event's own deviceId must match and its key must belong to that
  * device. A verified event is recorded once (AC 24): the same id again is a duplicate with the same content and a
- * conflict with other content. Events from a revoked device, a key it had when revoked or a revoked staff member are
- * held for the owner's review (AC 21).
+ * conflict with other content. Actions from a revoked device, a key it had when revoked or a revoked staff member are
+ * held for the owner's review (AC 21); PIN lockout reports are audited whatever their source.
  */
 async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
   const parsed = parseSyncEvent(raw);
@@ -141,8 +141,11 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
     if (staff === undefined) {
       return "INVALID_EVENT";
     }
-    const holdReason: SyncHoldReason | null =
+    const revokedBy: SyncHoldReason | null =
       deviceRow.revoked_at !== null || key.revoked_at !== null ? "device_revoked" : staff.revoked_at !== null ? "staff_revoked" : null;
+    // A lockout report changes nothing; it is security information for the owner, so it is audited at once, saying
+    // when it came from a removed phone or barista, and never held. Actions are held (AC 21).
+    const holdReason = event.type === "staff.pin_lockout" ? null : revokedBy;
     const inserted = await trx
       .insertInto("sync_events")
       .values({
@@ -177,7 +180,11 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
         action: "staff.pin_locked_out",
         entityType: "staff",
         entityId: event.staffId,
-        changes: { failedAttempts: event.payload.failedAttempts, lockedUntil: event.payload.lockedUntil },
+        changes: {
+          failedAttempts: event.payload.failedAttempts,
+          lockedUntil: event.payload.lockedUntil,
+          ...(revokedBy === null ? {} : { reportedAfter: revokedBy }),
+        },
       });
     }
     // Visits are recorded in the ledger only; stamps arrive with plan Step 9.

@@ -105,6 +105,7 @@ function promised<T>(request: IDBRequest<T>): Promise<T> {
 
 function database(): Promise<IDBDatabase> {
   opening ??= new Promise<IDBDatabase>((resolve, reject) => {
+    let abandoned = false;
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -114,12 +115,25 @@ function database(): Promise<IDBDatabase> {
       db.createObjectStore(LOCKOUTS, { keyPath: "staffId" });
     };
     request.onsuccess = () => {
-      resolve(request.result);
+      const db = request.result;
+      if (abandoned) {
+        // Opened after this attempt gave up (blocked): close it, so it does not block the next upgrade.
+        db.close();
+        return;
+      }
+      // A newer build in another tab upgrades the database: let it, and reload into that build.
+      db.onversionchange = () => {
+        db.close();
+        opening = undefined;
+        window.location.reload();
+      };
+      resolve(db);
     };
     request.onerror = () => {
       reject(request.error ?? new Error("Could not open this phone's storage."));
     };
     request.onblocked = () => {
+      abandoned = true;
       reject(new Error("This phone's storage is busy in another tab. Close the other counter tabs and reload."));
     };
   }).catch((error: unknown) => {
@@ -246,6 +260,48 @@ export function storeUnpaired(keyId: string, reason: "revoked" | "pairing_requir
   });
 }
 
+/**
+ * Stores the baristas the server sent for the device of key `keyId`, unless the phone was paired again meanwhile, and
+ * signs out a barista who is no longer among them. Returns whether it stored them.
+ */
+export function storeStaff(keyId: string, staff: StaffEntry[]): Promise<boolean> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const device = await promised(meta.get("device") as IDBRequest<DeviceRecord | undefined>);
+    if (device?.paired !== true || device.keyId !== keyId) {
+      return false;
+    }
+    await promised(meta.put(staff, "staff"));
+    const barista = await promised(meta.get("barista") as IDBRequest<{ staffId: string } | undefined>);
+    if (barista !== undefined && !staff.some((member) => member.id === barista.staffId)) {
+      await promised(meta.delete("barista"));
+    }
+    return true;
+  });
+}
+
+export type PinCount = { status: "locked"; lockedUntil: number } | { status: "counted"; failures: number; lockedUntil: number | null };
+
+/**
+ * Starts a PIN attempt in one step, before the PIN is checked: refuses it while the barista is locked out, and
+ * otherwise counts it as a failure (with the lockout `delayFor` gives), so attempts from several tabs at once are
+ * each counted. A PIN that then matches clears the count (deleteLockout).
+ */
+export function countPinAttempt(staffId: string, now: number, delayFor: (failures: number) => number): Promise<PinCount> {
+  return transact([LOCKOUTS], "readwrite", async (transaction): Promise<PinCount> => {
+    const store = transaction.objectStore(LOCKOUTS);
+    const lockout = await promised(store.get(staffId) as IDBRequest<Lockout | undefined>);
+    if (lockout?.lockedUntil != null && lockout.lockedUntil > now) {
+      return { status: "locked", lockedUntil: lockout.lockedUntil };
+    }
+    const failures = (lockout?.failures ?? 0) + 1;
+    const delay = delayFor(failures);
+    const lockedUntil = delay === 0 ? null : now + delay;
+    await promised(store.put({ staffId, failures, lockedUntil }));
+    return { status: "counted", failures, lockedUntil };
+  });
+}
+
 /** Takes the next renewal time: now, or just after the last one any tab sent. */
 export function nextIssuedAt(): Promise<number> {
   return transact([META], "readwrite", async (transaction) => {
@@ -303,10 +359,6 @@ export async function clearRejected(): Promise<void> {
 
 export function getLockout(staffId: string): Promise<Lockout | undefined> {
   return transact([LOCKOUTS], "readonly", (transaction) => promised(transaction.objectStore(LOCKOUTS).get(staffId) as IDBRequest<Lockout | undefined>));
-}
-
-export async function putLockout(lockout: Lockout): Promise<void> {
-  await transact([LOCKOUTS], "readwrite", (transaction) => promised(transaction.objectStore(LOCKOUTS).put(lockout)));
 }
 
 export async function deleteLockout(staffId: string): Promise<void> {

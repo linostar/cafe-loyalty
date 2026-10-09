@@ -100,7 +100,7 @@ export async function checkDeviceToken(db: Kysely<Database>, token: string): Pro
   }
   return withCafe(db, found.cafe_id, async (trx) => {
     const device = await trx.selectFrom("devices").select("revoked_at").where("id", "=", found.device_id).executeTakeFirst();
-    const context = { deviceId: found.device_id, cafeId: found.cafe_id, revoked: device?.revoked_at != null };
+    const context = { deviceId: found.device_id, cafeId: found.cafe_id, revoked: device?.revoked_at !== null };
     // A missing device row (undefined) counts as revoked too.
     if (device?.revoked_at !== null) {
       return { status: "revoked", device: context, live: found.live } as const;

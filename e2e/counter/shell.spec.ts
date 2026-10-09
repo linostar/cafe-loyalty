@@ -17,7 +17,8 @@ test("shows the build and tracks connectivity", async ({ page, context }) => {
 
 test("fits a 360 px phone screen without horizontal scrolling", async ({ page }) => {
   await page.goto("/");
-  // Against the 360 px screen, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - 360);
+  // Against the screen's width, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
+  const screenWidth = page.viewportSize()?.width ?? 0;
+  const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });

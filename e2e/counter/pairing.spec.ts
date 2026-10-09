@@ -49,15 +49,19 @@ test("pairs from the dashboard's QR link, locks a barista out after five wrong P
 
   await page.getByRole("button", { name: "Rami" }).click();
   await expect(page.getByRole("heading", { name: "PIN for Rami" })).toBeFocused();
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
     await page.getByLabel("PIN", { exact: true }).fill("111111");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled({ enabled: attempt < 5 });
+    // Each answer, not just the button coming back, before the next try.
+    await expect(page.getByRole("alert")).toHaveText(`Wrong PIN. ${String(5 - attempt)} ${attempt === 4 ? "try" : "tries"} left before a pause.`);
   }
+  await page.getByLabel("PIN", { exact: true }).fill("111111");
+  await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("alert")).toHaveText(/^Too many wrong PINs\. Rami can try again at /);
   await expect(page.getByLabel("PIN", { exact: true })).toBeDisabled();
+  // The report is sent at once; wait for it rather than for a status line that was already there.
+  await expect.poll(() => synced).toMatchObject([{ type: "staff.pin_lockout", staffId: RAMI.id, deviceId: PAIRED.deviceId, payload: { failedAttempts: 5 } }]);
   await expect(page.getByText("Nothing waiting to send.")).toBeVisible();
-  expect(synced).toMatchObject([{ type: "staff.pin_lockout", staffId: RAMI.id, deviceId: PAIRED.deviceId, payload: { failedAttempts: 5 } }]);
 
   // The lockout is kept on the phone: a reload does not lift it.
   await page.reload();

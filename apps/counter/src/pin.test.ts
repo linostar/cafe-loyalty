@@ -15,6 +15,15 @@ describe("lockoutDelayMs", () => {
 });
 
 describe("attemptPin", () => {
+  it("counts wrong PINs sent at the same moment, as from several tabs, each one (AC 19)", async () => {
+    await storePairedDevice();
+    const rami = await staffEntry(STAFF_ID, "Rami", "482913");
+    const start = Date.parse("2026-10-01T08:00:00.000Z");
+    const attempts = await Promise.all(Array.from({ length: 5 }, () => attemptPin(rami, "000000", start)));
+    expect(attempts.filter((attempt) => attempt.status === "locked")).toHaveLength(1);
+    expect(await getLockout(STAFF_ID)).toMatchObject({ failures: 5, lockedUntil: start + 30_000 });
+  });
+
   it("checks a PIN against the server's PBKDF2 hash", async () => {
     const rami = await staffEntry(STAFF_ID, "Rami", "482913");
     expect(await pinMatches(rami, "482913")).toBe(true);

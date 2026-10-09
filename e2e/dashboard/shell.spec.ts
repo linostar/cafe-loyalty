@@ -20,8 +20,9 @@ for (const path of ["/", "/cafe", "/staff", "/devices", "/review", "/account"]) 
     await mockApi(page, SIGNED_IN);
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
-    // Against the 360 px screen, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - 360);
+    // Against the screen's width, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
+    const screenWidth = page.viewportSize()?.width ?? 0;
+    const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
@@ -36,8 +37,9 @@ for (const path of ["/", "/signup#invite=x", "/forgot-password", "/reset-passwor
   test(`fits a 360 px phone screen without horizontal scrolling at ${path}`, async ({ page }) => {
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
-    // Against the 360 px screen, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - 360);
+    // Against the screen's width, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
+    const screenWidth = page.viewportSize()?.width ?? 0;
+    const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }

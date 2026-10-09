@@ -5,8 +5,9 @@
  * release has shipped. The device key signs every event and is then thrown away; fixtures hold only test data.
  */
 import { randomBytes, randomUUID, webcrypto } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { syncEventSigningPayload } from "@cafe-loyalty/shared";
+import { z } from "zod";
 import type { SyncFixture } from "./sync-fixtures.js";
 
 const name = process.argv[2];
@@ -15,7 +16,11 @@ if (name === undefined || !/^[a-z0-9-]{1,80}$/.test(name)) {
   process.exit(1);
 }
 
-const builtAt = process.env.BUILT_AT ?? new Date().toISOString();
+const builtAt = process.env.BUILT_AT === undefined || process.env.BUILT_AT === "" ? new Date().toISOString() : process.env.BUILT_AT;
+if (!z.iso.datetime({ offset: false }).safeParse(builtAt).success) {
+  process.stderr.write("BUILT_AT must be an ISO 8601 UTC time, such as 2026-10-09T08:00:00Z.\n");
+  process.exit(1);
+}
 const recordedAt = new Date().toISOString();
 const keys = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
 const jwk = await webcrypto.subtle.exportKey("jwk", keys.publicKey);
@@ -23,7 +28,7 @@ const device = { deviceId: randomUUID(), keyId: randomUUID(), publicKey: { kty: 
 const staffId = randomUUID();
 let sequence = 0;
 
-/** An event exactly as the counter's recordEvent builds and signs it (apps/counter/src/sync.ts). */
+/** An event built and signed exactly as the counter's recordEvent does it (apps/counter/src/sync.ts). */
 async function event(type: string, schemaVersion: number, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   sequence += 1;
   const fields = { eventId: randomUUID(), deviceId: device.deviceId, keyId: device.keyId, staffId, sequence, schemaVersion, type, occurredAt: recordedAt, payload };
@@ -36,7 +41,8 @@ const byQr = await event("visit.recorded", 1, { card: { kind: "qr", token: `v1.$
 // A fake test number (Lebanese mobile format).
 const byPhone = await event("visit.recorded", 1, { card: { kind: "phone", phone: "+96170000000" }, items: [item], totalCents: 700 });
 const lockout = await event("staff.pin_lockout", 1, { failedAttempts: 5, lockedUntil: new Date(Date.parse(recordedAt) + 30_000).toISOString() });
-const fromTheFuture = await event("visit.voided", 1, { visitId: randomUUID() });
+// A type no release will ever define, standing in for one a newer counter build sends: it must stay unsupported.
+const fromTheFuture = await event("test.never-supported", 1, { note: "from a newer build" });
 const malformed = await event("visit.recorded", 1, { card: { kind: "qr", token: "v1.x" }, items: [], totalCents: 0 });
 
 const fixture: SyncFixture = {
@@ -61,6 +67,8 @@ const fixture: SyncFixture = {
   ],
 };
 
-const path = new URL(`../../sync-fixtures/${name}.json`, import.meta.url);
+const directory = new URL("../../sync-fixtures/", import.meta.url);
+await mkdir(directory, { recursive: true });
+const path = new URL(`${name}.json`, directory);
 await writeFile(path, `${JSON.stringify(fixture, null, 2)}\n`, { flag: "wx" });
 process.stdout.write(`Wrote ${path.pathname}\n`);
