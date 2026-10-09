@@ -476,10 +476,11 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pgboss TO cl_app;
 
 -- Expired credentials, removed by the worker's hourly job (they no longer work, but should not pile up). They belong
 -- to every café, which the app role cannot see at once: this function runs as cl_owner, which sees only expired
--- rows through the policies below, and the app role may only call it. Keep the 7 days in step with
--- SESSION_IDLE_TIMEOUT_SECONDS (apps/server/src/access.ts).
+-- rows through the policies below, and the app role may only call it. The idle limit is SESSION_IDLE_TIMEOUT_SECONDS
+-- (apps/server/src/access.ts, 7 days) in seconds, as the server counts it: a day interval would follow the session's
+-- time zone and be an hour shorter in a daylight-saving week.
 CREATE POLICY purge_expired ON owner_sessions FOR ALL TO cl_owner
-  USING (expires_at <= now() OR last_seen_at <= now() - interval '7 days');
+  USING (expires_at <= now() OR last_seen_at <= now() - make_interval(secs => 604800));
 CREATE POLICY purge_expired ON password_reset_tokens FOR ALL TO cl_owner USING (expires_at <= now());
 CREATE POLICY purge_expired ON owner_invites FOR ALL TO cl_owner USING (expires_at <= now());
 CREATE POLICY purge_expired ON device_tokens FOR ALL TO cl_owner USING (expires_at <= now());

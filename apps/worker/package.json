@@ -17,7 +17,9 @@
   },
   "devDependencies": {
     "@cafe-loyalty/db": "workspace:*",
+    "@types/pg": "^8.23.1",
     "kysely": "^0.29.6",
+    "pg": "^8.23.1",
     "tsx": "^4.23.15"
   }
 }

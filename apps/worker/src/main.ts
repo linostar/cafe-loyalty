@@ -13,7 +13,7 @@ try {
 }
 const logger = createLogger(config.LOG_LEVEL);
 
-const tasks: WorkerTask[] = [jobQueueTask(createJobQueue(config.DATABASE_URL, logger), logger)];
+const tasks: WorkerTask[] = [jobQueueTask(createJobQueue(config.DATABASE_URL, logger), logger, config.SHUTDOWN_TIMEOUT_MS)];
 const controller = new AbortController();
 
 function requestStop(signal: NodeJS.Signals): void {

@@ -39,12 +39,14 @@ async function cafeWithCredentials(): Promise<void> {
       [cafeId, ownerId, randomBytes(32), randomBytes(32)],
     );
   }
-  // Idle for longer than a session may be, though not past its absolute end.
-  await admin.query("INSERT INTO owner_sessions (cafe_id, owner_id, token_hash, expires_at, last_seen_at) VALUES ($1, $2, $3, now() + interval '20 days', now() - interval '8 days')", [
-    cafeId,
-    ownerId,
-    randomBytes(32),
-  ]);
+  // Idle a minute longer than a session may be (SESSION_IDLE_TIMEOUT_SECONDS, 7 days), though not past its absolute
+  // end; and idle a minute less, which the server still accepts.
+  for (const idle of ["604800 + 60", "604800 - 60"]) {
+    await admin.query(
+      `INSERT INTO owner_sessions (cafe_id, owner_id, token_hash, expires_at, last_seen_at) VALUES ($1, $2, $3, now() + interval '20 days', now() - make_interval(secs => ${idle}))`,
+      [cafeId, ownerId, randomBytes(32)],
+    );
+  }
 }
 
 async function counts(): Promise<Record<string, number>> {
@@ -64,7 +66,17 @@ describe("purge_expired_credentials", () => {
       await admin.query(`INSERT INTO customer_recovery_tokens (email_lookup, token_hash, expires_at) VALUES ($1, $2, ${expires})`, [randomBytes(32), randomBytes(32)]);
     }
 
-    // As the app role, with no café set: it sees none of these rows itself.
+    // As the app role, with no café set: it sees none of these rows itself, expired or not, and the policies that let
+    // the purge see expired rows are the owner role's alone.
+    for (const table of TOKEN_TABLES) {
+      const { rows: visible } = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)}`.execute(db.app.db);
+      expect({ table, visible: visible[0]?.n }).toEqual({ table, visible: 0 });
+    }
+    const { rows: policies } = await admin.query<{ tablename: string; roles: string[] }>(
+      "SELECT tablename, roles::text[] AS roles FROM pg_policies WHERE schemaname = 'app' AND policyname = 'purge_expired' ORDER BY tablename COLLATE \"C\"",
+    );
+    expect(policies).toEqual([...TOKEN_TABLES].sort().map((tablename) => ({ tablename, roles: ["cl_owner"] })));
+
     const { rows } = await sql<{ table_name: string; deleted: string }>`SELECT table_name, deleted FROM purge_expired_credentials()`.execute(db.app.db);
     expect(Object.fromEntries(rows.map((row) => [row.table_name, Number(row.deleted)]))).toEqual({
       owner_sessions: 4,
@@ -74,8 +86,6 @@ describe("purge_expired_credentials", () => {
       pairing_codes: 2,
       customer_recovery_tokens: 1,
     });
-    expect(await counts()).toEqual({ owner_sessions: 2, password_reset_tokens: 2, owner_invites: 2, device_tokens: 2, pairing_codes: 2, customer_recovery_tokens: 1 });
-    const { rows: visible } = await sql<{ n: number }>`SELECT count(*)::int AS n FROM owner_sessions`.execute(db.app.db);
-    expect(visible).toEqual([{ n: 0 }]);
+    expect(await counts()).toEqual({ owner_sessions: 4, password_reset_tokens: 2, owner_invites: 2, device_tokens: 2, pairing_codes: 2, customer_recovery_tokens: 1 });
   });
 });
