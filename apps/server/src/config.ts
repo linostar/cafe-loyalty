@@ -13,9 +13,11 @@ const originSchema = (app: string, example: string) =>
 export const dashboardUrlSchema = originSchema("dashboard", "https://dashboard.example.com");
 export const publicUrlSchema = originSchema("customer pages", "https://card.example.com");
 
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
 /** A 32-byte secret in base64. */
 const secretBytes = (name: string) =>
-  z.string().refine((value) => /^[A-Za-z0-9+/]+={0,2}$/.test(value) && Buffer.from(value, "base64").length >= 32, `Use at least 32 random bytes in base64 (${name}).`);
+  z.string().refine((value) => BASE64.test(value) && Buffer.from(value, "base64").length >= 32, `Use at least 32 random bytes in base64 (${name}).`);
 
 /**
  * A keyring: comma-separated `id:base64key` entries of 32-byte keys, the newest (used for new data) first. Older
@@ -26,7 +28,8 @@ const keyringSchema = z
   .transform((value, context) => {
     const keys = value.split(",").map((entry) => {
       const [id = "", key = ""] = entry.trim().split(":");
-      return { id, key: Buffer.from(key, "base64") };
+      // Strictly base64, like the pepper: Buffer.from would otherwise skip stray characters silently.
+      return { id, key: BASE64.test(key) ? Buffer.from(key, "base64") : Buffer.alloc(0) };
     });
     const valid =
       keys.length > 0 &&

@@ -1,12 +1,13 @@
+import { createHmac } from "node:crypto";
 import { setLookup, useCafe, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
-import { ownerEmailSchema, joinCodeSchema, normalizePhoneInput } from "@cafe-loyalty/shared";
+import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { renderSVG } from "uqr";
 import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
-import { CUSTOMER_CSP, html, page, pickLang, t, type Lang, type MessageKey, type SafeHtml } from "./customer-html.js";
+import { CUSTOMER_CSP, count, html, page, pickLang, t, type Lang, type MessageKey, type SafeHtml } from "./customer-html.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
@@ -30,7 +31,8 @@ async function atLeast(started: number, ms: number): Promise<void> {
   }
 }
 
-const TOKEN_FORMAT = /^[A-Za-z0-9_-]{43}$/;
+/** A 256-bit secret in base64url, as card, recovery and form tokens are. */
+const isToken = (value: string): boolean => linkTokenSchema.safeParse(value).success;
 /** SQLSTATE of an ON DELETE RESTRICT foreign key refusing a delete. */
 const RESTRICT_VIOLATION = "23001";
 
@@ -41,6 +43,8 @@ export interface CustomerPagesOptions {
   /** This server's public address: recovery links point at it. */
   publicUrl: string;
   secrets: CustomerSecrets;
+  /** Overrides for tests: signups per café per hour (default 1,000). */
+  limits?: { signupPerCafe?: number };
 }
 
 /** A customer-facing failure, shown as a page in the visitor's language. */
@@ -67,14 +71,19 @@ const queryLang = (request: FastifyRequest): unknown => (request.query as { lang
 
 const langOf = (request: FastifyRequest): Lang => pickLang(queryLang(request) ?? formOf(request).lang, request.headers["accept-language"]);
 
-/** The current path with the other language, for the language switch. */
-const otherLang = (path: string, lang: Lang): string => `${path}?lang=${lang === "ar" ? "en" : "ar"}`;
+/** The current path with the other language, for the language switch; `saved` keeps a "Saved." notice. */
+const otherLang = (path: string, lang: Lang, saved = false): string => `${path}?lang=${lang === "ar" ? "en" : "ar"}${saved ? "&saved=1" : ""}`;
 
 const sendPage = (reply: FastifyReply, status: number, document: string) =>
   reply.code(status).header("content-type", "text/html; charset=utf-8").send(document);
 
 const errorBlock = (message: string | undefined, id: string): SafeHtml | false =>
   message !== undefined && html`<p class="error" id="${id}" role="alert">${message}</p>`;
+
+/** An error page: the message as its heading, and a language switch back to the same path. */
+function errorPage(lang: Lang, message: string, url: string): string {
+  return page(lang, t(lang, "siteTitle"), html`<h1 role="alert">${message}</h1>`, otherLang(url.split("?", 1)[0] ?? "/", lang));
+}
 
 export function recoveryEmail(to: string, link: string): EmailMessage {
   return {
@@ -113,6 +122,7 @@ async function deleteCard(trx: Transaction<Database>, card: { id: string; cafe_i
       throw error;
     }
     await sql`ROLLBACK TO SAVEPOINT delete_customer`.execute(trx);
+    await sql`RELEASE SAVEPOINT delete_customer`.execute(trx);
   }
 }
 
@@ -128,7 +138,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     signupPerIp: new RateLimiter(60, HOUR * 1000),
     // A backstop on cards created per café, counting valid signups only, so junk from a few addresses cannot
     // shut a café's signup page; the per-address limit is the main one.
-    signupPerCafe: new RateLimiter(1_000, HOUR * 1000),
+    signupPerCafe: new RateLimiter(options.limits?.signupPerCafe ?? 1_000, HOUR * 1000),
     cardChangesPerCard: new RateLimiter(20, HOUR * 1000),
     recoverPerIp: new RateLimiter(5, HOUR * 1000),
     recoverPerEmail: new RateLimiter(3, HOUR * 1000),
@@ -155,7 +165,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   }
 
   async function findCard(secret: string) {
-    if (!TOKEN_FORMAT.test(secret)) {
+    if (!isToken(secret)) {
       return undefined;
     }
     const secretHash = hashToken(secret);
@@ -185,6 +195,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
 ${program === undefined || reward === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
 <form method="post" action="${path}" novalidate>
 <input type="hidden" name="lang" value="${lang}">
+<input type="hidden" name="form" value="${values.form !== undefined && isToken(values.form) ? values.form : newToken()}">
 <label for="phone">${t(lang, "phoneLabel")}</label>
 <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" required value="${values.phone ?? ""}" aria-describedby="phone-hint${errors.phone === undefined ? "" : " phone-error"}"${errors.phone === undefined ? "" : html` aria-invalid="true"`}>
 <p id="phone-hint">${t(lang, "phoneHint")}</p>
@@ -221,7 +232,8 @@ ${errorBlock(errors.privacy, "privacy-error")}
       if (error.status === 429) {
         void reply.header("retry-after", String((Number(error.values.minutes) || 1) * 60));
       }
-      return sendPage(reply, error.status, page(lang, t(lang, error.key, error.values), html`<p role="alert">${t(lang, error.key, error.values)}</p>`, otherLang(request.url.split("?", 1)[0] ?? "/", lang)));
+      const values = error.key === "tooMany" ? { minutes: count(lang, "minutes", Number(error.values.minutes) || 1) } : error.values;
+      return sendPage(reply, error.status, errorPage(lang, t(lang, error.key, values), request.url));
     }
     const status = typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
     if (status >= 500) {
@@ -230,8 +242,15 @@ ${errorBlock(errors.privacy, "privacy-error")}
       request.log.info({ status }, "customer page request rejected");
     }
     const key: MessageKey = status >= 500 ? "failed" : status === 404 ? "notFound" : "badRequest";
-    return sendPage(reply, status, page(lang, t(lang, key), html`<p role="alert">${t(lang, key)}</p>`, otherLang("/", lang)));
+    return sendPage(reply, status, errorPage(lang, t(lang, key), request.url));
   });
+
+  // Bare or truncated paths get a page in the visitor's language rather than the API's JSON 404.
+  for (const bare of ["/join", "/c", "/r"]) {
+    app.get(bare, () => {
+      throw new PageError(404, "notFound");
+    });
+  }
 
   /** The café's signup page, opened from its counter QR (AC 4). */
   app.get("/join/:code", async (request, reply) => {
@@ -273,8 +292,16 @@ ${errorBlock(errors.privacy, "privacy-error")}
     const lookup = phoneLookup(secrets, phone);
     // Encrypted whether or not it is stored, so a known number costs the same.
     const encrypted = encryptPhone(secrets, phone);
-    const webSecret = newToken();
+    // The card's secret comes from the form's one-time value, so sending the same form twice (a double tap, a retry
+    // on a slow network) lands on the one card it created instead of making a second. Keyed with the pepper, so
+    // knowing the form value alone gives no card.
+    const formValue = form.form !== undefined && isToken(form.form) ? form.form : newToken();
+    const webSecret = createHmac("sha256", secrets.phoneLookupPepper).update(`web-secret:${cafe.id}:${formValue}`).digest("base64url");
+    const webSecretHash = hashToken(webSecret);
     await withCafe(db, cafe.id, async (trx) => {
+      if ((await trx.selectFrom("cards").select("id").where("web_secret_hash", "=", webSecretHash).executeTakeFirst()) !== undefined) {
+        return;
+      }
       await setLookup(trx, { secretHash: lookup });
       const inserted = await trx
         .insertInto("customers")
@@ -283,14 +310,21 @@ ${errorBlock(errors.privacy, "privacy-error")}
         .returning("id")
         .executeTakeFirst();
       const customer = inserted ?? (await trx.selectFrom("customers").select("id").where("phone_lookup", "=", lookup).executeTakeFirstOrThrow());
-      const card = { cafe_id: cafe.id, web_secret_hash: hashToken(webSecret), privacy_accepted_at: new Date(), offers_opt_in_at: form.offers === "yes" ? new Date() : null };
+      // Consent times from the database clock, like every other time.
+      const card = { cafe_id: cafe.id, web_secret_hash: webSecretHash, privacy_accepted_at: now(), offers_opt_in_at: form.offers === "yes" ? now() : null };
+      // DO NOTHING on any conflict: this café's linked card for the number, or the same form sent concurrently.
       const linked = await trx
         .insertInto("cards")
         .values({ ...card, customer_id: customer.id })
-        .onConflict((conflict) => conflict.columns(["cafe_id", "customer_id"]).where("customer_id", "is not", null).doNothing())
+        .onConflict((conflict) => conflict.doNothing())
         .returning("id")
         .executeTakeFirst();
-      const created = linked ?? (await trx.insertInto("cards").values({ ...card, customer_id: null }).returning("id").executeTakeFirstOrThrow());
+      const created =
+        linked ?? (await trx.insertInto("cards").values({ ...card, customer_id: null }).onConflict((conflict) => conflict.doNothing()).returning("id").executeTakeFirst());
+      if (created === undefined) {
+        // The same form, sent at the same moment, created the card first.
+        return;
+      }
       await audit(trx, { cafeId: cafe.id, actorType: "system", actorId: null, action: "card.created", entityType: "card", entityId: created.id, changes: { source: "customer" } });
     });
     request.log.info({ cafeId: cafe.id }, "customer card created");
@@ -326,7 +360,7 @@ ${errorBlock(errors.privacy, "privacy-error")}
       t(lang, "cardTitle", { cafe: cafe.name }),
       html`<h1>${t(lang, "cardTitle", { cafe: cafe.name })}</h1>
 ${notice === undefined ? null : html`<p class="notice" role="status">${notice}</p>`}
-<p class="stamps">${program === undefined ? t(lang, "stampsOnly", { stamps: card.stamps }) : t(lang, "stampsProgress", { stamps: card.stamps, required: program.stamps_required })}</p>
+<p class="stamps">${program === undefined ? count(lang, "stamps", card.stamps) : t(lang, "stampsProgress", { stamps: card.stamps, required: count(lang, "stamps", program.stamps_required) })}</p>
 ${reward === undefined || program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
 <img class="qr" src="${qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
 <p>${t(lang, "keepLink")}</p>
@@ -360,7 +394,7 @@ ${errorBlock(errors.delete, "delete-error")}
 <button type="submit" class="danger">${t(lang, "deleteButton")}</button>
 </form>
 </section>`,
-      otherLang(path, lang),
+      otherLang(path, lang, notice !== undefined),
     );
   }
 
@@ -484,14 +518,19 @@ ${errorBlock(error, "email-error")}
     if (!parsed.success) {
       return sendPage(reply, 400, recoverPage(lang, false, t(lang, "emailInvalid")));
     }
-    enforce(limits.recoverPerEmail, parsed.data);
     const log = request.log;
-    options.background.run("card-recovery-email", () => sendRecovery(parsed.data, log));
+    // Over the per-email limit the reply stays the same and nothing is sent, so nobody can lock a victim out of
+    // recovery by asking for their email three times.
+    if (limits.recoverPerEmail.hit(parsed.data) > 0) {
+      log.info("card recovery email skipped: per-email limit reached");
+    } else {
+      options.background.run("card-recovery-email", () => sendRecovery(parsed.data, log));
+    }
     return sendPage(reply, 200, recoverPage(lang, true));
   });
 
   async function liveRecovery(token: string): Promise<boolean> {
-    if (!TOKEN_FORMAT.test(token)) {
+    if (!isToken(token)) {
       return false;
     }
     const tokenHash = hashToken(token);
@@ -535,7 +574,7 @@ ${errorBlock(error, "email-error")}
     const lang = langOf(request);
     enforce(limits.restorePerIp, clientKey(request.ip));
     const action = formOf(request).action === "delete" ? "delete" : "restore";
-    if (!TOKEN_FORMAT.test(token)) {
+    if (!isToken(token)) {
       throw new PageError(410, "linkExpired");
     }
     const tokenHash = hashToken(token);
@@ -554,6 +593,10 @@ ${errorBlock(error, "email-error")}
         }
         await setLookup(trx, { secretHash: used.email_lookup });
         const cards = await trx.selectFrom("cards").select(["id", "cafe_id", "customer_id"]).where("email_lookup", "=", used.email_lookup).execute();
+        if (cards.length === 0) {
+          // The email was removed or its cards deleted since the link was sent; rolling back keeps nothing used.
+          throw new PageError(410, "linkExpired");
+        }
         const results: { cafeName: string; secret: string; cafeId: string }[] = [];
         for (const card of cards) {
           // The café ids come from the customer's own cards, reached through the link they just proved.
@@ -580,6 +623,19 @@ ${errorBlock(error, "email-error")}
     if (action === "delete") {
       return sendPage(reply, 200, page(lang, t(lang, "deletedTitle"), html`<h1>${t(lang, "deletedTitle")}</h1><p role="status">${t(lang, "deletedText")}</p>`, otherLang("/recover", lang)));
     }
+    const [only] = restored.results;
+    if (restored.results.length === 1 && only !== undefined) {
+      // One card: straight to it, so the new link is what the browser keeps.
+      return reply.code(303).header("location", `/c/${only.secret}?lang=${lang}`).send();
+    }
+    // This page is the only place the new links appear and cannot be loaded again, so it has no language switch.
+    // Two cards at one café (a phone-linked and an unlinked one) get numbered names.
+    const seen = new Map<string, number>();
+    const labelled = restored.results.map((result) => {
+      const index = (seen.get(result.cafeName) ?? 0) + 1;
+      seen.set(result.cafeName, index);
+      return { ...result, label: index === 1 ? result.cafeName : `${result.cafeName} (${String(index)})` };
+    });
     return sendPage(
       reply,
       200,
@@ -588,8 +644,8 @@ ${errorBlock(error, "email-error")}
         t(lang, "restoredTitle"),
         html`<h1>${t(lang, "restoredTitle")}</h1>
 <p>${t(lang, "restoredText")}</p>
-<ul>${restored.results.map((result) => html`<li><a href="/c/${result.secret}?lang=${lang}">${result.cafeName}</a></li>`)}</ul>`,
-        otherLang("/recover", lang),
+<ul>${labelled.map((result) => html`<li><a href="/c/${result.secret}?lang=${lang}"><bdi>${result.label}</bdi></a></li>`)}</ul>`,
+        null,
       ),
     );
   });

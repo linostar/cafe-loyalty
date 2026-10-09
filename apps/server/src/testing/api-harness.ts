@@ -156,7 +156,7 @@ export function useApiHarness() {
       return admin;
     },
 
-    harness: async (): Promise<Harness> => {
+    harness: async (overrides: { customerLimits?: { signupPerCafe?: number } } = {}): Promise<Harness> => {
       const logs: string[] = [];
       const routes: RegisteredRoute[] = [];
       const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
@@ -168,7 +168,14 @@ export function useApiHarness() {
       const mailer = new FakeMailer();
       const background = new BackgroundTasks(app.log);
       await app.register(apiRoutes, { prefix: "/api", db: context.testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL, counterUrl: COUNTER_URL, publicUrl: PUBLIC_URL });
-      await app.register(customerPages, { db: context.testDb.app.db, mailer, background, publicUrl: PUBLIC_URL, secrets: TEST_SECRETS });
+      await app.register(customerPages, {
+        db: context.testDb.app.db,
+        mailer,
+        background,
+        publicUrl: PUBLIC_URL,
+        secrets: TEST_SECRETS,
+        ...(overrides.customerLimits === undefined ? {} : { limits: overrides.customerLimits }),
+      });
       await app.ready();
       const created = { app, mailer, background, logs, routes };
       open.push(created);

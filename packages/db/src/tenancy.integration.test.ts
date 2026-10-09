@@ -34,13 +34,10 @@ const deviceIdOf = (cafeId: string): string => {
 };
 const PUBLIC_KEY = JSON.stringify({ kty: "EC", crv: "P-256", x: "A".repeat(43), y: "B".repeat(43) });
 
-/**
- * Inserts one row of each tenant table for a café, in this order. Every table in schema app needs an entry
- * (checked below).
- */
 /** Tables without a café of their own (TENANT_KEY null), tested in customers.integration.test.ts. */
 type GlobalTable = "customers" | "customer_recovery_tokens";
 
+/** Inserts one row of each café table for a café, in this order. Every café table needs an entry (checked below). */
 const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
   loyalty_programs: (trx, cafeId) =>
     trx
@@ -197,7 +194,6 @@ describe("roles", () => {
 });
 
 describe.each(CAFE_TABLES)("isolation of $table", ({ table, key }) => {
-
   it("shows café A only its own rows", async () => {
     const counts = await withCafe(testDb.app.db, cafeA, async (trx) => {
       const own = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)} WHERE ${sql.ref(key)} = ${cafeA}`.execute(trx);

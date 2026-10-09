@@ -92,8 +92,8 @@ const MESSAGES = {
     phoneInvalid: "Enter a mobile number, such as 70 123 456 or +961 70 123 456.",
     privacyRequired: "Tick the box to accept the privacy notice.",
     cardTitle: "Your card at {cafe}",
-    stampsProgress: "{stamps} of {required} stamps",
-    stampsOnly: "{stamps} stamps",
+    siteTitle: "Loyalty card",
+    stampsProgress: "{stamps} of {required}",
     qrAlt: "Your card's QR code. Show it to the barista.",
     keepLink: "This page is your card. Bookmark it or add it to your home screen, and do not share its link.",
     emailTitle: "Recovery email",
@@ -128,7 +128,7 @@ const MESSAGES = {
     linkExpired: "This link has expired, was already used, or was replaced by a newer one. Ask for a new link.",
     cardGone: "This card link no longer works. If you restored your card on another phone, use the new link there.",
     joinGone: "This signup code is no longer valid. Ask the café for its current code.",
-    tooMany: "Too many attempts. Wait {minutes} minutes and try again.",
+    tooMany: "Too many attempts. Wait {minutes} and try again.",
     failed: "Something went wrong on our side. Try again in a moment.",
     badRequest: "This form could not be read. Go back, check it and send it again.",
     notFound: "No such page. Check the link, or scan the café's code again.",
@@ -148,8 +148,8 @@ const MESSAGES = {
     phoneInvalid: "أدخل رقم هاتف محمول، مثل 70 123 456 أو ‎+961 70 123 456.",
     privacyRequired: "ضع علامة في المربع للموافقة على إشعار الخصوصية.",
     cardTitle: "بطاقتك في {cafe}",
-    stampsProgress: "{stamps} من {required} أختام",
-    stampsOnly: "{stamps} أختام",
+    siteTitle: "بطاقة الولاء",
+    stampsProgress: "{stamps} من {required}",
     qrAlt: "رمز QR الخاص ببطاقتك. أظهره للباريستا.",
     keepLink: "هذه الصفحة هي بطاقتك. احفظها في المفضلة أو أضفها إلى الشاشة الرئيسية، ولا تشارك رابطها.",
     emailTitle: "بريد الاستعادة",
@@ -184,7 +184,7 @@ const MESSAGES = {
     linkExpired: "انتهت صلاحية هذا الرابط أو استُخدم أو حلّ محله رابط أحدث. اطلب رابطاً جديداً.",
     cardGone: "رابط هذه البطاقة لم يعد يعمل. إذا استعدت بطاقتك على هاتف آخر، فاستخدم الرابط الجديد هناك.",
     joinGone: "رمز التسجيل هذا لم يعد صالحاً. اطلب من المقهى رمزه الحالي.",
-    tooMany: "محاولات كثيرة. انتظر {minutes} دقائق وحاول مجدداً.",
+    tooMany: "محاولات كثيرة. انتظر {minutes} وحاول مجدداً.",
     failed: "حدث خطأ لدينا. حاول بعد قليل.",
     badRequest: "تعذّرت قراءة هذا النموذج. ارجع وتحقق منه وأرسله مجدداً.",
     notFound: "لا توجد صفحة كهذه. تحقق من الرابط، أو امسح رمز المقهى مجدداً.",
@@ -193,13 +193,40 @@ const MESSAGES = {
 
 export type MessageKey = keyof (typeof MESSAGES)["en"];
 
-/** A message in `lang`, with `{name}` placeholders filled from `values` (as text, escaped when rendered). */
+/**
+ * A message in `lang`, with `{name}` placeholders filled from `values` (as text, escaped when rendered). Each value
+ * is wrapped in Unicode isolates (FSI ... PDI), so an English café name inside Arabic text, or the reverse, keeps
+ * the sentence's punctuation in place.
+ */
 export function t(lang: Lang, key: MessageKey, values: Readonly<Record<string, string | number>> = {}): string {
-  return MESSAGES[lang][key].replace(/\{(\w+)\}/g, (placeholder, name: string) => (name in values ? String(values[name]) : placeholder));
+  return MESSAGES[lang][key].replace(/\{(\w+)\}/g, (placeholder, name: string) => (name in values ? `⁨${String(values[name])}⁩` : placeholder));
 }
 
-/** A whole customer page: language and direction, no referrer, noindex, the one stylesheet, a language switch. */
-export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: string): string {
+/** Counted nouns in every plural form each language uses (Arabic has six). */
+const COUNTED = {
+  stamps: {
+    en: { one: "{n} stamp", other: "{n} stamps" },
+    ar: { zero: "{n} ختم", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختمًا", other: "{n} ختم" },
+  },
+  minutes: {
+    en: { one: "{n} minute", other: "{n} minutes" },
+    ar: { zero: "{n} دقيقة", one: "دقيقة واحدة", two: "دقيقتين", few: "{n} دقائق", many: "{n} دقيقة", other: "{n} دقيقة" },
+  },
+} as const satisfies Record<string, Record<Lang, Partial<Record<Intl.LDMLPluralRule, string>> & { other: string }>>;
+
+const pluralRules: Record<Lang, Intl.PluralRules> = { ar: new Intl.PluralRules("ar"), en: new Intl.PluralRules("en") };
+
+/** `n` of a counted noun in the language's plural form: "1 stamp", "9 stamps", "ختمان", "3 أختام". */
+export function count(lang: Lang, noun: keyof typeof COUNTED, n: number): string {
+  const forms: Partial<Record<Intl.LDMLPluralRule, string>> & { other: string } = COUNTED[noun][lang];
+  return (forms[pluralRules[lang].select(n)] ?? forms.other).replace("{n}", String(n));
+}
+
+/**
+ * A whole customer page: language and direction, no referrer, noindex, the one stylesheet, and a language switch
+ * unless `otherLangHref` is null (a page that cannot be loaded again, such as freshly restored card links).
+ */
+export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: string | null): string {
   return `<!doctype html>${html`<html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}">
 <head>
 <meta charset="utf-8">
@@ -211,7 +238,7 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 </head>
 <body>
 <main>
-<p class="lang"><a href="${otherLangHref}" lang="${lang === "ar" ? "en" : "ar"}">${t(lang, "other")}</a></p>
+${otherLangHref === null ? null : html`<p class="lang"><a href="${otherLangHref}" lang="${lang === "ar" ? "en" : "ar"}">${t(lang, "other")}</a></p>`}
 ${body}
 </main>
 </body>

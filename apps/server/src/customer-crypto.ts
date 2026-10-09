@@ -67,8 +67,10 @@ export function verifyCardQr(secrets: CustomerSecrets, token: string): Omit<Card
   if (parsed === null || entry === undefined) {
     return null;
   }
-  const expected = qrMac(entry.key, parsed);
-  const given = Buffer.from(parsed.mac, "base64url");
+  // Compared as canonical text, not decoded bytes: base64url decoding ignores the last character's spare bits, so
+  // several spellings of one mac would otherwise all verify.
+  const expected = Buffer.from(qrMac(entry.key, parsed).toString("base64url"));
+  const given = Buffer.from(parsed.mac);
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
     return null;
   }

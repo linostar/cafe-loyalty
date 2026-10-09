@@ -57,7 +57,7 @@ describe("signup page", () => {
     expect(arabic.body).not.toContain("<script");
     const english = await app.inject({ method: "GET", url: `/join/${code}?lang=en`, headers: { "accept-language": "ar" } });
     expect(english.body).toContain('<html lang="en" dir="ltr">');
-    expect(english.body).toContain("Get your loyalty card at Café Test");
+    expect(english.body).toContain("Get your loyalty card at \u2068Café Test\u2069");
     expect(english.body).toContain("I have read the privacy notice");
   });
 
@@ -131,7 +131,7 @@ describe("signup", () => {
     expect(noConsent.body).toContain("Tick the box to accept the privacy notice.");
   });
 
-  it("is rate-limited per address and per café code", async () => {
+  it("is rate-limited per address", async () => {
     const { app, code } = await cafeWithJoinCode();
     for (let attempt = 1; attempt <= 60; attempt += 1) {
       expect((await join(app, code, "bad", { lang: "en" })).statusCode).toBe(400);
@@ -143,6 +143,33 @@ describe("signup", () => {
     // Other addresses are not blocked by this one.
     const other = await app.inject({ method: "POST", url: `/join/${code}`, remoteAddress: "198.51.100.77", ...formBody({ phone: "bad", privacy: "yes" }) });
     expect(other.statusCode).toBe(400);
+  });
+
+  it("caps the cards a café can hand out per hour, from any address", async () => {
+    const h = await harness({ customerLimits: { signupPerCafe: 2 } });
+    const owner = await signUp(h.app);
+    const join = await h.app.inject({ method: "GET", url: "/api/cafe/join", headers: withCookie(owner.session) });
+    const code = /\/join\/([0-9a-f]{32})$/.exec(join.json<{ joinUrl: string }>().joinUrl)?.[1] ?? "missing";
+    const signup = (address: string) =>
+      h.app.inject({ method: "POST", url: `/join/${code}`, remoteAddress: address, ...formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" }) });
+    expect((await signup("198.51.100.1")).statusCode).toBe(303);
+    expect((await signup("198.51.100.2")).statusCode).toBe(303);
+    const blocked = await signup("198.51.100.3");
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.body).toContain("Too many attempts. Wait \u206860 minutes\u2069 and try again.");
+  });
+
+  it("lands a form sent twice on the one card it created", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const form = /name="form" value="([A-Za-z0-9_-]{43})"/.exec((await app.inject({ method: "GET", url: `/join/${code}` })).body)?.[1] ?? "missing";
+    const phone = uniquePhone();
+    const first = await join(app, code, phone, { form });
+    const second = await join(app, code, phone, { form });
+    expect(second.headers.location).toBe(first.headers.location);
+    const card = await cardRow(secretOf(first));
+    expect(card?.customer_id).not.toBeNull();
+    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.cards WHERE customer_id = $1", [card?.customer_id]);
+    expect(rows[0]?.n).toBe(1);
   });
 
   it("does not let invalid submissions use up a café's signups", async () => {
@@ -175,7 +202,7 @@ describe("web card", () => {
     const secret = secretOf(await join(app, code, "70 123 456"));
     const card = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
     expect(card.statusCode).toBe(200);
-    expect(card.body).toContain("Your card at Café Test");
+    expect(card.body).toContain("Your card at \u2068Café Test\u2069");
     expect(card.body).toContain("0 stamps");
     // The apostrophe is escaped in the attribute.
     expect(card.body).toMatch(/<img class="qr" src="data:image\/svg\+xml;charset=utf-8,[^"]+" alt="Your card&#39;s QR code/);
@@ -224,6 +251,25 @@ describe("web card", () => {
     expect(await auditActions(first.owner.cafeId)).toContain("card.deleted");
   });
 
+  it("keeps the saved notice when switching language", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const secret = secretOf(await join(app, code, uniquePhone()));
+    const saved = await app.inject({ method: "GET", url: `/c/${secret}?lang=en&saved=1` });
+    expect(saved.body).toContain(`href="/c/${secret}?lang=ar&amp;saved=1"`);
+  });
+
+  it("answers a trailing slash and a bare path with pages, not the API's JSON", async () => {
+    const { app } = await harness();
+    const recover = await app.inject({ method: "GET", url: "/recover/?lang=en" });
+    expect(recover.statusCode).toBe(200);
+    for (const path of ["/join/?lang=en", "/c?lang=en", "/r/?lang=en"]) {
+      const response = await app.inject({ method: "GET", url: path });
+      expect(response.statusCode).toBe(404);
+      expect(response.headers["content-type"]).toContain("text/html");
+      expect(response.body).toContain('<h1 role="alert">No such page.');
+    }
+  });
+
   it("answers an unknown link with a not-found page", async () => {
     const { app } = await harness();
     for (const secret of ["A".repeat(43), "short"]) {
@@ -269,7 +315,7 @@ describe("recovery", () => {
     expect(first.mailer.sent[0]?.to).toBe(email);
   });
 
-  it("restores every card with that email on a new epoch, once, and the old links and QR codes stop working (AC 8)", async () => {
+  it("restores every card with that email on a new epoch, once, and the old links stop working (AC 8)", async () => {
     const { first, secrets, email } = await withEmailCards();
     await requestLink(first, email);
     const token = tokenOf(first);
@@ -280,6 +326,8 @@ describe("recovery", () => {
     }
     const restored = await first.app.inject({ method: "POST", url: `/r/${token}`, ...formBody({ action: "restore", lang: "en" }) });
     expect(restored.statusCode).toBe(200);
+    // The only place the new links appear, and it cannot be loaded again: no language switch leading away from it.
+    expect(restored.body).not.toContain('class="lang"');
     const links = [...restored.body.matchAll(/href="\/c\/([A-Za-z0-9_-]{43})\?lang=en"/g)].map((match) => match[1] ?? "");
     expect(links).toHaveLength(2);
     for (const secret of secrets) {
@@ -300,6 +348,42 @@ describe("recovery", () => {
       expect(await cardRow(secret)).toBeUndefined();
     }
     expect((await context.admin.query("SELECT 1 FROM app.customers WHERE id = $1", [customerId])).rowCount).toBe(0);
+  });
+
+  it("goes straight to the card when the email has only one", async () => {
+    const h = await cafeWithJoinCode();
+    const secret = secretOf(await join(h.app, h.code, uniquePhone()));
+    const email = `sami-${randomUUID()}@example.com`;
+    await h.app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email }) });
+    await requestLink(h, email);
+    const restored = await h.app.inject({ method: "POST", url: `/r/${tokenOf(h)}`, ...formBody({ action: "restore", lang: "en" }) });
+    expect(restored.statusCode).toBe(303);
+    const newSecret = secretOf(restored);
+    expect(newSecret).not.toBe(secret);
+    expect((await h.app.inject({ method: "GET", url: `/c/${newSecret}` })).statusCode).toBe(200);
+  });
+
+  it("treats a link whose cards are gone as expired, without using it up", async () => {
+    const { first, secrets, email } = await withEmailCards();
+    await requestLink(first, email);
+    for (const secret of secrets) {
+      await first.app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "" }) });
+    }
+    const response = await first.app.inject({ method: "POST", url: `/r/${tokenOf(first)}`, ...formBody({ action: "restore", lang: "en" }) });
+    expect(response.statusCode).toBe(410);
+    expect(response.body).toContain("This link has expired");
+  });
+
+  it("answers the same way past the per-email limit, sending nothing more", async () => {
+    const { first, email } = await withEmailCards();
+    const replies = [];
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      replies.push(await first.app.inject({ method: "POST", url: "/recover", remoteAddress: `198.51.100.${String(60 + attempt)}`, ...formBody({ email, lang: "en" }) }));
+    }
+    await first.background.drain();
+    expect(replies.map((reply) => reply.statusCode)).toEqual([200, 200, 200, 200]);
+    expect(new Set(replies.map((reply) => reply.body)).size).toBe(1);
+    expect(first.mailer.sent).toHaveLength(3);
   });
 
   it("keeps one live link per email even when requests race", async () => {

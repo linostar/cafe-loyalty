@@ -72,6 +72,8 @@ export function buildApp(options: AppOptions): FastifyInstance {
     },
     // Trusts the nearest `trustProxyHops` proxies (what a numeric trustProxy does at runtime; its types take only this form).
     trustProxy: (_address: string, hop: number) => hop < (options.trustProxyHops ?? 0),
+    // /recover/ and /c/<secret>/ reach the same pages as without the slash.
+    ignoreTrailingSlash: true,
   });
 
   // JSON only: text/plain is a CORS "simple" type, so a cross-site form could send it without a preflight.

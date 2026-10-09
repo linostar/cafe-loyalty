@@ -48,6 +48,14 @@ describe("card QR codes", () => {
     expect(verifyCardQr(s, older)).toEqual(card);
   });
 
+  it("accept exactly one spelling of the signature", () => {
+    const s = secrets();
+    const token = signCardQr(s, card);
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const accepted = Array.from(alphabet).filter((last) => verifyCardQr(s, `${token.slice(0, -1)}${last}`) !== null);
+    expect(accepted).toEqual([token.slice(-1)]);
+  });
+
   it("refuse any change to the card, café, epoch, key or signature", () => {
     const s = secrets();
     const token = signCardQr(s, card);
@@ -56,7 +64,8 @@ describe("card QR codes", () => {
       token.replace(card.cafeId, "1b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d"),
       token.replace(".2.q2.", ".3.q2."),
       token.replace(".q2.", ".q1."),
-      `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`,
+      // A middle character of the mac.
+      `${token.slice(0, -20)}${token.at(-20) === "A" ? "B" : "A"}${token.slice(-19)}`,
       signCardQr(secrets(), card),
     ]) {
       expect(verifyCardQr(s, forged)).toBeNull();

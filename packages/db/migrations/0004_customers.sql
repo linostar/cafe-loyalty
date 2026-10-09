@@ -24,6 +24,8 @@ ALTER TABLE cafes
   ADD COLUMN join_code_hash bytea GENERATED ALWAYS AS (pg_catalog.sha256(pg_catalog.decode(join_code, 'escape'))) STORED;
 
 ALTER TABLE cafes ADD CONSTRAINT cafes_join_code_key UNIQUE (join_code);
+-- Signup finds the café by this hash.
+CREATE UNIQUE INDEX cafes_join_code_hash_key ON cafes (join_code_hash);
 
 CREATE POLICY cafe_by_join_code ON cafes FOR SELECT TO cl_app
   USING (join_code_hash = current_secret_hash());

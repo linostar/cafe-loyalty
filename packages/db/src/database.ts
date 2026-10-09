@@ -77,9 +77,11 @@ export type LookupKey = { ownerEmail: string } | { secretHash: Buffer } | { devi
 const SECRET_HASH_BYTES = 32;
 
 /**
- * Runs `work` in one read-only transaction with no café set, in which row-level security shows only the rows
- * matching `key`: the owner with that email, the row with that token hash, or the device key with that id. It never shows
- * other rows and cannot write; follow up with withCafe on the café id it returns.
+ * Runs `work` in one transaction with no café set, in which row-level security shows only the rows matching `key`:
+ * the owner with that email, the row with that hash, the device key or the customer with that id. Read-only by
+ * default; "read write" only where a policy keyed on that same value allows writes (customer recovery tokens) or
+ * where the work then switches to the cafés of rows it found (useCafe, customer recovery). Otherwise follow up with
+ * withCafe on the café id it returns.
  */
 export async function withLookup<T>(
   db: Kysely<Database>,

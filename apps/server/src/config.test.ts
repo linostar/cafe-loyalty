@@ -1,9 +1,9 @@
 import { EnvError } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
+import { loadServerConfig } from "./config.js";
 
 const KEY_A = Buffer.alloc(32, 1).toString("base64");
 const KEY_B = Buffer.alloc(32, 2).toString("base64");
-import { loadServerConfig } from "./config.js";
 
 const valid = {
   NODE_ENV: "test",
@@ -50,6 +50,7 @@ describe("loadServerConfig", () => {
       { CARD_QR_KEYS: `Q1:${KEY_A}` },
       { CARD_QR_KEYS: `q1:${KEY_A},q1:${KEY_B}` },
       { CARD_QR_KEYS: "" },
+      { CARD_QR_KEYS: `q1:${KEY_A}!` },
     ]) {
       try {
         loadServerConfig({ ...valid, ...bad });
