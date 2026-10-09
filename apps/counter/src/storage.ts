@@ -5,6 +5,8 @@
  * queue is empty (AC 29), but every other store survives an update.
  */
 
+import type { DeviceCatalog } from "@cafe-loyalty/shared";
+
 const DB_NAME = "cafe-loyalty-counter";
 const DB_VERSION = 1;
 
@@ -62,7 +64,7 @@ export interface Lockout {
   lockedUntil: number | null;
 }
 
-interface MetaValues {
+export interface MetaValues {
   device: DeviceRecord;
   token: StoredToken;
   staff: StaffEntry[];
@@ -72,6 +74,14 @@ interface MetaValues {
   barista: { staffId: string };
   /** The issuedAt (ms) of the last renewal sent, shared by every tab: the server refuses one that is not later. */
   lastIssuedAt: number;
+  /** The order types on sale and the reward, for recording visits offline. */
+  catalog: DeviceCatalog;
+  /**
+   * A redemption sent without a confirmed answer: kept until it gets one, so trying again (even after a reload or an
+   * update) reuses its event id and can never give the reward twice (AC 31).
+   */
+  /** A reward sent without a confirmed answer; startedAt (ISO) tells the barista which customer it was for. */
+  pendingRedemption: { eventId: string; cardQr: string; startedAt: string };
 }
 
 type MetaKey = keyof MetaValues;
@@ -219,6 +229,7 @@ export async function storePairing(device: DeviceRecord, token: StoredToken, opt
     if (options.forgetStaff) {
       await promised(meta.delete("staff"));
       await promised(meta.delete("barista"));
+      await promised(meta.delete("catalog"));
     }
     if (options.forgetQueue) {
       await promised(transaction.objectStore(QUEUE).clear());
@@ -255,6 +266,7 @@ export function storeUnpaired(keyId: string, reason: "revoked" | "pairing_requir
     if (reason === "revoked") {
       await promised(meta.delete("staff"));
       await promised(meta.delete("barista"));
+      await promised(meta.delete("catalog"));
     }
     return true;
   });
@@ -276,6 +288,19 @@ export function storeStaff(keyId: string, staff: StaffEntry[]): Promise<boolean>
     if (barista !== undefined && !staff.some((member) => member.id === barista.staffId)) {
       await promised(meta.delete("barista"));
     }
+    return true;
+  });
+}
+
+/** Stores the catalog the server sent for the device of key `keyId`, unless the phone was paired again meanwhile. */
+export function storeCatalog(keyId: string, catalog: DeviceCatalog): Promise<boolean> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const device = await promised(meta.get("device") as IDBRequest<DeviceRecord | undefined>);
+    if (device?.paired !== true || device.keyId !== keyId) {
+      return false;
+    }
+    await promised(meta.put(catalog, "catalog"));
     return true;
   });
 }

@@ -1,6 +1,6 @@
-import { reviewQueueSchema, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
+import { reviewDecisionSchema, reviewQueueSchema, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
 import { useEffect, useRef, useState } from "react";
-import { apiRequest, isStale, noContent } from "./api.js";
+import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, FormError, Notice, useSubmit } from "./forms.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -12,7 +12,24 @@ const TYPE_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit
 const REASONS: Readonly<Record<SyncHoldReason, string>> = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
+  late_sync: "that reached the server more than two days later",
 };
+
+/** Why an accepted visit still added no stamps, by its result code. */
+const NO_STAMPS: Readonly<Record<string, string>> = {
+  STAMP_COOLDOWN: "the card got stamps less than 30 minutes before it",
+  DAILY_STAMP_CAP: "that phone had already added its most stamps for that day",
+  CARD_GONE: "the customer deleted the card",
+};
+
+/** The confirmation after a decision; an accepted visit that added no stamps says why (`outcome` is its result code). */
+function decided(decision: "accept" | "discard", item: ReviewItem, outcome: string | null): string {
+  const done = `${decision === "accept" ? "Accepted" : "Discarded"}: ${describe(item)}.`;
+  if (outcome === null || outcome === "OK") {
+    return done;
+  }
+  return `${done} It counts as a visit, but the card got no stamps: ${NO_STAMPS[outcome] ?? `the server answered ${outcome}`}.`;
+}
 
 /** What an item is, for its buttons and for the confirmation after a decision. */
 function describe(item: ReviewItem): string {
@@ -81,8 +98,8 @@ export function ReviewPage() {
         Review
       </h2>
       <p>
-        When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting. Accept what you trust and discard the
-        rest.
+        When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two
+        days after they happened. Accept what you trust and discard the rest.
       </p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />
@@ -97,12 +114,12 @@ export function ReviewPage() {
               pending={pending}
               onDecide={(decision) => {
                 setNotice(null);
-                void submit(() => apiRequest("POST", `/api/review-queue/${item.id}/${decision}`, noContent)).then((result) => {
+                void submit(() => apiRequest("POST", `/api/review-queue/${item.id}/${decision}`, reviewDecisionSchema)).then((result) => {
                   if (result.ok) {
                     // Taken off the list in place, so the owner keeps every page already loaded.
                     setItems(shown.filter((entry) => entry.id !== item.id));
                     setNextCursor(cursor);
-                    setNotice(`${decision === "accept" ? "Accepted" : "Discarded"}: ${describe(item)}.`);
+                    setNotice(decided(decision, item, result.value.outcome));
                   } else if (isStale(result.error)) {
                     startOver();
                   }

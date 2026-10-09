@@ -1,11 +1,13 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { withCafe, type Database } from "@cafe-loyalty/db";
 import {
   ApiError,
+  SYNC_RESULT_CODES,
   parseSyncEvent,
   syncEventSigningPayload,
   syncRequestSchema,
   syncResult,
+  type ReviewDecision,
   type ReviewQueue,
   type SyncHoldReason,
   type SyncResult,
@@ -15,10 +17,12 @@ import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { deviceOf, ownerOf, type DeviceContext } from "./access.js";
+import type { CustomerSecrets } from "./customer-crypto.js";
 import { audit, now } from "./db-helpers.js";
 import { importDeviceKey, verifyDeviceSignature } from "./device-routes.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { RateLimiter } from "./rate-limit.js";
+import { applyVisit, insertVisit, planVisit } from "./stamping.js";
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -28,6 +32,12 @@ export const SYNC_FUTURE_SKEW_MS = 5 * MINUTE_MS;
 export const SYNC_FUTURE_WAIT_MS = 24 * 60 * MINUTE_MS;
 /** How old an event may be when it arrives: a week offline, then time to pair again, with room to spare (AC 25). */
 export const SYNC_MAX_EVENT_AGE_MS = 30 * DAY_MS;
+/**
+ * A visit that arrives this long after it happened is held for the owner (late_sync): its time is the device's to set
+ * and decides the daily cap and the cooldown, so a misused device could otherwise backdate visits for more stamps.
+ * Two days covers a weekend offline; a phone offline longer needs one approval.
+ */
+export const SYNC_LATE_VISIT_MS = 2 * DAY_MS;
 /** Bytes one sync request may carry: a full batch of the largest version 1 events is about 0.5 MB. */
 export const SYNC_BODY_LIMIT_BYTES = 1024 * 1024;
 /** Most held events one page of the review queue shows (AC 40). */
@@ -35,6 +45,8 @@ export const REVIEW_PAGE_SIZE = 50;
 
 export interface SyncRoutesOptions {
   db: Kysely<Database>;
+  /** To check card QR codes and look up phone numbers of visits. */
+  secrets: CustomerSecrets;
 }
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
@@ -64,6 +76,14 @@ const reviewQuery = z.object({ cursor: cursorSchema.optional() });
 
 const encodeCursor = (receivedAt: string, id: string): string => Buffer.from(JSON.stringify([receivedAt, id])).toString("base64url");
 
+/** The stored code of a refused event, which recordEvent wrote; it must be one of the shared rejected codes. */
+function refusalCode(code: string | null): SyncResultCode {
+  if (code === null || !Object.hasOwn(SYNC_RESULT_CODES, code) || SYNC_RESULT_CODES[code as SyncResultCode] !== "rejected") {
+    throw new Error("A rejected sync event has no valid refusal code.");
+  }
+  return code as SyncResultCode;
+}
+
 /** A held event's reason, which sync_events_review_check guarantees. */
 function holdReasonOf(reason: SyncHoldReason | null): SyncHoldReason {
   if (reason === null) {
@@ -81,7 +101,7 @@ const alreadyDecided = () => new ApiError("NOT_FOUND", "This event was already a
  * conflict with other content. Actions from a revoked device, a key it had when revoked or a revoked staff member are
  * held for the owner's review (AC 21); PIN lockout reports are audited whatever their source.
  */
-async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
+async function recordEvent(db: Kysely<Database>, secrets: CustomerSecrets, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
   const parsed = parseSyncEvent(raw);
   if (parsed.status === "unsupported") {
     return syncResult(index, parsed.eventId, "UNSUPPORTED_EVENT");
@@ -100,10 +120,13 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
   } catch {
     return syncResult(index, event.eventId, "INVALID_EVENT");
   }
-  const payloadHash = createHash("sha256").update(signed).digest();
+  // Keyed: the ledger and the visit tables hold everything else of a phone visit's signed bytes, so a plain hash would
+  // let anyone with a copy of the database find the number by trying them all (AC 6).
+  const payloadHash = createHmac("sha256", secrets.phoneLookupPepper).update("sync-event:").update(signed).digest();
   const code = await withCafe(db, device.cafeId, async (trx): Promise<SyncResultCode> => {
-    // Locked first, so a revocation cannot slip in between reading it and recording the event.
-    const deviceRow = await trx.selectFrom("devices").select("revoked_at").where("id", "=", device.deviceId).forShare().executeTakeFirstOrThrow();
+    // Locked first, so a revocation cannot slip in between reading it and recording the event, and so the device's
+    // events are recorded one at a time (its daily stamp count stays exact).
+    const deviceRow = await trx.selectFrom("devices").select("revoked_at").where("id", "=", device.deviceId).forNoKeyUpdate().executeTakeFirstOrThrow();
     const key = await trx
       .selectFrom("device_keys")
       .select(["public_key", "revoked_at"])
@@ -117,11 +140,18 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
     const recorded = async (): Promise<SyncResultCode | undefined> => {
       const existing = await trx
         .selectFrom("sync_events")
-        .select("payload_hash")
+        .select(["payload_hash", "status", "result_code"])
         .where("device_id", "=", device.deviceId)
         .where("event_id", "=", event.eventId)
         .executeTakeFirst();
-      return existing === undefined ? undefined : existing.payload_hash.equals(payloadHash) ? "DUPLICATE" : "IDEMPOTENCY_CONFLICT";
+      if (existing === undefined) {
+        return undefined;
+      }
+      if (!existing.payload_hash.equals(payloadHash)) {
+        return "IDEMPOTENCY_CONFLICT";
+      }
+      // A refused event gets its refusal again (AC 24); anything recorded is a duplicate.
+      return existing.status === "rejected" ? refusalCode(existing.result_code) : "DUPLICATE";
     };
     // Before the clock check: an event recorded long ago is still a duplicate when the device sends it again.
     const earlier = await recorded();
@@ -145,7 +175,11 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
       deviceRow.revoked_at !== null || key.revoked_at !== null ? "device_revoked" : staff.revoked_at !== null ? "staff_revoked" : null;
     // A lockout report changes nothing; it is security information for the owner, so it is audited at once, saying
     // when it came from a removed phone or barista, and never held. Actions are held (AC 21).
-    const holdReason = event.type === "staff.pin_lockout" ? null : revokedBy;
+    const late = event.type === "visit.recorded" && occurredAt < serverNow - SYNC_LATE_VISIT_MS;
+    const holdReason = event.type === "staff.pin_lockout" ? null : (revokedBy ?? (late ? "late_sync" : null));
+    // A visit's card and items are checked before it is recorded; a refusal is kept, held or not.
+    const plan = event.type === "visit.recorded" ? await planVisit(trx, secrets, device.cafeId, event.payload) : undefined;
+    const refusal = plan?.status === "refused" ? plan.code : null;
     const inserted = await trx
       .insertInto("sync_events")
       .values({
@@ -159,8 +193,9 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
         schema_version: event.schemaVersion,
         sequence: event.sequence,
         occurred_at: new Date(occurredAt),
-        status: holdReason === null ? "applied" : "held",
-        hold_reason: holdReason,
+        status: refusal !== null ? "rejected" : holdReason === null ? "applied" : "held",
+        hold_reason: refusal === null ? holdReason : null,
+        result_code: refusal,
       })
       .onConflict((conflict) => conflict.constraint("sync_events_event_key").doNothing())
       .returning("id")
@@ -169,8 +204,30 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
       // A parallel request recorded the same event first.
       return (await recorded()) ?? "TEMPORARILY_UNAVAILABLE";
     }
+    if (refusal !== null) {
+      return refusal;
+    }
+    const visitId =
+      event.type === "visit.recorded" && plan?.status === "ready"
+        ? await insertVisit(
+            trx,
+            {
+              cafeId: device.cafeId,
+              syncEventId: inserted.id,
+              deviceId: device.deviceId,
+              staffId: event.staffId,
+              occurredAt: new Date(occurredAt),
+              totalCents: event.payload.totalCents,
+              items: event.payload.items,
+            },
+            plan,
+          )
+        : undefined;
     if (holdReason !== null) {
       return "HELD_FOR_REVIEW";
+    }
+    if (visitId !== undefined) {
+      return applyVisit(trx, device.cafeId, visitId);
     }
     if (event.type === "staff.pin_lockout") {
       await audit(trx, {
@@ -187,15 +244,21 @@ async function recordEvent(db: Kysely<Database>, device: DeviceContext, raw: unk
         },
       });
     }
-    // Visits are recorded in the ledger only; stamps arrive with plan Step 9.
     return "OK";
   });
   return syncResult(index, event.eventId, code);
 }
 
-async function recordEventSafely(db: Kysely<Database>, device: DeviceContext, raw: unknown, index: number, log: FastifyBaseLogger): Promise<SyncResult> {
+async function recordEventSafely(
+  db: Kysely<Database>,
+  secrets: CustomerSecrets,
+  device: DeviceContext,
+  raw: unknown,
+  index: number,
+  log: FastifyBaseLogger,
+): Promise<SyncResult> {
   try {
-    return await recordEvent(db, device, raw, index);
+    return await recordEvent(db, secrets, device, raw, index);
   } catch (error) {
     // The device keeps the event and sends it again; the rest of the batch goes on.
     log.error({ err: error, cafeId: device.cafeId, deviceId: device.deviceId, eventIndex: index }, "sync event failed");
@@ -221,7 +284,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
       const body = parseInput(syncRequestSchema, request.body);
       const results: SyncResult[] = [];
       for (const [index, raw] of body.events.entries()) {
-        results.push(await recordEventSafely(db, device, raw, index, request.log));
+        results.push(await recordEventSafely(db, options.secrets, device, raw, index, request.log));
       }
       const outcomes: Record<string, number> = {};
       for (const result of results) {
@@ -280,10 +343,10 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
   });
 
   for (const decision of ["accept", "discard"] as const) {
-    app.post(`/review-queue/:id/${decision}`, { config: { access: "owner" } }, async (request, reply) => {
+    app.post(`/review-queue/:id/${decision}`, { config: { access: "owner" } }, async (request): Promise<ReviewDecision> => {
       const owner = ownerOf(request);
       const { id } = parseInput(idParams, request.params);
-      await withCafe(db, owner.cafeId, async (trx) => {
+      const outcome = await withCafe(db, owner.cafeId, async (trx): Promise<SyncResultCode | null> => {
         const held = await trx.selectFrom("sync_events").select(["type", "hold_reason", "status"]).where("id", "=", id).forUpdate().executeTakeFirst();
         if (held?.status !== "held") {
           throw alreadyDecided();
@@ -293,6 +356,17 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
           .set({ status: decision === "accept" ? "applied" : "discarded", reviewed_at: now(), reviewed_by: owner.ownerId })
           .where("id", "=", id)
           .execute();
+        // A held visit is applied now, by its own time, or dropped (AC 21).
+        const visit =
+          held.type === "visit.recorded" ? await trx.selectFrom("visits").select(["id", "device_id"]).where("sync_event_id", "=", id).executeTakeFirst() : undefined;
+        let outcome: SyncResultCode | null = null;
+        if (visit !== undefined && decision === "accept") {
+          // The device's row, as a sync takes it, so its daily stamp count stays exact.
+          await trx.selectFrom("devices").select("id").where("id", "=", visit.device_id).forNoKeyUpdate().executeTakeFirstOrThrow();
+          outcome = await applyVisit(trx, owner.cafeId, visit.id);
+        } else if (visit !== undefined) {
+          await trx.updateTable("visits").set({ outcome: "discarded" }).where("id", "=", visit.id).execute();
+        }
         await audit(trx, {
           cafeId: owner.cafeId,
           actorType: "owner",
@@ -300,11 +374,13 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
           action: decision === "accept" ? "sync_event.accepted" : "sync_event.discarded",
           entityType: "sync_event",
           entityId: id,
-          changes: { type: held.type, holdReason: held.hold_reason },
+          changes: { type: held.type, holdReason: held.hold_reason, ...(outcome === null ? {} : { outcome }) },
         });
+        return outcome;
       });
-      request.log.info({ cafeId: owner.cafeId, decision }, "held event reviewed");
-      return reply.code(204).send();
+      request.log.info({ cafeId: owner.cafeId, decision, outcome }, "held event reviewed");
+      // An accepted visit may still add no stamps (cooldown, daily cap, deleted card): the owner is told which.
+      return { outcome };
     });
   }
 

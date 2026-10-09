@@ -182,17 +182,21 @@ export interface CardsTable {
   customer_id: ColumnType<string | null, string | null | undefined, never>;
   epoch: ColumnType<number, never, number>;
   web_secret_hash: ColumnType<Buffer, Buffer, Buffer>;
-  stamps: ColumnType<number, never, never>;
+  stamps: ColumnType<number, never, number>;
   privacy_accepted_at: ColumnType<Date, Date, never>;
   offers_opt_in_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
   email: ColumnType<string | null, never, string | null>;
   email_lookup: ColumnType<Buffer | null, never, Buffer | null>;
+  /** When the card was first scanned at a counter: only then may it be stamped by phone number. */
+  phone_confirmed_at: ColumnType<Date | null, never, Date>;
+  /** When another card here signed up with the same number: from then on this card is never stamped by number. */
+  phone_disputed_at: ColumnType<Date | null, never, Date>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
 
-export type SyncEventStatus = "applied" | "held" | "discarded";
-export type SyncHoldReason = "device_revoked" | "staff_revoked";
+export type SyncEventStatus = "applied" | "held" | "discarded" | "rejected";
+export type SyncHoldReason = "device_revoked" | "staff_revoked" | "late_sync";
 
 /** The ledger of synced events (AC 24): no payload, no personal data. Only a held event's review is updated. */
 export interface SyncEventsTable {
@@ -212,6 +216,53 @@ export interface SyncEventsTable {
   hold_reason: ColumnType<SyncHoldReason | null, SyncHoldReason | null | undefined, never>;
   reviewed_at: ColumnType<Date | null, never, Date>;
   reviewed_by: ColumnType<string | null, never, string>;
+  /** The refusal code of a rejected event, sent again to a device that resends it. */
+  result_code: ColumnType<string | null, string | null | undefined, never>;
+}
+
+export type VisitOutcome = "held" | "discarded" | "stamped" | "no_stamps" | "cooldown" | "daily_cap" | "card_gone";
+
+/** A synced visit (Step 9). Never deleted; card_id is set null when the card is deleted (AC 9). */
+export interface VisitsTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  sync_event_id: ColumnType<string, string, never>;
+  card_id: ColumnType<string | null, string | null, never>;
+  identified_by: ColumnType<"qr" | "phone", "qr" | "phone", never>;
+  device_id: ColumnType<string, string, never>;
+  staff_id: ColumnType<string, string, never>;
+  occurred_at: ColumnType<Date, Date, never>;
+  total_cents: ColumnType<number, number, never>;
+  stamps_earned: ColumnType<number, number, never>;
+  stamps_added: ColumnType<number, number | undefined, number>;
+  outcome: ColumnType<VisitOutcome, VisitOutcome, VisitOutcome>;
+  created_at: CreatedAt;
+}
+
+/** A visit's lines, priced as the counter saw them (AC 32). Append-only. */
+export interface VisitItemsTable {
+  cafe_id: ColumnType<string, string, never>;
+  visit_id: ColumnType<string, string, never>;
+  line: ColumnType<number, number, never>;
+  order_type_id: ColumnType<string, string, never>;
+  quantity: ColumnType<number, number, never>;
+  unit_price_cents: ColumnType<number, number, never>;
+  unit_cost_cents: ColumnType<number, number, never>;
+  catalog_version: ColumnType<number, number, never>;
+  stamps_each: ColumnType<number, number, never>;
+}
+
+/** A reward given at the counter (AC 31). Append-only; card_id is set null when the card is deleted. */
+export interface RedemptionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  device_id: ColumnType<string, string, never>;
+  event_id: ColumnType<string, string, never>;
+  card_id: ColumnType<string | null, string, never>;
+  staff_id: ColumnType<string, string, never>;
+  stamps_used: ColumnType<number, number, never>;
+  stamps_left: ColumnType<number, number, never>;
+  redeemed_at: CreatedAt;
 }
 
 export interface CustomerRecoveryTokensTable {
@@ -246,6 +297,9 @@ export interface Database {
   cards: CardsTable;
   customer_recovery_tokens: CustomerRecoveryTokensTable;
   sync_events: SyncEventsTable;
+  visits: VisitsTable;
+  visit_items: VisitItemsTable;
+  redemptions: RedemptionsTable;
 }
 
 export type TableName = keyof Database;
@@ -291,6 +345,8 @@ export const TABLE_COLUMNS = {
     "offers_opt_in_at",
     "email",
     "email_lookup",
+    "phone_confirmed_at",
+    "phone_disputed_at",
     "created_at",
     "updated_at",
   ],
@@ -312,7 +368,25 @@ export const TABLE_COLUMNS = {
     "hold_reason",
     "reviewed_at",
     "reviewed_by",
+    "result_code",
   ],
+  visits: [
+    "id",
+    "cafe_id",
+    "sync_event_id",
+    "card_id",
+    "identified_by",
+    "device_id",
+    "staff_id",
+    "occurred_at",
+    "total_cents",
+    "stamps_earned",
+    "stamps_added",
+    "outcome",
+    "created_at",
+  ],
+  visit_items: ["cafe_id", "visit_id", "line", "order_type_id", "quantity", "unit_price_cents", "unit_cost_cents", "catalog_version", "stamps_each"],
+  redemptions: ["id", "cafe_id", "device_id", "event_id", "card_id", "staff_id", "stamps_used", "stamps_left", "redeemed_at"],
 } as const satisfies ColumnLists;
 
 /**
@@ -337,6 +411,9 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   customers: null,
   customer_recovery_tokens: null,
   sync_events: "cafe_id",
+  visits: "cafe_id",
+  visit_items: "cafe_id",
+  redemptions: "cafe_id",
 };
 
 type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };

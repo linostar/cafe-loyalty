@@ -179,6 +179,20 @@ export type TokenRenewalRequest = z.output<typeof tokenRenewalRequestSchema>;
 export const deviceTokenSigningPayload = (request: Pick<TokenRenewalRequest, "deviceId" | "keyId" | "issuedAt">): string =>
   `${DEVICE_TOKEN_SIGNING_PREFIX}${request.deviceId.toLowerCase()}\n${request.keyId.toLowerCase()}\n${request.issuedAt}`;
 
+/** What a counter needs to record visits offline: the order types on sale, priced at a catalog version (AC 32). */
+export const deviceCatalogSchema = z.object({
+  catalogVersion: z.int().min(1),
+  orderTypes: z.array(z.object({ id: z.uuid(), nameAr: z.string(), nameEn: z.string(), priceCents: centsSchema, costCents: centsSchema, stampsEarned: z.int() })),
+  program: loyaltyProgramSchema.nullable(),
+});
+
+/**
+ * A reward redemption, online only (AC 31). `eventId` is made by the counter for each redemption and sent again on a
+ * retry, which then gets the first answer instead of redeeming twice.
+ */
+export const redemptionRequestSchema = z.object({ eventId: id, staffId: id, cardQr: z.string().min(1).max(512) });
+export const redemptionSchema = z.object({ stampsUsed: z.int().min(1), stampsLeft: z.int().min(0), rewardNameAr: z.string(), rewardNameEn: z.string() });
+
 export const deviceInfoSchema = z.object({ deviceId: z.uuid(), deviceName: z.string(), cafe: z.object({ id: z.uuid(), name: z.string() }) });
 
 /** Active staff with what a device needs to check their PINs offline (AC 19). Salts and hashes are base64url. */
@@ -195,3 +209,5 @@ export type Devices = z.output<typeof devicesSchema>;
 export type PairingCode = z.output<typeof pairingCodeSchema>;
 export type DevicePublicKeyJwk = z.output<typeof devicePublicKeySchema>;
 export type PairRequest = z.input<typeof pairRequestSchema>;
+export type DeviceCatalog = z.output<typeof deviceCatalogSchema>;
+export type Redemption = z.output<typeof redemptionSchema>;

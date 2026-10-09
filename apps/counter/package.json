@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@cafe-loyalty/shared": "workspace:*",
+    "jsqr": "^1.4.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "zod": "^4.6.5"
@@ -24,6 +25,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.1.2",
+    "uqr": "^0.1.3",
     "vite": "^8.3.3"
   }
 }

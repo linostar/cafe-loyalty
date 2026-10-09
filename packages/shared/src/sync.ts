@@ -45,7 +45,8 @@ export const visitItemSchema = z.object({
   quantity: z.number().int().min(1).max(50),
   unitPriceCents: centsSchema,
   unitCostCents: centsSchema,
-  catalogVersion: z.number().int().min(1),
+  // Stored as a PostgreSQL integer, like the café's own catalog_version.
+  catalogVersion: z.number().int().min(1).max(2_147_483_647),
 });
 
 export type VisitItem = z.output<typeof visitItemSchema>;
@@ -238,14 +239,30 @@ export type SyncStatus = (typeof SYNC_STATUSES)[number];
 
 /** The status the server sends with each code. Clients act on the status; codes explain it. */
 export const SYNC_RESULT_CODES = {
-  /** Recorded. */
+  /** Recorded (a visit: with its stamps added to the card). */
   OK: "applied",
+  /** A visit recorded without stamps: the card got stamps less than 30 minutes before (AC 30). */
+  STAMP_COOLDOWN: "applied",
+  /** A visit recorded without stamps: this device reached its stamps for the day (AC 30). */
+  DAILY_STAMP_CAP: "applied",
+  /** A visit recorded without stamps: its card was deleted before the owner accepted it. */
+  CARD_GONE: "applied",
   /** Taken into the owner's review queue (revoked device or staff, AC 21); the device no longer holds it. */
   HELD_FOR_REVIEW: "applied",
   /** Already recorded with the same content (AC 24). */
   DUPLICATE: "duplicate",
   /** Same event id seen before with different content (AC 24). */
   IDEMPOTENCY_CONFLICT: "rejected",
+  /** The card is not this café's, does not exist, or its QR is not genuine. */
+  CARD_NOT_FOUND: "rejected",
+  /** The QR is from before the card was restored on another phone (AC 8): the customer must show the new one. */
+  CARD_REPLACED: "rejected",
+  /** Stamping by phone number needs the card scanned once at the counter first (numbers are not verified). */
+  PHONE_NOT_CONFIRMED: "rejected",
+  /** Another card here signed up with the same number, so neither is stamped by number: scan the card instead. */
+  PHONE_DISPUTED: "rejected",
+  /** An item names an order type this café does not have. */
+  UNKNOWN_ORDER_TYPE: "rejected",
   INVALID_EVENT: "rejected",
   SIGNATURE_INVALID: "rejected",
   /** occurredAt outside the accepted clock-skew window (AC 25): more than a day ahead, or too old. */
@@ -325,8 +342,12 @@ export function readSyncResponse(eventCount: number, body: unknown): ClientSyncR
   return results;
 }
 
-/** Why an event was held for the owner's review instead of applied (AC 21). */
-export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked"] as const;
+/**
+ * Why an event was held for the owner's review instead of applied: a revoked device or staff member (AC 21), or a
+ * visit that arrived more than two days after it happened (its time is the device's to set, and decides the daily
+ * cap and the cooldown).
+ */
+export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked", "late_sync"] as const;
 
 export type SyncHoldReason = (typeof SYNC_HOLD_REASONS)[number];
 
@@ -346,5 +367,9 @@ export const reviewItemSchema = z.object({
 /** A page of the review queue, oldest first; `nextCursor` fetches the next page (AC 40). */
 export const reviewQueueSchema = z.object({ items: z.array(reviewItemSchema), nextCursor: z.string().nullable() });
 
+/** The answer to accepting or discarding a held event: an accepted visit's result code (OK, STAMP_COOLDOWN, …), else null. */
+export const reviewDecisionSchema = z.object({ outcome: z.string().min(1).max(64).nullable() });
+
 export type ReviewItem = z.output<typeof reviewItemSchema>;
+export type ReviewDecision = z.output<typeof reviewDecisionSchema>;
 export type ReviewQueue = z.output<typeof reviewQueueSchema>;

@@ -37,6 +37,12 @@ button {
   font: inherit;
 }
 
+/* Unavailable but still focusable, so the keyboard stays where it was (a stepper at its limit, a visit saving). */
+button[aria-disabled="true"] {
+  color: GrayText;
+  cursor: not-allowed;
+}
+
 form > button,
 .actions {
   margin-block-start: 1rem;
@@ -67,6 +73,44 @@ form > button,
 button.danger {
   border-color: #a51d2d;
   color: #a51d2d;
+}
+
+.menu {
+  padding: 0;
+  list-style: none;
+}
+
+.menu > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-block: 0.5rem;
+  border-block-end: 1px solid #d0d0d7;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stepper button {
+  min-width: 3rem;
+}
+
+.count {
+  min-width: 2ch;
+  text-align: center;
+  font-weight: 600;
+}
+
+.camera {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  background: #000000;
 }
 
 .choices {
