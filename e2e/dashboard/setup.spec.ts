@@ -174,7 +174,7 @@ test("pairs a phone with a code and a QR, and removes a phone", async ({ page })
 
   await page.getByRole("button", { name: "Remove Front counter" }).click();
   await page.getByRole("button", { name: "Yes, remove Front counter" }).click();
-  await expect(page.getByRole("status")).toHaveText("Front counter is removed. It stops working the next time it connects.");
+  await expect(page.getByRole("status")).toHaveText("Front counter is removed. It stops working the next time it connects; anything it had not sent waits under Review.");
 });
 
 test("returns to sign-in when the session ends on a page", async ({ page }) => {

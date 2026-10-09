@@ -2,9 +2,12 @@ import { createPublicKey, randomInt, timingSafeEqual, verify, type KeyObject } f
 import { withCafe, withLookup, type Database } from "@cafe-loyalty/db";
 import {
   ApiError,
+  COUNTER_BUILT_AT_HEADER,
+  COUNTER_SUPPORT_DAYS,
   PAIRING_CODE_ALPHABET,
   PAIRING_CODE_LENGTH,
   PAIRING_CODE_LOOKUP_LENGTH,
+  devicePairProofPayload,
   deviceTokenSigningPayload,
   formatPairingCode,
   pairRequestSchema,
@@ -13,7 +16,7 @@ import {
   type DevicePublicKeyJwk,
   type Devices,
 } from "@cafe-loyalty/shared";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { deviceOf, ownerOf } from "./access.js";
@@ -40,9 +43,24 @@ export interface DeviceRoutesOptions {
   db: Kysely<Database>;
   /** Public counter app address; pairing QR codes open its /pair page. */
   counterUrl: string;
+  /** When this release was built; counter builds made more than COUNTER_SUPPORT_DAYS before it are too old (AC 26). */
+  releaseBuiltAt: Date;
 }
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
+const builtAtSchema = z.iso.datetime({ offset: false });
+
+/**
+ * Refuses a new action from a counter build made more than COUNTER_SUPPORT_DAYS before this release, or one that
+ * does not say when it was built (AC 26). Pairing, renewing the token and syncing the queue never call this, so an old
+ * build can always hand over what it recorded; once its queue is empty it updates itself.
+ */
+export function requireSupportedBuild(request: FastifyRequest, releaseBuiltAt: Date): void {
+  const header = builtAtSchema.safeParse(request.headers[COUNTER_BUILT_AT_HEADER]);
+  if (!header.success || Date.parse(header.data) < releaseBuiltAt.getTime() - COUNTER_SUPPORT_DAYS * DAY * 1000) {
+    throw new ApiError("CLIENT_TOO_OLD", "This counter app is out of date. Keep the phone online: it sends its waiting stamps, then updates itself.");
+  }
+}
 
 const invalidCode = () =>
   new ApiError("PAIRING_CODE_INVALID", "This pairing code is wrong, used or expired. Check it, or create a new code on the owner's dashboard.");
@@ -80,6 +98,30 @@ async function issueDeviceToken(trx: Transaction<Database>, cafeId: string, devi
     .returning("expires_at")
     .executeTakeFirstOrThrow();
   return { accessToken, accessTokenExpiresAt: issued.expires_at.toISOString() };
+}
+
+/**
+ * The device a pairing request continues, when `previous` is signed, over this code and the new key, by one of that
+ * device's keys in the café the transaction is set to; its row is locked, so renewals and other pairings of it wait. Undefined otherwise.
+ */
+async function provenDevice(
+  trx: Transaction<Database>,
+  code: string,
+  previous: { deviceId: string; keyId: string; signature: string },
+  publicKey: DevicePublicKeyJwk,
+): Promise<{ deviceId: string; wasRevoked: boolean } | undefined> {
+  const oldKey = await trx
+    .selectFrom("device_keys")
+    .select("public_key")
+    .where("id", "=", previous.keyId)
+    .where("device_id", "=", previous.deviceId)
+    .executeTakeFirst();
+  const verifier = oldKey === undefined ? undefined : importDeviceKey(oldKey.public_key);
+  if (verifier === undefined || !verifyDeviceSignature(verifier, devicePairProofPayload(code, previous, publicKey), previous.signature)) {
+    return undefined;
+  }
+  const device = await trx.selectFrom("devices").select("revoked_at").where("id", "=", previous.deviceId).forUpdate().executeTakeFirstOrThrow();
+  return { deviceId: previous.deviceId, wasRevoked: device.revoked_at !== null };
 }
 
 async function listDevices(trx: Transaction<Database>): Promise<Devices> {
@@ -192,7 +234,11 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     return reply.code(204).send();
   });
 
-  /** Revokes a device: it can no longer sync or renew, and learns DEVICE_REVOKED on its next contact (AC 21). */
+  /**
+   * Revokes a device: it can no longer renew or do anything new, and learns DEVICE_REVOKED on its next contact. Until
+   * its current token expires it may still hand over its queue; those events, and any its keys signed, are held for
+   * the owner's review (AC 21), even after the device is paired again.
+   */
   app.post("/devices/:id/revoke", { config: { access: "owner" } }, async (request) => {
     const owner = ownerOf(request);
     const { id } = parseInput(idParams, request.params);
@@ -203,6 +249,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       }
       if (current.revoked_at === null) {
         await trx.updateTable("devices").set({ revoked_at: now() }).where("id", "=", id).execute();
+        await trx.updateTable("device_keys").set({ revoked_at: now() }).where("device_id", "=", id).where("revoked_at", "is", null).execute();
         await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "device.revoked", entityType: "device", entityId: id });
         request.log.info({ cafeId: owner.cafeId, deviceId: id }, "device revoked");
       }
@@ -210,7 +257,14 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     });
   });
 
-  /** Pairs a device: proves the code, registers the device's public key and issues its first access token (AC 17). */
+  /**
+   * Pairs a device: proves the code, registers the device's public key and issues an access token (AC 17). A device
+   * that proves it holds one of its old keys (`previous`) keeps its id, so its queue still syncs (AC 18); its other
+   * keys are retired and its old tokens dropped. A proof that fails, or names a device of another café, pairs a new
+   * device instead. A phone whose old key belongs to another café is refused (PAIRED_ELSEWHERE) without using the
+   * code, since it may still hold that café's unsent events; it pairs here only without `previous`. Any counter build
+   * may pair, so an old one that must pair again can still hand over its queue (AC 26).
+   */
   app.post("/device/pair", { config: { access: "public" } }, async (request, reply) => {
     const client = clientKey(request.ip);
     reserveFailure(limits.pairFailuresPerIp, client, reply);
@@ -229,6 +283,12 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       request.log.info("pairing refused: unknown code");
       throw invalidCode();
     }
+    const previousKeyId = body.previous?.keyId;
+    // Which café the phone's old key belongs to, whatever the code's café (only the key id is needed to look).
+    const previousKey =
+      previousKeyId === undefined
+        ? undefined
+        : await withLookup(db, { deviceKeyId: previousKeyId }, (trx) => trx.selectFrom("device_keys").select("cafe_id").where("id", "=", previousKeyId).executeTakeFirst());
     const outcome = await withCafe(db, found.cafe_id, async (trx) => {
       // Locked, so parallel guesses are checked and counted one at a time and the fifth wrong one always burns it.
       const code = await trx
@@ -255,20 +315,53 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
         await audit(trx, { cafeId: found.cafe_id, actorType: "system", actorId: null, action: "pairing_code.burned", entityType: "pairing_code", entityId: found.id });
         return { kind: "burned" } as const;
       }
+      if (previousKey !== undefined && previousKey.cafe_id !== found.cafe_id) {
+        return { kind: "elsewhere" } as const;
+      }
       // Deleting the code is what uses it, so it pairs one device only.
       await trx.deleteFrom("pairing_codes").where("id", "=", found.id).execute();
-      const device = await trx.insertInto("devices").values({ cafe_id: found.cafe_id, name: code.device_name }).returning("id").executeTakeFirstOrThrow();
+      const previous = body.previous === undefined ? undefined : await provenDevice(trx, body.code, body.previous, body.publicKey);
+      let deviceId: string;
+      if (previous === undefined) {
+        deviceId = (await trx.insertInto("devices").values({ cafe_id: found.cafe_id, name: code.device_name }).returning("id").executeTakeFirstOrThrow()).id;
+      } else {
+        deviceId = previous.deviceId;
+        await trx
+          .updateTable("devices")
+          .set({ name: code.device_name, revoked_at: null, last_renewed_at: now(), last_seen_at: now() })
+          .where("id", "=", deviceId)
+          .execute();
+        await trx.updateTable("device_keys").set({ retired_at: now() }).where("device_id", "=", deviceId).where("retired_at", "is", null).execute();
+        await trx.deleteFrom("device_tokens").where("device_id", "=", deviceId).execute();
+      }
       const { kty, crv, x, y } = body.publicKey;
       const key = await trx
         .insertInto("device_keys")
-        .values({ cafe_id: found.cafe_id, device_id: device.id, public_key: JSON.stringify({ kty, crv, x, y }) })
+        .values({ cafe_id: found.cafe_id, device_id: deviceId, public_key: JSON.stringify({ kty, crv, x, y }) })
         .returning("id")
         .executeTakeFirstOrThrow();
-      const token = await issueDeviceToken(trx, found.cafe_id, device.id);
+      const token = await issueDeviceToken(trx, found.cafe_id, deviceId);
       const cafe = await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", found.cafe_id).executeTakeFirstOrThrow();
-      await audit(trx, { cafeId: found.cafe_id, actorType: "device", actorId: device.id, action: "device.paired", entityType: "device", entityId: device.id, changes: { pairingCodeId: found.id, approvedBy: code.owner_id } });
-      return { kind: "paired", paired: { deviceId: device.id, keyId: key.id, deviceName: code.device_name, cafe, ...token } } as const;
+      await audit(trx, {
+        cafeId: found.cafe_id,
+        actorType: "device",
+        actorId: deviceId,
+        action: previous === undefined ? "device.paired" : "device.paired_again",
+        entityType: "device",
+        entityId: deviceId,
+        changes: { pairingCodeId: found.id, approvedBy: code.owner_id, ...(previous === undefined ? {} : { wasRevoked: previous.wasRevoked }) },
+      });
+      return { kind: "paired", repaired: previous !== undefined, paired: { deviceId, keyId: key.id, deviceName: code.device_name, cafe, ...token } } as const;
     });
+    if (outcome.kind === "elsewhere") {
+      // The code was right: not a failed pairing from this address.
+      limits.pairFailuresPerIp.refund(client);
+      request.log.info({ cafeId: found.cafe_id }, "pairing refused: phone still paired with another café");
+      throw new ApiError(
+        "PAIRED_ELSEWHERE",
+        "This phone is still paired with another café and may hold stamps it has not sent there. Pair it with that café first, or start over on the phone.",
+      );
+    }
     if (outcome.kind !== "paired") {
       const log = { cafeId: found.cafe_id, outcome: outcome.kind };
       if (outcome.kind === "burned") {
@@ -280,7 +373,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     }
     const paired = outcome.paired;
     limits.pairFailuresPerIp.refund(client);
-    request.log.info({ cafeId: found.cafe_id, deviceId: paired.deviceId }, "device paired");
+    request.log.info({ cafeId: found.cafe_id, deviceId: paired.deviceId, pairedAgain: outcome.repaired }, "device paired");
     return reply.code(201).send(paired);
   });
 
@@ -323,6 +416,8 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
         .where("id", "=", key.device_id)
         .forUpdate()
         .executeTakeFirst();
+      // Read under the device's lock, which pairing again also takes, so a key it retires never renews afterwards.
+      const signingKey = await trx.selectFrom("device_keys").select("retired_at").where("id", "=", body.keyId).executeTakeFirstOrThrow();
       // A missing device row (undefined) counts as revoked too.
       if (device?.revoked_at !== null) {
         request.log.info({ cafeId: key.cafe_id, deviceId: key.device_id }, "token renewal refused: device revoked");
@@ -330,6 +425,11 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       }
       if (device.stale) {
         request.log.info({ cafeId: key.cafe_id, deviceId: key.device_id }, "token renewal refused: not renewed for 7 days");
+        throw pairingRequired();
+      }
+      // The device paired again with a newer key; this one only verifies the events it signed (AC 18).
+      if (signingKey.retired_at !== null) {
+        request.log.info({ cafeId: key.cafe_id, deviceId: key.device_id }, "token renewal refused: not the device's newest key");
         throw pairingRequired();
       }
       // A stored issuedAt beyond the skew window means the server clock stepped back since; refusing on it would
@@ -353,6 +453,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
   });
 
   app.get("/device/me", { config: { access: "device" } }, async (request) => {
+    requireSupportedBuild(request, options.releaseBuiltAt);
     const device = deviceOf(request);
     return withCafe(db, device.cafeId, async (trx) => {
       const row = await trx
@@ -367,6 +468,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
 
   /** Active staff with their PIN hashes, so the device can check PINs offline (AC 19). */
   app.get("/device/staff", { config: { access: "device" } }, async (request) => {
+    requireSupportedBuild(request, options.releaseBuiltAt);
     const device = deviceOf(request);
     const rows = await withCafe(db, device.cafeId, (trx) =>
       trx.selectFrom("staff").select(["id", "name", "pin_salt", "pin_hash", "pin_iterations"]).where("revoked_at", "is", null).orderBy("name").execute(),

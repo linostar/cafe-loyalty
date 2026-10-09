@@ -8,7 +8,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node dist/main.js",
-    "create-invite": "node --env-file-if-exists=../../.env dist/create-invite-cli.js"
+    "create-invite": "node --env-file-if-exists=../../.env dist/create-invite-cli.js",
+    "freeze-sync-fixture": "tsx src/testing/freeze-sync-fixture.ts"
   },
   "dependencies": {
     "@cafe-loyalty/db": "workspace:*",

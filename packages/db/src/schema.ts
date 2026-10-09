@@ -114,12 +114,12 @@ export interface StaffTable {
 export interface DevicesTable {
   id: ColumnType<string, string | undefined, never>;
   cafe_id: ColumnType<string, string, never>;
-  name: ColumnType<string, string, never>;
+  name: ColumnType<string, string, string>;
   paired_at: CreatedAt;
   last_renewed_at: ColumnType<Date, never, Date>;
   last_renewal_issued_at: ColumnType<Date | null, never, Date>;
   last_seen_at: ColumnType<Date, never, Date>;
-  revoked_at: ColumnType<Date | null, never, Date>;
+  revoked_at: ColumnType<Date | null, never, Date | null>;
   created_at: CreatedAt;
 }
 
@@ -136,6 +136,10 @@ export interface DeviceKeysTable {
   cafe_id: ColumnType<string, string, never>;
   device_id: ColumnType<string, string, never>;
   public_key: ColumnType<DevicePublicKey, string, never>;
+  /** Set when the device paired again with a newer key; only the key with none renews tokens. */
+  retired_at: ColumnType<Date | null, never, Date>;
+  /** Set when the device was revoked while this key was its own; events it signed are held for review. */
+  revoked_at: ColumnType<Date | null, never, Date>;
   created_at: CreatedAt;
 }
 
@@ -187,6 +191,29 @@ export interface CardsTable {
   updated_at: UpdatedAt;
 }
 
+export type SyncEventStatus = "applied" | "held" | "discarded";
+export type SyncHoldReason = "device_revoked" | "staff_revoked";
+
+/** The ledger of synced events (AC 24): no payload, no personal data. Only a held event's review is updated. */
+export interface SyncEventsTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  device_id: ColumnType<string, string, never>;
+  event_id: ColumnType<string, string, never>;
+  payload_hash: ColumnType<Buffer, Buffer, never>;
+  key_id: ColumnType<string, string, never>;
+  staff_id: ColumnType<string, string, never>;
+  type: ColumnType<string, string, never>;
+  schema_version: ColumnType<number, number, never>;
+  sequence: ColumnType<number, number, never>;
+  occurred_at: ColumnType<Date, Date, never>;
+  received_at: CreatedAt;
+  status: ColumnType<SyncEventStatus, SyncEventStatus, SyncEventStatus>;
+  hold_reason: ColumnType<SyncHoldReason | null, SyncHoldReason | null | undefined, never>;
+  reviewed_at: ColumnType<Date | null, never, Date>;
+  reviewed_by: ColumnType<string | null, never, string>;
+}
+
 export interface CustomerRecoveryTokensTable {
   id: ColumnType<string, string | undefined, never>;
   /** HMAC of the email the link was sent to; one link per email. */
@@ -218,6 +245,7 @@ export interface Database {
   customers: CustomersTable;
   cards: CardsTable;
   customer_recovery_tokens: CustomerRecoveryTokensTable;
+  sync_events: SyncEventsTable;
 }
 
 export type TableName = keyof Database;
@@ -248,7 +276,7 @@ export const TABLE_COLUMNS = {
   password_reset_tokens: ["id", "cafe_id", "owner_id", "token_hash", "expires_at", "created_at"],
   staff: ["id", "cafe_id", "name", "pin_salt", "pin_hash", "pin_iterations", "revoked_at", "created_at", "updated_at"],
   devices: ["id", "cafe_id", "name", "paired_at", "last_renewed_at", "last_renewal_issued_at", "last_seen_at", "revoked_at", "created_at"],
-  device_keys: ["id", "cafe_id", "device_id", "public_key", "created_at"],
+  device_keys: ["id", "cafe_id", "device_id", "public_key", "retired_at", "revoked_at", "created_at"],
   device_tokens: ["id", "cafe_id", "device_id", "token_hash", "expires_at", "created_at"],
   pairing_codes: ["id", "cafe_id", "owner_id", "device_name", "lookup_hash", "secret_hash", "failed_attempts", "expires_at", "created_at"],
   customers: ["id", "phone_lookup", "phone_ciphertext", "phone_key_id", "created_at"],
@@ -267,6 +295,24 @@ export const TABLE_COLUMNS = {
     "updated_at",
   ],
   customer_recovery_tokens: ["id", "email_lookup", "token_hash", "expires_at", "created_at"],
+  sync_events: [
+    "id",
+    "cafe_id",
+    "device_id",
+    "event_id",
+    "payload_hash",
+    "key_id",
+    "staff_id",
+    "type",
+    "schema_version",
+    "sequence",
+    "occurred_at",
+    "received_at",
+    "status",
+    "hold_reason",
+    "reviewed_at",
+    "reviewed_by",
+  ],
 } as const satisfies ColumnLists;
 
 /**
@@ -290,6 +336,7 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   cards: "cafe_id",
   customers: null,
   customer_recovery_tokens: null,
+  sync_events: "cafe_id",
 };
 
 type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };

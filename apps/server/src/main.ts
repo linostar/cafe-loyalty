@@ -45,6 +45,7 @@ await app.register(apiRoutes, {
   dashboardUrl: config.DASHBOARD_URL,
   counterUrl: config.COUNTER_URL,
   publicUrl: config.PUBLIC_URL,
+  releaseBuiltAt: config.BUILT_AT,
 });
 await app.register(customerPages, {
   db: database.db,

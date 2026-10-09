@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_SYNC_BATCH,
+  MAX_SYNC_SEQUENCE,
   SYNC_EVENT_SIGNING_PREFIX,
   SYNC_RESULT_CODES,
   isFinalSyncStatus,
@@ -49,7 +50,7 @@ describe("parseSyncEvent", () => {
       visitEvent({ fromNewerBuild: true }, { note: "extra", card: { kind: "qr", token: "abc.def", extra: 1 } }),
     );
     expect(result.status).toBe("valid");
-    if (result.status !== "valid") return;
+    if (result.status !== "valid" || result.event.type !== "visit.recorded") return;
     expect(result.event).not.toHaveProperty("fromNewerBuild");
     expect(result.event.payload).not.toHaveProperty("note");
     expect(result.event.payload.card).toEqual({ kind: "qr", token: "abc.def" });
@@ -112,6 +113,17 @@ describe("parseSyncEvent", () => {
     expect(parseSyncEvent(visitEvent({}, { card: { kind: "nfc", uid: "04A2" } })).status).toBe("invalid");
     expect(parseSyncEvent(visitEvent({ signature: "short" })).status).toBe("invalid");
     expect(parseSyncEvent(visitEvent({ keyId: undefined })).status).toBe("invalid");
+  });
+
+  it("caps the sequence at what the server stores", () => {
+    expect(parseSyncEvent(visitEvent({ sequence: MAX_SYNC_SEQUENCE })).status).toBe("valid");
+    expect(parseSyncEvent(visitEvent({ sequence: MAX_SYNC_SEQUENCE + 1 })).status).toBe("invalid");
+  });
+
+  it("accepts a PIN lockout report (AC 19)", () => {
+    const lockout = visitEvent({ type: "staff.pin_lockout", payload: { failedAttempts: 5, lockedUntil: "2026-10-08T07:30:30.000Z" } });
+    expect(parseSyncEvent(lockout)).toMatchObject({ status: "valid", event: { type: "staff.pin_lockout", payload: { failedAttempts: 5 } } });
+    expect(parseSyncEvent({ ...lockout, payload: { failedAttempts: 0, lockedUntil: "soon" } }).status).toBe("invalid");
   });
 
   it("keeps the event id when it can, and returns null when the id itself is unreadable", () => {

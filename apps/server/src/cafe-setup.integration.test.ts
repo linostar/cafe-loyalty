@@ -6,6 +6,7 @@ import { registerAccessControl } from "./access.js";
 import { hashToken } from "./credentials.js";
 import {
   COUNTER_URL,
+  CURRENT_BUILD,
   PASSWORD,
   deviceKeyPair,
   signedRenewal,
@@ -221,10 +222,10 @@ describe("pairing", () => {
     const code = await newCode(as);
     const { publicJwk } = await deviceKeyPair();
     const typed = ` ${code.code.toLowerCase().replace(/-/g, " ")} `;
-    const paired = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: typed, publicKey: publicJwk } });
+    const paired = await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: typed, publicKey: publicJwk } });
     expect(paired.statusCode).toBe(201);
     expect(pairResponseSchema.parse(paired.json())).toMatchObject({ deviceName: "Counter 1", cafe: { id: owner.cafeId, name: "Café Test" } });
-    const again = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: code.code, publicKey: publicJwk } });
+    const again = await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: code.code, publicKey: publicJwk } });
     expect(again.statusCode).toBe(400);
     expect(again.json()).toMatchObject({ code: "PAIRING_CODE_INVALID", retryable: false });
     expect((await as("GET", "/api/devices")).json()).toMatchObject({ devices: [{ name: "Counter 1", revoked: false }], pairingCodes: [] });
@@ -237,9 +238,9 @@ describe("pairing", () => {
     const wrong = `${code.slice(0, 4)}${code.slice(4) === "00000000" ? "11111111" : "00000000"}`;
     const { publicJwk } = await deviceKeyPair();
     for (let attempt = 1; attempt <= 5; attempt += 1) {
-      expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: wrong, publicKey: publicJwk } })).statusCode).toBe(400);
+      expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: wrong, publicKey: publicJwk } })).statusCode).toBe(400);
     }
-    expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code, publicKey: publicJwk } })).statusCode).toBe(400);
     expect(await auditActions(owner.cafeId)).toContain("pairing_code.burned");
   });
 
@@ -249,10 +250,10 @@ describe("pairing", () => {
     const wrong = `${code.slice(0, 4)}${code.slice(4) === "00000000" ? "11111111" : "00000000"}`;
     const { publicJwk } = await deviceKeyPair();
     for (let attempt = 1; attempt <= 4; attempt += 1) {
-      const response = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: wrong, publicKey: publicJwk } });
+      const response = await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: wrong, publicKey: publicJwk } });
       expect(response.json()).toMatchObject({ code: "PAIRING_CODE_INVALID" });
     }
-    expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code, publicKey: publicJwk } })).statusCode).toBe(201);
   });
 
   it("counts only failed pairings against an address", async () => {
@@ -260,7 +261,7 @@ describe("pairing", () => {
     for (let device = 1; device <= 12; device += 1) {
       const code = await newCode(as);
       const { publicJwk } = await deviceKeyPair();
-      expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: code.code, publicKey: publicJwk } })).statusCode).toBe(201);
+      expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: code.code, publicKey: publicJwk } })).statusCode).toBe(201);
     }
   });
 
@@ -269,15 +270,15 @@ describe("pairing", () => {
     const { publicJwk } = await deviceKeyPair();
     const expired = await newCode(as);
     await context.admin.query("UPDATE app.pairing_codes SET expires_at = now() - interval '1 second' WHERE id = $1", [expired.id]);
-    expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: expired.code, publicKey: publicJwk } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: expired.code, publicKey: publicJwk } })).statusCode).toBe(400);
 
     const cancelled = await newCode(as);
     expect((await as("DELETE", `/api/devices/pairing-codes/${cancelled.id}`)).statusCode).toBe(204);
-    expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: cancelled.code, publicKey: publicJwk } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: cancelled.code, publicKey: publicJwk } })).statusCode).toBe(400);
 
     const valid = await newCode(as);
     const badKey = { kty: "EC", crv: "P-256", x: "A".repeat(43), y: "A".repeat(43) };
-    const response = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: valid.code, publicKey: badKey } });
+    const response = await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: valid.code, publicKey: badKey } });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "publicKey" }] });
   });
@@ -288,10 +289,10 @@ describe("pairing", () => {
     const wrong = `${code.slice(0, 4)}${code.slice(4) === "00000000" ? "11111111" : "00000000"}`;
     const { publicJwk } = await deviceKeyPair();
     const replies = await Promise.all(
-      Array.from({ length: 8 }, () => app.inject({ method: "POST", url: "/api/device/pair", payload: { code: wrong, publicKey: publicJwk } })),
+      Array.from({ length: 8 }, () => app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: wrong, publicKey: publicJwk } })),
     );
     expect(replies.every((reply) => reply.statusCode === 400)).toBe(true);
-    expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code, publicKey: publicJwk } })).statusCode).toBe(400);
     expect((await auditActions(owner.cafeId)).filter((action) => action === "pairing_code.burned")).toHaveLength(1);
   });
 
@@ -421,7 +422,7 @@ describe("device tokens", () => {
     const created = await as("POST", "/api/devices/pairing-codes", { deviceName: "Counter 1" });
     const code = created.json<{ code: string }>().code;
     const { privateKey, publicJwk } = await deviceKeyPair();
-    const paired = (await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).json<{
+    const paired = (await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code, publicKey: publicJwk } })).json<{
       deviceId: string;
       keyId: string;
       accessToken: string;

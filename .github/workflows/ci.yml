@@ -58,6 +58,16 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Set the release build time
+        # The commit time, as the release build will set it: the counter build and the server must agree (AC 26).
+        env:
+          TZ: UTC
+        # On its own line, so a failing git log fails the step instead of setting an empty value.
+        run: |
+          built_at=$(git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
+          test -n "$built_at"
+          echo "BUILT_AT=$built_at" >> "$GITHUB_ENV"
+
       - name: Run the test command
         run: pnpm test
 

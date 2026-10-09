@@ -66,6 +66,12 @@ const serverEnvSchema = z.object({
   /** HMAC-SHA256 keys that sign card QR codes (AC 7). */
   CARD_QR_KEYS: keyringSchema,
   /**
+   * When this release was built (ISO 8601 UTC, the commit time), the same value its counter build carries. Counter
+   * builds made more than COUNTER_SUPPORT_DAYS earlier get CLIENT_TOO_OLD for new actions (AC 26). Required in
+   * production; elsewhere it defaults to the server's start time.
+   */
+  BUILT_AT: z.iso.datetime({ offset: false }).optional(),
+  /**
    * Number of reverse proxies in front of the server (Caddy: 1), so rate limits see the client's address.
    * Required in production: left at 0 behind a proxy, every client would share the proxy's rate limits.
    */
@@ -95,13 +101,16 @@ const serverEnvSchema = z.object({
     if (env.TRUST_PROXY_HOPS === undefined) {
       context.addIssue({ code: "custom", path: ["TRUST_PROXY_HOPS"], message: "Set it in production (1 behind Caddy)." });
     }
+    if (env.BUILT_AT === undefined) {
+      context.addIssue({ code: "custom", path: ["BUILT_AT"], message: "Set it in production to the release's build time, as the counter build has it." });
+    }
     for (const key of ["DASHBOARD_URL", "COUNTER_URL", "PUBLIC_URL"] as const) {
       if (new URL(env[key]).protocol !== "https:") {
         context.addIssue({ code: "custom", path: [key], message: "Use an https address in production." });
       }
     }
   })
-  .transform((env) => ({ ...env, TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS ?? 0 }));
+  .transform((env) => ({ ...env, TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS ?? 0, BUILT_AT: env.BUILT_AT === undefined ? new Date() : new Date(env.BUILT_AT) }));
 
 export type ServerConfig = z.output<typeof serverEnvSchema>;
 

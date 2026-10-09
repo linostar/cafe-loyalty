@@ -5,6 +5,7 @@ import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./
 import { CafePage } from "./cafe-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
+import { ReviewPage } from "./review-page.js";
 import { SessionEndedContext } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
@@ -20,6 +21,7 @@ const OWNER_PAGES = [
   { path: "/cafe", label: "Café" },
   { path: "/staff", label: "Staff" },
   { path: "/devices", label: "Devices" },
+  { path: "/review", label: "Review" },
   { path: "/account", label: "Account" },
 ] as const;
 
@@ -89,6 +91,9 @@ function HomePage({ session }: { session: OwnerSession }) {
         </li>
         <li>
           <a href="/devices">Devices</a>: pair or remove counter phones
+        </li>
+        <li>
+          <a href="/review">Review</a>: what removed phones and baristas recorded
         </li>
         <li>
           <a href="/account">Account</a>: password and signing out
@@ -219,6 +224,9 @@ function OwnerArea({ path }: { path: OwnerPath }) {
           break;
         case "/devices":
           content = <DevicesPage />;
+          break;
+        case "/review":
+          content = <ReviewPage />;
           break;
         case "/account":
           content = <AccountPage onSignedOut={signOut} />;

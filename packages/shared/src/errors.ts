@@ -21,6 +21,11 @@ export const ERROR_CODES = {
   CONFLICT: { status: 409, retryable: false },
   /** A pairing code that is wrong, used, expired or burned by wrong tries: create a new one on the dashboard (AC 17). */
   PAIRING_CODE_INVALID: { status: 400, retryable: false },
+  /**
+   * The phone is still paired with another café and may hold that café's unsent events; the code is not used. Pair
+   * it with that café first, or pair again without the old identity to start over (losing them).
+   */
+  PAIRED_ELSEWHERE: { status: 409, retryable: false },
   /** An invite or password reset link that is unknown, already used or expired: ask for a new one. */
   LINK_EXPIRED: { status: 410, retryable: false },
   PAYLOAD_TOO_LARGE: { status: 413, retryable: false },

@@ -28,6 +28,10 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
+    files: ["apps/counter/sw.js"],
+    languageOptions: { globals: globals.serviceworker },
+  },
+  {
     files: ["apps/server/**/*.ts", "apps/worker/**/*.ts", "packages/**/*.ts", "e2e/**/*.ts", "*.config.ts"],
     languageOptions: { globals: globals.node },
   },

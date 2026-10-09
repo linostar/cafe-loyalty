@@ -5,6 +5,7 @@ export default defineProject({
   plugins: [react()],
   define: {
     __BUILD_ID__: JSON.stringify("test-build"),
+    __BUILT_AT__: JSON.stringify("2026-10-01T00:00:00.000Z"),
   },
   test: {
     name: "counter",

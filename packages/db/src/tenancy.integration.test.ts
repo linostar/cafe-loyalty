@@ -32,6 +32,25 @@ const deviceIdOf = (cafeId: string): string => {
   }
   return id;
 };
+/** The staff member and device key each café's fixtures use, like ownerIdOf. */
+const staffIds = new Map<string, string>();
+const staffIdOf = (cafeId: string): string => {
+  let id = staffIds.get(cafeId);
+  if (id === undefined) {
+    id = randomUUID();
+    staffIds.set(cafeId, id);
+  }
+  return id;
+};
+const keyIds = new Map<string, string>();
+const keyIdOf = (cafeId: string): string => {
+  let id = keyIds.get(cafeId);
+  if (id === undefined) {
+    id = randomUUID();
+    keyIds.set(cafeId, id);
+  }
+  return id;
+};
 const PUBLIC_KEY = JSON.stringify({ kty: "EC", crv: "P-256", x: "A".repeat(43), y: "B".repeat(43) });
 
 /** Tables without a café of their own (TENANT_KEY null), tested in customers.integration.test.ts. */
@@ -74,11 +93,11 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
   staff: (trx, cafeId) =>
     trx
       .insertInto("staff")
-      .values({ cafe_id: cafeId, name: "Rami", pin_salt: randomBytes(16), pin_hash: randomBytes(32), pin_iterations: 600_000 })
+      .values({ id: staffIdOf(cafeId), cafe_id: cafeId, name: "Rami", pin_salt: randomBytes(16), pin_hash: randomBytes(32), pin_iterations: 600_000 })
       .execute(),
   devices: (trx, cafeId) => trx.insertInto("devices").values({ id: deviceIdOf(cafeId), cafe_id: cafeId, name: "Counter" }).execute(),
   device_keys: (trx, cafeId) =>
-    trx.insertInto("device_keys").values({ cafe_id: cafeId, device_id: deviceIdOf(cafeId), public_key: PUBLIC_KEY }).execute(),
+    trx.insertInto("device_keys").values({ id: keyIdOf(cafeId), cafe_id: cafeId, device_id: deviceIdOf(cafeId), public_key: PUBLIC_KEY }).execute(),
   device_tokens: (trx, cafeId) =>
     trx
       .insertInto("device_tokens")
@@ -98,6 +117,23 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .execute(),
   cards: (trx, cafeId) =>
     trx.insertInto("cards").values({ cafe_id: cafeId, web_secret_hash: randomBytes(32), privacy_accepted_at: new Date() }).execute(),
+  sync_events: (trx, cafeId) =>
+    trx
+      .insertInto("sync_events")
+      .values({
+        cafe_id: cafeId,
+        device_id: deviceIdOf(cafeId),
+        event_id: randomUUID(),
+        payload_hash: randomBytes(32),
+        key_id: keyIdOf(cafeId),
+        staff_id: staffIdOf(cafeId),
+        type: "visit.recorded",
+        schema_version: 1,
+        sequence: 0,
+        occurred_at: new Date(),
+        status: "applied",
+      })
+      .execute(),
 };
 
 const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];

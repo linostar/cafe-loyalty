@@ -23,6 +23,7 @@ const valid = {
   SMTP_USER: "mailer",
   SMTP_PASSWORD: "smtp-secret",
   EMAIL_FROM: "Cafe Loyalty <no-reply@example.com>",
+  BUILT_AT: "2026-10-01T09:30:00Z",
 };
 
 describe("loadServerConfig", () => {
@@ -33,6 +34,7 @@ describe("loadServerConfig", () => {
       SHUTDOWN_TIMEOUT_MS: 10_000,
       DATABASE_MAX_CONNECTIONS: 10,
       TRUST_PROXY_HOPS: 0,
+      BUILT_AT: new Date("2026-10-01T09:30:00Z"),
       SMTP_PORT: 587,
       SMTP_SECURE: false,
       PHONE_ENCRYPTION_KEYS: [
@@ -83,6 +85,13 @@ describe("loadServerConfig", () => {
     expect(loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", DASHBOARD_URL: "HTTPS://Dash.Example.com" }).NODE_ENV).toBe(
       "production",
     );
+  });
+
+  it("requires the release's build time in production and defaults it to the start time elsewhere", () => {
+    expect(() => loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", BUILT_AT: undefined })).toThrow(/BUILT_AT/);
+    expect(() => loadServerConfig({ ...valid, BUILT_AT: "yesterday" })).toThrow(/BUILT_AT/);
+    const before = Date.now();
+    expect(loadServerConfig({ ...valid, BUILT_AT: undefined }).BUILT_AT.getTime()).toBeGreaterThanOrEqual(before);
   });
 
   it("requires the dashboard address without a path", () => {

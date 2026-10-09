@@ -106,6 +106,12 @@ const base64url = (length: number) => z.string().regex(new RegExp(`^[A-Za-z0-9_-
 /** The device's ECDSA P-256 public key, as WebCrypto exports it to JWK; other members are dropped. */
 export const devicePublicKeySchema = z.object({ kty: z.literal("EC"), crv: z.literal("P-256"), x: base64url(43), y: base64url(43) });
 
+/**
+ * A device pairing again (after 7 days offline, a revocation or a lost pairing response) proves it held one of its
+ * old keys, so it keeps its device id and the events it queued under that id still sync (AC 18).
+ */
+export const previousDeviceSchema = z.object({ deviceId: id, keyId: id, signature: syncSignatureSchema });
+
 export const pairRequestSchema = z.object({
   code: z.string().max(40).transform((value, context) => {
     const code = normalizePairingCode(value);
@@ -116,7 +122,26 @@ export const pairRequestSchema = z.object({
     return code;
   }),
   publicKey: devicePublicKeySchema,
+  previous: previousDeviceSchema.optional(),
 });
+
+export const DEVICE_PAIR_PROOF_PREFIX = "cafe-loyalty/device-pair-proof/v1\n";
+
+/**
+ * The bytes an old device key signs to carry its device id over to a new key: bound to that new key and to the
+ * pairing code (canonical form, as normalizePairingCode gives it), which works once, so a captured proof cannot be
+ * used again with another code or key.
+ */
+export const devicePairProofPayload = (code: string, previous: { deviceId: string; keyId: string }, publicKey: DevicePublicKeyJwk): string =>
+  `${DEVICE_PAIR_PROOF_PREFIX}${code}\n${previous.deviceId.toLowerCase()}\n${previous.keyId.toLowerCase()}\n${publicKey.x}\n${publicKey.y}`;
+
+/**
+ * Header on every counter request: when the counter build was made (ISO 8601, UTC). The API serves new actions only
+ * to builds made within COUNTER_SUPPORT_DAYS of the server's own release and answers CLIENT_TOO_OLD (426) otherwise;
+ * pairing, renewing the token and syncing the queue work from any build, so an old counter can always drain (AC 26).
+ */
+export const COUNTER_BUILT_AT_HEADER = "x-counter-built-at";
+export const COUNTER_SUPPORT_DAYS = 14;
 
 const deviceToken = { accessToken: z.string(), accessTokenExpiresAt: timestamp };
 
@@ -139,8 +164,11 @@ export const DEVICE_TOKEN_SIGNING_PREFIX = "cafe-loyalty/device-token/v1\n";
  * - A device route answering TOKEN_EXPIRED means: renew, then retry the request.
  * - Renew by signing a fresh issuedAt (now, UTC) for every attempt, including a retry after a lost response; a
  *   renewal is refused unless its issuedAt is later than the last accepted one and within 5 minutes of the server.
- * - The renewal answers a new token, PAIRING_REQUIRED (no renewal for 7 days, or the key is unknown: pair again,
- *   keeping the queue) or DEVICE_REVOKED (wipe PIN hashes and unpair).
+ * - The renewal answers a new token, PAIRING_REQUIRED (no renewal for 7 days, or the key is unknown or no longer the
+ *   device's newest: pair again, keeping the queue) or DEVICE_REVOKED (wipe PIN hashes and unpair, keeping the queue).
+ * - Pairing again sends `previous`, signed with the old key over devicePairProofPayload (the code, the old ids and the
+ *   new public key), so the device keeps its id.
+ *   From then on only the new key renews; old keys still verify the events they signed.
  */
 
 export const tokenRenewalRequestSchema = z.object({ deviceId: id, keyId: id, issuedAt: timestamp, signature: syncSignatureSchema });
@@ -166,3 +194,4 @@ export type Device = z.output<typeof deviceSchema>;
 export type Devices = z.output<typeof devicesSchema>;
 export type PairingCode = z.output<typeof pairingCodeSchema>;
 export type DevicePublicKeyJwk = z.output<typeof devicePublicKeySchema>;
+export type PairRequest = z.input<typeof pairRequestSchema>;

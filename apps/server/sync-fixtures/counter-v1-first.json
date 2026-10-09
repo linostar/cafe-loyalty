@@ -1,0 +1,214 @@
+{
+  "build": "f8a23e2d0e36d7deabcafccbc6f0f65f82b9248c",
+  "builtAt": "2026-10-09T09:11:18Z",
+  "recordedAt": "2026-10-09T09:20:49.035Z",
+  "device": {
+    "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+    "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+    "publicKey": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "YN2rTYbsENKtKlmQrB1lu3LaA-J_BkGW-GKCo2eylPc",
+      "y": "Ee1rKuGLP0-wQrNQLDo62W-wUssRkmT2Wn2DDhsFFiE"
+    }
+  },
+  "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+  "requests": [
+    {
+      "events": [
+        {
+          "eventId": "6fc71fc0-e005-4618-8138-55fd00f74eca",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 1,
+          "schemaVersion": 1,
+          "type": "visit.recorded",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "card": {
+              "kind": "qr",
+              "token": "v1.e1416e2079279b54"
+            },
+            "items": [
+              {
+                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "quantity": 2,
+                "unitPriceCents": 350,
+                "unitCostCents": 120,
+                "catalogVersion": 1
+              }
+            ],
+            "totalCents": 700
+          },
+          "signature": "dINb5QgQgSl5chR8mdhdmvpIRhTVCQVjOmSd4HgVnOgRGP2yj7g4lamCU0lS_4klv02uAmof4G-ylDr52FLZLg"
+        },
+        {
+          "eventId": "61c470d9-70a2-4f9e-a564-f4e89ee5a129",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 2,
+          "schemaVersion": 1,
+          "type": "visit.recorded",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "card": {
+              "kind": "phone",
+              "phone": "+96170000000"
+            },
+            "items": [
+              {
+                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "quantity": 2,
+                "unitPriceCents": 350,
+                "unitCostCents": 120,
+                "catalogVersion": 1
+              }
+            ],
+            "totalCents": 700
+          },
+          "signature": "Sb_fCXZM0B2--TKvMOS9LWUuOn4y5VCHwBmtBMzeyn2SMW6w_ta0JMNhwdz4ivBi-IjYr6EThG___x8Efoa7fA"
+        },
+        {
+          "eventId": "09b1cc76-2230-4c08-ace0-4c6bcbcb0974",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 3,
+          "schemaVersion": 1,
+          "type": "staff.pin_lockout",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "failedAttempts": 5,
+            "lockedUntil": "2026-10-09T09:21:19.035Z"
+          },
+          "signature": "foi5BBBj8MUhIwHa7NbLWN1SAVZR2rW3qUm8vFVtJmxeA8PCdxUF71u8bdhgolbv59S5LJH3yRhpSAGBmb95mA"
+        },
+        {
+          "eventId": "9c87ce9b-5a49-4364-97db-2bfc8428275c",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 4,
+          "schemaVersion": 1,
+          "type": "test.never-supported",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "note": "from a newer build"
+          },
+          "signature": "zeoAenWsjEmgcFUoJilu91pOlNhlPWs55kHP_TaQ-1figpYAt0cp1hdlUTllwgcOCYdf_neJGcCV5OeC1CjkhA"
+        },
+        {
+          "eventId": "4b00c603-80c7-4caf-bc1d-082f16e4250d",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 5,
+          "schemaVersion": 1,
+          "type": "visit.recorded",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "card": {
+              "kind": "qr",
+              "token": "v1.x"
+            },
+            "items": [],
+            "totalCents": 0
+          },
+          "signature": "vrGtOcVzAhvZaLIA--0qOlonWnJ9NAOz33lJupKAGnMUwJE1sCtYPV1AyfngsggiIt-sPgptxtDVCp3yGZvI1g"
+        }
+      ],
+      "results": [
+        {
+          "status": "applied",
+          "code": "OK"
+        },
+        {
+          "status": "applied",
+          "code": "OK"
+        },
+        {
+          "status": "applied",
+          "code": "OK"
+        },
+        {
+          "status": "retry_later",
+          "code": "UNSUPPORTED_EVENT"
+        },
+        {
+          "status": "rejected",
+          "code": "INVALID_EVENT"
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "eventId": "6fc71fc0-e005-4618-8138-55fd00f74eca",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 1,
+          "schemaVersion": 1,
+          "type": "visit.recorded",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "card": {
+              "kind": "qr",
+              "token": "v1.e1416e2079279b54"
+            },
+            "items": [
+              {
+                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "quantity": 2,
+                "unitPriceCents": 350,
+                "unitCostCents": 120,
+                "catalogVersion": 1
+              }
+            ],
+            "totalCents": 700
+          },
+          "signature": "dINb5QgQgSl5chR8mdhdmvpIRhTVCQVjOmSd4HgVnOgRGP2yj7g4lamCU0lS_4klv02uAmof4G-ylDr52FLZLg"
+        },
+        {
+          "eventId": "61c470d9-70a2-4f9e-a564-f4e89ee5a129",
+          "deviceId": "2ca7952c-faae-4854-be6b-0cb180f1f94f",
+          "keyId": "54302020-dc69-4c8a-a3b4-865875922f76",
+          "staffId": "0b7f6e83-be32-4aa6-ae7f-952b154d25a7",
+          "sequence": 2,
+          "schemaVersion": 1,
+          "type": "visit.recorded",
+          "occurredAt": "2026-10-09T09:20:49.035Z",
+          "payload": {
+            "card": {
+              "kind": "phone",
+              "phone": "+96170000000"
+            },
+            "items": [
+              {
+                "orderTypeId": "c1e051c9-00c7-4174-894f-e4e6556c525e",
+                "quantity": 2,
+                "unitPriceCents": 350,
+                "unitCostCents": 120,
+                "catalogVersion": 1
+              }
+            ],
+            "totalCents": 700
+          },
+          "signature": "Sb_fCXZM0B2--TKvMOS9LWUuOn4y5VCHwBmtBMzeyn2SMW6w_ta0JMNhwdz4ivBi-IjYr6EThG___x8Efoa7fA"
+        }
+      ],
+      "results": [
+        {
+          "status": "duplicate",
+          "code": "DUPLICATE"
+        },
+        {
+          "status": "duplicate",
+          "code": "DUPLICATE"
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,13 @@
 import { randomBytes, randomUUID, webcrypto } from "node:crypto";
 import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
-import { deviceTokenSigningPayload } from "@cafe-loyalty/shared";
+import {
+  COUNTER_BUILT_AT_HEADER,
+  devicePairProofPayload,
+  deviceTokenSigningPayload,
+  normalizePairingCode,
+  syncEventSigningPayload,
+  type DevicePublicKeyJwk,
+} from "@cafe-loyalty/shared";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, expect } from "vitest";
@@ -76,7 +83,12 @@ export function cookieToken(response: LightMyRequestResponse): string {
 }
 
 export const withCookie = (token: string) => ({ cookie: `__Host-cl_session=${token}` });
-export const withBearer = (token: string) => ({ authorization: `Bearer ${token}` });
+/** The release build time every harness app gets: counter builds made up to 14 days before it are current. */
+export const RELEASE_BUILT_AT = new Date("2026-10-01T00:00:00Z");
+/** The header a current counter build sends (AC 26). */
+export const CURRENT_BUILD = { [COUNTER_BUILT_AT_HEADER]: RELEASE_BUILT_AT.toISOString() };
+/** A paired device's token, sent by a current counter build. */
+export const withBearer = (token: string) => ({ authorization: `Bearer ${token}`, ...CURRENT_BUILD });
 
 export async function signIn(app: FastifyInstance, email: string, password = PASSWORD, remoteAddress = "203.0.113.1"): Promise<LightMyRequestResponse> {
   return app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password }, remoteAddress });
@@ -107,6 +119,24 @@ export async function signedRenewal(device: Pick<PairedDevice, "deviceId" | "key
   const fields = { deviceId: device.deviceId, keyId: device.keyId, issuedAt };
   const signature = await webcrypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, device.privateKey, Buffer.from(deviceTokenSigningPayload(fields)));
   return { ...fields, signature: Buffer.from(signature).toString("base64url") };
+}
+
+async function signText(privateKey: webcrypto.CryptoKey, text: string): Promise<string> {
+  const signature = await webcrypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, Buffer.from(text));
+  return Buffer.from(signature).toString("base64url");
+}
+
+/** A sync event signed by the device key, as the counter app sends it: the device's ids, then `fields`. */
+export async function signedEvent(device: Pick<PairedDevice, "deviceId" | "keyId" | "privateKey">, fields: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const raw = { deviceId: device.deviceId, keyId: device.keyId, ...fields };
+  return { ...raw, signature: await signText(device.privateKey, syncEventSigningPayload(raw)) };
+}
+
+/** The `previous` proof a device sends when pairing again with `code`: its old key signs over the code and the new public key. */
+export async function pairProof(device: Pick<PairedDevice, "deviceId" | "keyId" | "privateKey">, code: string, publicKey: webcrypto.JsonWebKey) {
+  const previous = { deviceId: device.deviceId, keyId: device.keyId };
+  const payload = devicePairProofPayload(normalizePairingCode(code) ?? code, previous, publicKey as DevicePublicKeyJwk);
+  return { ...previous, signature: await signText(device.privateKey, payload) };
 }
 
 /**
@@ -167,7 +197,16 @@ export function useApiHarness() {
       });
       const mailer = new FakeMailer();
       const background = new BackgroundTasks(app.log);
-      await app.register(apiRoutes, { prefix: "/api", db: context.testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL, counterUrl: COUNTER_URL, publicUrl: PUBLIC_URL });
+      await app.register(apiRoutes, {
+        prefix: "/api",
+        db: context.testDb.app.db,
+        mailer,
+        background,
+        dashboardUrl: DASHBOARD_URL,
+        counterUrl: COUNTER_URL,
+        publicUrl: PUBLIC_URL,
+        releaseBuiltAt: RELEASE_BUILT_AT,
+      });
       await app.register(customerPages, {
         db: context.testDb.app.db,
         mailer,
@@ -198,7 +237,12 @@ export function useApiHarness() {
       const created = await app.inject({ method: "POST", url: "/api/devices/pairing-codes", headers: withCookie(owner.session), payload: { deviceName } });
       expect(created.statusCode).toBe(201);
       const { privateKey, publicJwk } = await deviceKeyPair();
-      const paired = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: created.json<{ code: string }>().code, publicKey: publicJwk } });
+      const paired = await app.inject({
+        method: "POST",
+        url: "/api/device/pair",
+        headers: CURRENT_BUILD,
+        payload: { code: created.json<{ code: string }>().code, publicKey: publicJwk },
+      });
       expect(paired.statusCode).toBe(201);
       const body = paired.json<{ deviceId: string; keyId: string; accessToken: string }>();
       return { deviceId: body.deviceId, keyId: body.keyId, accessToken: body.accessToken, privateKey };
