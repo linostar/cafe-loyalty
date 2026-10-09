@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomInt, randomUUID } from "node:crypto";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
@@ -35,6 +35,9 @@ async function cardRow(secret: string) {
   );
   return rows[0];
 }
+
+/** A number no other test uses, so the customer row's lifecycle belongs to this test alone. */
+const uniquePhone = (): string => `70 ${String(randomInt(100_000, 999_999))}`.replace(/^70 (\d{3})(\d{3})$/, "70 $1 $2");
 
 const phoneLookupOf = (e164: string) => createHmac("sha256", TEST_SECRETS.phoneLookupPepper).update(`phone:${e164}`).digest();
 
@@ -174,7 +177,8 @@ describe("web card", () => {
     expect(card.statusCode).toBe(200);
     expect(card.body).toContain("Your card at Café Test");
     expect(card.body).toContain("0 stamps");
-    expect(card.body).toMatch(/<img class="qr" src="data:image\/svg\+xml;charset=utf-8,[^"]+" alt="Your card's QR code/);
+    // The apostrophe is escaped in the attribute.
+    expect(card.body).toMatch(/<img class="qr" src="data:image\/svg\+xml;charset=utf-8,[^"]+" alt="Your card&#39;s QR code/);
     expect(card.body).not.toContain("<script");
     expect(card.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
   });
@@ -202,8 +206,9 @@ describe("web card", () => {
   it("deletes the card after confirmation, and the number with it when no café has another card (AC 9)", async () => {
     const first = await cafeWithJoinCode();
     const second = await cafeWithJoinCode();
-    const here = secretOf(await join(first.app, first.code, "70 555 666"));
-    const there = secretOf(await join(second.app, second.code, "70 555 666"));
+    const phone = uniquePhone();
+    const here = secretOf(await join(first.app, first.code, phone));
+    const there = secretOf(await join(second.app, second.code, phone));
     const customerId = (await cardRow(here))?.customer_id;
     const customerCount = async () => (await context.admin.query("SELECT 1 FROM app.customers WHERE id = $1", [customerId])).rowCount;
 
@@ -230,17 +235,20 @@ describe("web card", () => {
 });
 
 describe("recovery", () => {
+  /** Two cards at two cafés with one number and one email that no other test uses. */
   async function withEmailCards() {
     const first = await cafeWithJoinCode();
     const second = await cafeWithJoinCode();
-    const secrets = [secretOf(await join(first.app, first.code, "70 777 888")), secretOf(await join(second.app, second.code, "70 777 888"))];
+    const phone = uniquePhone();
+    const email = `rana-${randomUUID()}@example.com`;
+    const secrets = [secretOf(await join(first.app, first.code, phone)), secretOf(await join(second.app, second.code, phone))];
     for (const [app, secret] of [
       [first.app, secrets[0]],
       [second.app, secrets[1]],
     ] as const) {
-      await app.inject({ method: "POST", url: `/c/${secret ?? ""}/email`, ...formBody({ email: "rana@example.com" }) });
+      await app.inject({ method: "POST", url: `/c/${secret ?? ""}/email`, ...formBody({ email }) });
     }
-    return { first, secrets };
+    return { first, secrets, email };
   }
 
   async function requestLink(h: Harness, email: string): Promise<LightMyRequestResponse> {
@@ -252,18 +260,18 @@ describe("recovery", () => {
   const tokenOf = (h: Harness, index = 0): string => new RegExp(`${PUBLIC_URL}/r/([A-Za-z0-9_-]{43})`).exec(h.mailer.sent[index]?.text ?? "")?.[1] ?? "missing";
 
   it("answers known and unknown emails the same way and emails only a known one", async () => {
-    const { first } = await withEmailCards();
-    const known = await requestLink(first, "rana@example.com");
+    const { first, email } = await withEmailCards();
+    const known = await requestLink(first, email);
     const unknown = await requestLink(first, "nobody@example.com");
     expect(known.statusCode).toBe(200);
     expect(known.body).toBe(unknown.body);
     expect(first.mailer.sent).toHaveLength(1);
-    expect(first.mailer.sent[0]?.to).toBe("rana@example.com");
+    expect(first.mailer.sent[0]?.to).toBe(email);
   });
 
   it("restores every card with that email on a new epoch, once, and the old links and QR codes stop working (AC 8)", async () => {
-    const { first, secrets } = await withEmailCards();
-    await requestLink(first, "rana@example.com");
+    const { first, secrets, email } = await withEmailCards();
+    await requestLink(first, email);
     const token = tokenOf(first);
     const before = await Promise.all(secrets.map((secret) => cardRow(secret)));
     // Opening the link does not use it.
@@ -283,9 +291,9 @@ describe("recovery", () => {
   });
 
   it("deletes every card with that email, and the number with them (AC 9)", async () => {
-    const { first, secrets } = await withEmailCards();
+    const { first, secrets, email } = await withEmailCards();
     const customerId = (await cardRow(secrets[0] ?? ""))?.customer_id;
-    await requestLink(first, "rana@example.com");
+    await requestLink(first, email);
     const deleted = await first.app.inject({ method: "POST", url: `/r/${tokenOf(first)}`, ...formBody({ action: "delete", lang: "en" }) });
     expect(deleted.body).toContain("Your card and its data are deleted.");
     for (const secret of secrets) {
@@ -295,17 +303,18 @@ describe("recovery", () => {
   });
 
   it("keeps one live link per email even when requests race", async () => {
-    const { first } = await withEmailCards();
-    await Promise.all([1, 2, 3].map(() => first.app.inject({ method: "POST", url: "/recover", remoteAddress: "198.51.100.30", ...formBody({ email: "rana@example.com" }) })));
+    const { first, email } = await withEmailCards();
+    await Promise.all([1, 2, 3].map(() => first.app.inject({ method: "POST", url: "/recover", remoteAddress: "198.51.100.30", ...formBody({ email }) })));
     await first.background.drain();
-    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.customer_recovery_tokens");
+    const lookup = createHmac("sha256", TEST_SECRETS.phoneLookupPepper).update(`email:${email}`).digest();
+    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.customer_recovery_tokens WHERE email_lookup = $1", [lookup]);
     expect(rows[0]?.n).toBe(1);
   });
 
   it("refuses an expired link and keeps only the newest", async () => {
-    const { first } = await withEmailCards();
-    await requestLink(first, "rana@example.com");
-    await requestLink(first, "rana@example.com");
+    const { first, email } = await withEmailCards();
+    await requestLink(first, email);
+    await requestLink(first, email);
     expect((await first.app.inject({ method: "GET", url: `/r/${tokenOf(first, 0)}?lang=en` })).statusCode).toBe(410);
     await context.admin.query("UPDATE app.customer_recovery_tokens SET expires_at = now() - interval '1 second'");
     const expired = await first.app.inject({ method: "POST", url: `/r/${tokenOf(first, 1)}`, ...formBody({ action: "restore", lang: "en" }) });

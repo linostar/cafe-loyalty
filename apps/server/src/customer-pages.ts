@@ -31,6 +31,8 @@ async function atLeast(started: number, ms: number): Promise<void> {
 }
 
 const TOKEN_FORMAT = /^[A-Za-z0-9_-]{43}$/;
+/** SQLSTATE of an ON DELETE RESTRICT foreign key refusing a delete. */
+const RESTRICT_VIOLATION = "23001";
 
 export interface CustomerPagesOptions {
   db: Kysely<Database>;
@@ -93,7 +95,7 @@ export function recoveryEmail(to: string, link: string): EmailMessage {
 /**
  * Deletes a card and, if that was its customer's last card anywhere, the customer (the phone number) too (AC 9).
  * The customer's ON DELETE RESTRICT foreign key decides "anywhere", since this café's view cannot see other cafés'
- * cards; a refusal is rolled back to a savepoint and leaves the customer for their other cards.
+ * cards; its refusal (restrict_violation, 23001) is rolled back to a savepoint and leaves the customer for those cards.
  */
 async function deleteCard(trx: Transaction<Database>, card: { id: string; cafe_id: string; customer_id: string | null }): Promise<void> {
   await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: "card.deleted", entityType: "card", entityId: card.id, changes: { source: "customer" } });
@@ -107,7 +109,7 @@ async function deleteCard(trx: Transaction<Database>, card: { id: string; cafe_i
     await trx.deleteFrom("customers").where("id", "=", card.customer_id).execute();
     await sql`RELEASE SAVEPOINT delete_customer`.execute(trx);
   } catch (error) {
-    if ((error as { code?: unknown }).code !== "23503") {
+    if ((error as { code?: unknown }).code !== RESTRICT_VIOLATION) {
       throw error;
     }
     await sql`ROLLBACK TO SAVEPOINT delete_customer`.execute(trx);

@@ -5,7 +5,8 @@ import { TenantContextError, setLookup, useCafe, withCafe, withLookup } from "./
 import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
 
 const PERMISSION_DENIED = "42501";
-const FOREIGN_KEY_VIOLATION = "23503";
+/** An ON DELETE RESTRICT foreign key refusing the delete. */
+const RESTRICT_VIOLATION = "23001";
 
 const hash = (value: Buffer | string): Buffer => createHash("sha256").update(value).digest();
 
@@ -100,7 +101,7 @@ describe("customers", () => {
 
     await withCafe(testDb.app.db, cafeA, (trx) => trx.deleteFrom("cards").where("id", "=", cardId).execute());
     // Café A no longer has a card, but café B does: the foreign key refuses whatever café A's view shows.
-    expect(await errorCodeOf(deleteCustomer())).toBe(FOREIGN_KEY_VIOLATION);
+    expect(await errorCodeOf(deleteCustomer())).toBe(RESTRICT_VIOLATION);
     await withCafe(testDb.app.db, cafeB, (trx) => trx.deleteFrom("cards").where("id", "=", cardB.cardId).execute());
     expect((await deleteCustomer()).numDeletedRows).toBe(1n);
   });
