@@ -13,6 +13,7 @@ const REASONS: Readonly<Record<SyncHoldReason, string>> = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
   late_sync: "that reached the server more than two days later",
+  campaign_check: "with a discount its campaign did not allow at that time (ended, outside its hours, or below your margin)",
 };
 
 /** Why an accepted visit still added no stamps, by its result code. */

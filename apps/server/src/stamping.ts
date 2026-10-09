@@ -1,9 +1,22 @@
 import { withCafe, type Database, type PgBoss, type VisitOutcome } from "@cafe-loyalty/db";
-import { ApiError, redemptionRequestSchema, type DeviceCatalog, type Redemption, type SyncResultCode, type VisitRecordedV1Event } from "@cafe-loyalty/shared";
+import {
+  ApiError,
+  keepsMargin,
+  redemptionRequestSchema,
+  runsAt,
+  unitDiscountCents,
+  visitLines,
+  type DeviceCatalog,
+  type Redemption,
+  type SyncResultCode,
+  type VisitLine,
+  type VisitRecordedPayload,
+} from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { deviceOf } from "./access.js";
 import { phoneLookup, verifyCardQr, type CustomerSecrets } from "./customer-crypto.js";
+import { CAMPAIGN_END_GRACE_MINUTES, CAMPAIGN_START_GRACE_MINUTES, loadCampaigns } from "./campaign-routes.js";
 import { audit, isUniqueViolation, now } from "./db-helpers.js";
 import { requireSupportedBuild } from "./device-routes.js";
 import { parseInput } from "./http-errors.js";
@@ -15,8 +28,9 @@ export const STAMP_COOLDOWN_MINUTES = 30;
 /** Most stamps one device adds in a café day (AC 30): a busy counter stays far below it; a misused one stops there. */
 export const DAILY_STAMP_CAP = 300;
 
-type CardReference = VisitRecordedV1Event["payload"]["card"];
-type VisitItem = VisitRecordedV1Event["payload"]["items"][number];
+const MINUTE_MS = 60 * 1000;
+
+type CardReference = VisitRecordedPayload["card"];
 
 type CardRefusal = "CARD_NOT_FOUND" | "CARD_REPLACED" | "PHONE_NOT_CONFIRMED" | "PHONE_DISPUTED";
 
@@ -58,14 +72,70 @@ export async function findCard(trx: Transaction<Database>, secrets: CustomerSecr
 }
 
 export type VisitPlan =
-  | { status: "refused"; code: CardRefusal | "UNKNOWN_ORDER_TYPE" }
-  | { status: "ready"; cardId: string; identifiedBy: "qr" | "phone"; stampsEach: ReadonlyMap<string, number>; stampsEarned: number };
+  | { status: "refused"; code: CardRefusal | "UNKNOWN_ORDER_TYPE" | "CAMPAIGN_REFUSED" }
+  | {
+      status: "ready";
+      cardId: string;
+      identifiedBy: "qr" | "phone";
+      stampsEach: ReadonlyMap<string, number>;
+      stampsEarned: number;
+      /** A discount its campaign did not allow at the visit's time: the visit is held for the owner (AC 35). */
+      discountRefused: boolean;
+    };
+
+/**
+ * Whether every discounted line of a visit matches a campaign of this café as it stood at the visit's time (AC 35):
+ * made by then and not ended before it (each within its grace period), running at the visit's local weekday and minute
+ * (read by PostgreSQL in the café's time zone), including the line's order type, giving exactly the campaign's
+ * discount on the line's price, and keeping the campaign's margin floor on the line's cost. The counter applies the
+ * same rules offline. "unknown" when a line names a campaign this café does not have. Price and cost are the
+ * counter's (AC 32: never re-priced), so this catches a counter that misapplies a campaign, not one that misstates its
+ * catalog, which could as well send a lower price without any campaign.
+ */
+async function campaignsAllow(trx: Transaction<Database>, cafeId: string, lines: readonly VisitLine[], occurredAt: Date): Promise<"allowed" | "refused" | "unknown"> {
+  const ids = [...new Set(lines.flatMap((line) => (line.campaignId === null ? [] : [line.campaignId])))];
+  if (ids.length === 0) {
+    return "allowed";
+  }
+  const campaigns = new Map((await loadCampaigns(trx, { ids })).map((campaign) => [campaign.id, campaign]));
+  if (campaigns.size !== ids.length) {
+    return "unknown";
+  }
+  const local = await trx
+    .selectFrom("cafes")
+    .select([
+      sql<number>`extract(isodow FROM ${occurredAt}::timestamptz AT TIME ZONE time_zone)::int`.as("weekday"),
+      sql<number>`(extract(hour FROM ${occurredAt}::timestamptz AT TIME ZONE time_zone) * 60 + extract(minute FROM ${occurredAt}::timestamptz AT TIME ZONE time_zone))::int`.as(
+        "minute",
+      ),
+    ])
+    .where("id", "=", cafeId)
+    .executeTakeFirstOrThrow();
+  const at = occurredAt.getTime();
+  const allowed = lines.every((line) => {
+    if (line.campaignId === null) {
+      return true;
+    }
+    const campaign = campaigns.get(line.campaignId);
+    return (
+      campaign !== undefined &&
+      Date.parse(campaign.createdAt) <= at + CAMPAIGN_START_GRACE_MINUTES * MINUTE_MS &&
+      (campaign.endedAt === null || Date.parse(campaign.endedAt) > at - CAMPAIGN_END_GRACE_MINUTES * MINUTE_MS) &&
+      runsAt(campaign, local.weekday, local.minute) &&
+      campaign.orderTypeIds.includes(line.orderTypeId) &&
+      unitDiscountCents(line.unitPriceCents, campaign.discount) === line.unitDiscountCents &&
+      keepsMargin(line.unitPriceCents, line.unitCostCents, campaign.discount, campaign.minMarginPercent)
+    );
+  });
+  return allowed ? "allowed" : "refused";
+}
 
 /**
  * What a visit would do: its card, and the stamps its items earn (the sum over items whose order type earns any, at
- * the order type's current stamps), or why it is refused. Prices stay as the counter sent them (AC 32).
+ * the order type's current stamps), or why it is refused. Prices stay as the counter sent them (AC 32); discounts must
+ * match a campaign running at the visit's time, or the visit is held for the owner (AC 35).
  */
-export async function planVisit(trx: Transaction<Database>, secrets: CustomerSecrets, cafeId: string, payload: VisitRecordedV1Event["payload"]): Promise<VisitPlan> {
+export async function planVisit(trx: Transaction<Database>, secrets: CustomerSecrets, cafeId: string, payload: VisitRecordedPayload, occurredAt: Date): Promise<VisitPlan> {
   const card = await findCard(trx, secrets, cafeId, payload.card);
   if (card.status === "refused") {
     return card;
@@ -75,15 +145,19 @@ export async function planVisit(trx: Transaction<Database>, secrets: CustomerSec
   if (types.length !== ids.length) {
     return { status: "refused", code: "UNKNOWN_ORDER_TYPE" };
   }
+  const discounts = await campaignsAllow(trx, cafeId, visitLines(payload), occurredAt);
+  if (discounts === "unknown") {
+    return { status: "refused", code: "CAMPAIGN_REFUSED" };
+  }
   const stampsEach = new Map(types.map((type) => [type.id, type.stamps_earned]));
   const stampsEarned = payload.items.reduce((sum, item) => sum + item.quantity * (stampsEach.get(item.orderTypeId) ?? 0), 0);
-  return { status: "ready", cardId: card.cardId, identifiedBy: payload.card.kind, stampsEach, stampsEarned };
+  return { status: "ready", cardId: card.cardId, identifiedBy: payload.card.kind, stampsEach, stampsEarned, discountRefused: discounts === "refused" };
 }
 
 /** Stores a visit and its items, held (applied later by the owner) or about to be applied. */
 export async function insertVisit(
   trx: Transaction<Database>,
-  visit: { cafeId: string; syncEventId: string; deviceId: string; staffId: string; occurredAt: Date; totalCents: number; items: readonly VisitItem[] },
+  visit: { cafeId: string; syncEventId: string; deviceId: string; staffId: string; occurredAt: Date; totalCents: number; items: readonly VisitLine[] },
   plan: Extract<VisitPlan, { status: "ready" }>,
 ): Promise<string> {
   const { id } = await trx
@@ -115,6 +189,8 @@ export async function insertVisit(
         unit_cost_cents: item.unitCostCents,
         catalog_version: item.catalogVersion,
         stamps_each: plan.stampsEach.get(item.orderTypeId) ?? 0,
+        campaign_id: item.campaignId,
+        unit_discount_cents: item.unitDiscountCents,
       })),
     )
     .execute();
@@ -215,7 +291,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
     requireSupportedBuild(request, options.releaseBuiltAt);
     const device = deviceOf(request);
     return withCafe(db, device.cafeId, async (trx) => {
-      const cafe = await trx.selectFrom("cafes").select("catalog_version").where("id", "=", device.cafeId).executeTakeFirstOrThrow();
+      const cafe = await trx.selectFrom("cafes").select(["catalog_version", "time_zone"]).where("id", "=", device.cafeId).executeTakeFirstOrThrow();
       const types = await trx
         .selectFrom("order_types")
         .select(["id", "name_ar", "name_en", "price_cents", "cost_cents", "stamps_earned"])
@@ -225,6 +301,8 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
       const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
       return {
         catalogVersion: cafe.catalog_version,
+        timeZone: cafe.time_zone,
+        campaigns: await loadCampaigns(trx, { runningNow: true }),
         orderTypes: types.map((type) => ({
           id: type.id,
           nameAr: type.name_ar,

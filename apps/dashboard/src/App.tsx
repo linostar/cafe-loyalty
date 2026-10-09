@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, noContent } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
 import { CafePage } from "./cafe-page.js";
+import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
 import { ReviewPage } from "./review-page.js";
@@ -27,6 +28,7 @@ type SessionState =
 const OWNER_PAGES = [
   { path: "/", label: "Home" },
   { path: "/cafe", label: "Café" },
+  { path: "/campaigns", label: "Campaigns" },
   { path: "/staff", label: "Staff" },
   { path: "/devices", label: "Devices" },
   { path: "/review", label: "Review" },
@@ -244,6 +246,9 @@ function HomePage({ session }: { session: OwnerSession }) {
           <a href="/cafe">Café</a>: name, loyalty program and order types
         </li>
         <li>
+          <a href="/campaigns">Campaigns</a>: discounts at quiet hours, above your minimum margin
+        </li>
+        <li>
           <a href="/staff">Staff</a>: baristas and their PINs
         </li>
         <li>
@@ -375,6 +380,9 @@ function OwnerArea({ path }: { path: OwnerPath }) {
           break;
         case "/cafe":
           content = <CafePage />;
+          break;
+        case "/campaigns":
+          content = <CampaignsPage />;
           break;
         case "/staff":
           content = <StaffPage />;

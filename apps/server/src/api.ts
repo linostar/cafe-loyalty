@@ -5,6 +5,7 @@ import { registerAccessControl } from "./access.js";
 import type { BackgroundTasks } from "./background.js";
 import type { CustomerSecrets } from "./customer-crypto.js";
 import { cafeRoutes } from "./cafe-routes.js";
+import { campaignRoutes } from "./campaign-routes.js";
 import { deviceRoutes } from "./device-routes.js";
 import type { Mailer } from "./mailer.js";
 import { ownerAuthRoutes } from "./owner-auth.js";
@@ -35,6 +36,7 @@ export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (erro
   registerAccessControl(app, options.db);
   void app.register(ownerAuthRoutes, { prefix: "/auth", db: options.db, mailer: options.mailer, background: options.background, dashboardUrl: options.dashboardUrl });
   void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl });
+  void app.register(campaignRoutes, { db: options.db });
   void app.register(staffRoutes, { db: options.db });
   void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl, releaseBuiltAt: options.releaseBuiltAt });
   void app.register(syncRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs });

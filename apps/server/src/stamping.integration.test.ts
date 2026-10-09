@@ -1,8 +1,18 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { withCafe } from "@cafe-loyalty/db";
-import { COUNTER_BUILT_AT_HEADER, deviceCatalogSchema, redemptionSchema, syncResponseSchema, visitHoursSchema, type VisitHours } from "@cafe-loyalty/shared";
+import {
+  COUNTER_BUILT_AT_HEADER,
+  campaignsSchema,
+  cafeSetupSchema,
+  deviceCatalogSchema,
+  redemptionSchema,
+  syncResponseSchema,
+  visitHoursSchema,
+  type VisitHours,
+} from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { memberVisitHours } from "./cafe-routes.js";
+import { CAMPAIGN_END_GRACE_MINUTES } from "./campaign-routes.js";
 import { signCardQr } from "./customer-crypto.js";
 import { DAILY_STAMP_CAP, STAMP_COOLDOWN_MINUTES } from "./stamping.js";
 import { TEST_SECRETS, signedEvent, useApiHarness, withBearer, withCookie, type PairedDevice } from "./testing/api-harness.js";
@@ -34,18 +44,25 @@ async function cafeApp() {
 type App = Awaited<ReturnType<typeof cafeApp>>;
 let sequence = 0;
 
-function visit(app: App, card: { kind: "qr"; token: string } | { kind: "phone"; phone: string }, options: { at?: Date; items?: unknown[]; device?: PairedDevice } = {}) {
+function visit(
+  app: App,
+  card: { kind: "qr"; token: string } | { kind: "phone"; phone: string },
+  options: { at?: Date; items?: unknown[]; device?: PairedDevice; version?: 1 | 2 } = {},
+) {
   sequence += 1;
   const items = options.items ?? [
     { orderTypeId: app.coffee, quantity: 2, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1 },
     { orderTypeId: app.cake, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 1 },
   ];
-  const totalCents = (items as { quantity: number; unitPriceCents: number }[]).reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0);
+  const totalCents = (items as { quantity: number; unitPriceCents: number; unitDiscountCents?: number }[]).reduce(
+    (sum, item) => sum + item.quantity * (item.unitPriceCents - (item.unitDiscountCents ?? 0)),
+    0,
+  );
   return signedEvent(options.device ?? app.device, {
     eventId: randomUUID(),
     staffId: app.staffId,
     sequence,
-    schemaVersion: 1,
+    schemaVersion: options.version ?? 1,
     type: "visit.recorded",
     occurredAt: (options.at ?? new Date()).toISOString(),
     payload: { card, items, totalCents },
@@ -434,6 +451,135 @@ describe("busy and quiet hours", () => {
       [6, 23, 2],
       [7, 0, 1],
     ]);
+  });
+});
+
+describe("quiet-hour campaigns", () => {
+  const ALL_WEEK = [1, 2, 3, 4, 5, 6, 7];
+  const campaign = (app: App, fields: Record<string, unknown> = {}) =>
+    app.as("POST", "/api/campaigns", {
+      nameAr: "ساعات هادئة",
+      nameEn: "Quiet hours",
+      weekdays: ALL_WEEK,
+      startsMinute: 0,
+      endsMinute: 1440,
+      discount: { kind: "percent", value: 50 },
+      orderTypeIds: [app.coffee],
+      ...fields,
+    });
+  const runningId = async (app: App) => campaignsSchema.parse((await app.as("GET", "/api/campaigns")).json()).running[0]?.id ?? "missing";
+  /** A coffee line as the counter prices it: 300 cents, cost 90. */
+  const coffee = (app: App, line: Record<string, unknown>) => ({ orderTypeId: app.coffee, quantity: 2, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1, ...line });
+
+  it("makes a campaign that keeps the margin floor, refuses one below it naming each order type's floor, and ends it (AC 35)", async () => {
+    const app = await cafeApp();
+    const margin = await app.as("PATCH", "/api/cafe", { minMarginPercent: 30 });
+    expect(margin.statusCode).toBe(200);
+    expect(cafeSetupSchema.parse(margin.json()).cafe.minMarginPercent).toBe(30);
+    // Coffee and cake both sell for $3.00 and cost $0.90, so their floor is $1.17: half off ($1.50) keeps it.
+    const made = await campaign(app);
+    expect(made.statusCode).toBe(201);
+    expect(campaignsSchema.parse(made.json()).running).toMatchObject([
+      { nameEn: "Quiet hours", weekdays: ALL_WEEK, discount: { kind: "percent", value: 50 }, minMarginPercent: 30, orderTypeIds: [app.coffee], endedAt: null },
+    ]);
+    const tooDeep = await campaign(app, { discount: { kind: "percent", value: 70 }, orderTypeIds: [app.coffee, app.cake] });
+    expect(tooDeep.statusCode).toBe(400);
+    expect(tooDeep.json()).toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: [
+        { path: "orderTypeIds", issue: "Coffee would sell for $0.90, below its floor of $1.17 (cost $0.90 plus 30%)." },
+        { path: "orderTypeIds", issue: "Cake would sell for $0.90, below its floor of $1.17 (cost $0.90 plus 30%)." },
+      ],
+    });
+    // A fixed amount is checked the same way: $1.84 off leaves $1.16, a cent below the floor; $1.83 off is allowed.
+    expect((await campaign(app, { discount: { kind: "amount", value: 184 } })).statusCode).toBe(400);
+    expect((await campaign(app, { discount: { kind: "amount", value: 183 } })).statusCode).toBe(201);
+    const offSale = await app.addType("Old blend", 1, false);
+    expect((await campaign(app, { orderTypeIds: [offSale] })).statusCode).toBe(400);
+    expect((await campaign(app, { startsMinute: 900, endsMinute: 900 })).statusCode).toBe(400);
+    // Counters get the running campaigns and the time zone they run in.
+    const catalog = deviceCatalogSchema.parse(
+      (await app.app.inject({ method: "GET", url: "/api/device/catalog", headers: withBearer(app.device.accessToken) })).json(),
+    );
+    expect(catalog.timeZone).toBe("Asia/Beirut");
+    expect(catalog.campaigns.map((entry) => entry.discount)).toEqual([
+      { kind: "amount", value: 183 },
+      { kind: "percent", value: 50 },
+    ]);
+    const id = await runningId(app);
+    const ended = await app.as("POST", `/api/campaigns/${id}/end`);
+    expect(ended.statusCode).toBe(200);
+    expect(campaignsSchema.parse(ended.json()).ended.map((entry) => entry.id)).toEqual([id]);
+    expect((await app.as("POST", `/api/campaigns/${id}/end`)).statusCode).toBe(404);
+    expect(await auditActions(app.owner.cafeId)).toEqual(expect.arrayContaining(["cafe.updated", "campaign.created", "campaign.ended"]));
+  });
+
+  it("records a version 2 visit's discount with its campaign, and holds for the owner a discount its campaign did not allow (AC 35)", async () => {
+    const app = await cafeApp();
+    await app.as("PATCH", "/api/cafe", { minMarginPercent: 30 });
+    await campaign(app);
+    const id = await runningId(app);
+    const card = await issueCard(app.owner.cafeId);
+    const send = async (items: unknown[], at?: Date) => (await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { items, version: 2, ...(at === undefined ? {} : { at }) })]))[0];
+    const cake = { orderTypeId: app.cake, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 1, campaignId: null, unitDiscountCents: 0 };
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 }), cake])).toEqual({ status: "applied", code: "OK" });
+    const { rows } = await context.admin.query<{ campaign_id: string | null; unit_discount_cents: number }>(
+      "SELECT campaign_id, unit_discount_cents FROM app.visit_items WHERE cafe_id = $1 ORDER BY line",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([
+      { campaign_id: id, unit_discount_cents: 150 },
+      { campaign_id: null, unit_discount_cents: 0 },
+    ]);
+    const held = { status: "applied", code: "HELD_FOR_REVIEW" };
+    // Not the campaign's discount; an order type it does not cover; below the floor on the cost the counter sent
+    // ($1.50 is under $1.20 * 1.3 = $1.56); dated before the campaign was made, beyond a slow clock's grace.
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 100 })])).toEqual(held);
+    expect(await send([{ ...cake, campaignId: id, unitDiscountCents: 225 }])).toEqual(held);
+    expect(await send([coffee(app, { unitCostCents: 120, campaignId: id, unitDiscountCents: 150 })])).toEqual(held);
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })], new Date(Date.now() - 60 * MINUTE))).toEqual(held);
+    // A campaign this café does not have is refused outright: no counter of this café could have offered it.
+    expect(await send([coffee(app, { campaignId: randomUUID(), unitDiscountCents: 150 })])).toEqual({ status: "rejected", code: "CAMPAIGN_REFUSED" });
+    // Ended just now, within the grace counters get to hear of it; and long enough ago that they have.
+    await app.as("POST", `/api/campaigns/${id}/end`);
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })])).toEqual({ status: "applied", code: "STAMP_COOLDOWN" });
+    await context.admin.query("UPDATE app.campaigns SET created_at = created_at - interval '1 day', ended_at = now() - make_interval(mins => $2) WHERE id = $1", [
+      id,
+      CAMPAIGN_END_GRACE_MINUTES + 1,
+    ]);
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })])).toEqual(held);
+    // The owner sees why, and an accepted one counts with its discount kept on record.
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string }[] }>().items;
+    expect(queue.map((item) => item.reason)).toEqual(Array.from({ length: 5 }, () => "campaign_check"));
+    expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).statusCode).toBe(200);
+    const { rows: discounted } = await context.admin.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM app.visit_items JOIN app.visits ON visits.id = visit_items.visit_id WHERE visits.cafe_id = $1 AND visits.outcome NOT IN ('held', 'discarded') AND visit_items.campaign_id IS NOT NULL",
+      [app.owner.cafeId],
+    );
+    expect(discounted[0]?.n).toBe(3);
+  });
+
+  it("holds a discount on a weekday or at an hour its campaign does not run, by the café's clock (AC 35)", async () => {
+    const app = await cafeApp();
+    const happened = new Date(Date.now() - 60 * MINUTE);
+    const [weekday, hour] = beirutCell(happened);
+    await campaign(app, { weekdays: ALL_WEEK.filter((day) => day !== weekday) });
+    const otherDays = await runningId(app);
+    await campaign(app, { startsMinute: ((hour + 2) % 22) * 60, endsMinute: ((hour + 2) % 22) * 60 + 60 });
+    const otherHours = campaignsSchema.parse((await app.as("GET", "/api/campaigns")).json()).running.find((entry) => entry.id !== otherDays)?.id ?? "missing";
+    const card = await issueCard(app.owner.cafeId);
+    for (const campaignId of [otherDays, otherHours]) {
+      const [result] = await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: happened, version: 2, items: [coffee(app, { campaignId, unitDiscountCents: 150 })] })]);
+      expect(result).toEqual({ status: "applied", code: "HELD_FOR_REVIEW" });
+    }
+  });
+
+  it("caps the campaigns running at once", async () => {
+    const app = await cafeApp();
+    for (let made = 0; made < 20; made += 1) {
+      expect((await campaign(app)).statusCode).toBe(201);
+    }
+    expect((await campaign(app)).json()).toMatchObject({ code: "CONFLICT" });
   });
 });
 

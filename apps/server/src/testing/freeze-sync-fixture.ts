@@ -46,14 +46,15 @@ async function event(type: string, schemaVersion: number, payload: Record<string
   return { ...fields, signature: Buffer.from(signature).toString("base64url") };
 }
 
-const item = { orderTypeId, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1 };
-const byQr = await event("visit.recorded", 1, { card: { kind: "qr", token: cardQr }, items: [item], totalCents: 700 });
+// The counter records visits as version 2 since Step 12 (lines say whether a campaign discounted them).
+const item = { orderTypeId, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1, campaignId: null, unitDiscountCents: 0 };
+const byQr = await event("visit.recorded", 2, { card: { kind: "qr", token: cardQr }, items: [item], totalCents: 700 });
 // A fake test number (Lebanese mobile format).
-const byPhone = await event("visit.recorded", 1, { card: { kind: "phone", phone: cards.phone.phone }, items: [item], totalCents: 700 });
+const byPhone = await event("visit.recorded", 2, { card: { kind: "phone", phone: cards.phone.phone }, items: [item], totalCents: 700 });
 const lockout = await event("staff.pin_lockout", 1, { failedAttempts: 5, lockedUntil: new Date(Date.parse(recordedAt) + 30_000).toISOString() });
 // A type no release will ever define, standing in for one a newer counter build sends: it must stay unsupported.
 const fromTheFuture = await event("test.never-supported", 1, { note: "from a newer build" });
-const malformed = await event("visit.recorded", 1, { card: { kind: "qr", token: "v1.x" }, items: [], totalCents: 0 });
+const malformed = await event("visit.recorded", 2, { card: { kind: "qr", token: "v1.x" }, items: [], totalCents: 0 });
 
 const fixture: SyncFixture = {
   build: process.env.BUILD_ID ?? "dev",

@@ -183,3 +183,30 @@ footer {
   background: #1a5fb4;
   color: #ffffff;
 }
+
+/* Checkboxes and radio buttons keep their own size; the text inputs above fill the width. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+}
+
+fieldset {
+  margin-block: 1rem;
+  border: 1px solid #d0d0d7;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.choices label,
+.choices-list label {
+  font-weight: 400;
+}
+
+.choices-list {
+  padding: 0;
+  list-style: none;
+}

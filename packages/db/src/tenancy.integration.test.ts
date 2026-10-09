@@ -79,6 +79,24 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .insertInto("order_types")
       .values({ id: idOf("orderType", cafeId), cafe_id: cafeId, name_ar: "إسبريسو", name_en: "Espresso", price_cents: 250, cost_cents: 70 })
       .execute(),
+  campaigns: (trx, cafeId) =>
+    trx
+      .insertInto("campaigns")
+      .values({
+        id: idOf("campaign", cafeId),
+        cafe_id: cafeId,
+        name_ar: "ساعات هادئة",
+        name_en: "Quiet hours",
+        weekdays: [1, 2, 3],
+        starts_minute: 15 * 60,
+        ends_minute: 17 * 60,
+        discount_kind: "percent",
+        discount_value: 20,
+        min_margin_percent: 30,
+      })
+      .execute(),
+  campaign_order_types: (trx, cafeId) =>
+    trx.insertInto("campaign_order_types").values({ cafe_id: cafeId, campaign_id: idOf("campaign", cafeId), order_type_id: idOf("orderType", cafeId) }).execute(),
   audit_log: (trx, cafeId) =>
     trx
       .insertInto("audit_log")
@@ -177,6 +195,8 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
         unit_cost_cents: 70,
         catalog_version: 1,
         stamps_each: 1,
+        campaign_id: idOf("campaign", cafeId),
+        unit_discount_cents: 50,
       })
       .execute(),
   redemptions: (trx, cafeId) =>

@@ -51,11 +51,19 @@ export const visitItemSchema = z.object({
 
 export type VisitItem = z.output<typeof visitItemSchema>;
 
-/** Total of a visit's items in cents, or null if it leaves the accepted range. */
-export function visitItemsTotalCents(items: readonly VisitItem[]): number | null {
+/** One line of a version 2 visit: as version 1, plus the campaign that discounted it and its discount per unit (AC 35). */
+export const visitLineSchema = visitItemSchema
+  .extend({ campaignId: idSchema.nullable(), unitDiscountCents: centsSchema })
+  .refine((line) => line.unitDiscountCents <= line.unitPriceCents, { path: ["unitDiscountCents"], message: "The discount is more than the price." })
+  .refine((line) => line.campaignId !== null || line.unitDiscountCents === 0, { path: ["campaignId"], message: "A discount needs its campaign." });
+
+export type VisitLine = z.output<typeof visitLineSchema>;
+
+/** Total of a visit's items in cents, after any discounts, or null if it leaves the accepted range. */
+export function visitItemsTotalCents(items: readonly (VisitItem & { unitDiscountCents?: number })[]): number | null {
   let total = 0;
   for (const item of items) {
-    total += item.quantity * item.unitPriceCents;
+    total += item.quantity * (item.unitPriceCents - (item.unitDiscountCents ?? 0));
     if (total > MAX_CENTS) {
       return null;
     }
@@ -78,6 +86,16 @@ const v1EnvelopeFields = {
   signature: syncSignatureSchema,
 };
 
+/** A visit's total must equal the sum of its items, after discounts (AC 32). */
+function checkTotal(visit: { items: readonly (VisitItem & { unitDiscountCents?: number })[]; totalCents: number }, context: z.RefinementCtx): void {
+  const total = visitItemsTotalCents(visit.items);
+  if (total === null) {
+    context.addIssue({ code: "custom", path: ["items"], message: "The items add up to more than the largest accepted amount." });
+  } else if (total !== visit.totalCents) {
+    context.addIssue({ code: "custom", path: ["totalCents"], message: "The total does not match the sum of the items." });
+  }
+}
+
 /** Payload of `visit.recorded`, schema version 1. The total must equal the sum of its items (AC 32). */
 export const visitRecordedV1PayloadSchema = z
   .object({
@@ -85,14 +103,16 @@ export const visitRecordedV1PayloadSchema = z
     items: z.array(visitItemSchema).min(1).max(30),
     totalCents: centsSchema,
   })
-  .superRefine((visit, context) => {
-    const total = visitItemsTotalCents(visit.items);
-    if (total === null) {
-      context.addIssue({ code: "custom", path: ["items"], message: "The items add up to more than the largest accepted amount." });
-    } else if (total !== visit.totalCents) {
-      context.addIssue({ code: "custom", path: ["totalCents"], message: "The total does not match the sum of the items." });
-    }
-  });
+  .superRefine(checkTotal);
+
+/** Payload of `visit.recorded`, schema version 2: lines may carry a campaign's discount (AC 35). */
+export const visitRecordedV2PayloadSchema = z
+  .object({
+    card: cardReferenceSchema,
+    items: z.array(visitLineSchema).min(1).max(30),
+    totalCents: centsSchema,
+  })
+  .superRefine(checkTotal);
 
 export const visitRecordedV1EventSchema = z.object({
   ...v1EnvelopeFields,
@@ -102,6 +122,21 @@ export const visitRecordedV1EventSchema = z.object({
 });
 
 export type VisitRecordedV1Event = z.output<typeof visitRecordedV1EventSchema>;
+
+export const visitRecordedV2EventSchema = z.object({
+  ...v1EnvelopeFields,
+  type: z.literal("visit.recorded"),
+  schemaVersion: z.literal(2),
+  payload: visitRecordedV2PayloadSchema,
+});
+
+export type VisitRecordedV2Event = z.output<typeof visitRecordedV2EventSchema>;
+export type VisitRecordedEvent = VisitRecordedV1Event | VisitRecordedV2Event;
+export type VisitRecordedPayload = VisitRecordedEvent["payload"];
+
+/** A visit's lines in the version 2 shape: a version 1 visit's lines have no campaign and no discount. */
+export const visitLines = (payload: VisitRecordedPayload): VisitLine[] =>
+  payload.items.map((item) => ({ campaignId: null, unitDiscountCents: 0, ...item }));
 
 /**
  * `staff.pin_lockout`, schema version 1: the device locked out the envelope's staff member after repeated wrong PINs
@@ -121,12 +156,12 @@ export type StaffPinLockoutV1Event = z.output<typeof staffPinLockoutV1EventSchem
 
 /** Full event schemas by type and version. A pair missing here is unsupported, not invalid. */
 const EVENT_SCHEMAS = {
-  "visit.recorded": { 1: visitRecordedV1EventSchema },
+  "visit.recorded": { 1: visitRecordedV1EventSchema, 2: visitRecordedV2EventSchema },
   "staff.pin_lockout": { 1: staffPinLockoutV1EventSchema },
 } as const;
 
 /** Every event this server understands. */
-export type KnownSyncEvent = VisitRecordedV1Event | StaffPinLockoutV1Event;
+export type KnownSyncEvent = VisitRecordedEvent | StaffPinLockoutV1Event;
 
 export interface SyncIssue {
   path: string;
@@ -261,6 +296,11 @@ export const SYNC_RESULT_CODES = {
   PHONE_NOT_CONFIRMED: "rejected",
   /** Another card here signed up with the same number, so neither is stamped by number: scan the card instead. */
   PHONE_DISPUTED: "rejected",
+  /**
+   * A discounted line names a campaign this café does not have. (A discount a campaign of this café did not allow at
+   * the visit's time is held for the owner instead, AC 35.)
+   */
+  CAMPAIGN_REFUSED: "rejected",
   /** An item names an order type this café does not have. */
   UNKNOWN_ORDER_TYPE: "rejected",
   INVALID_EVENT: "rejected",
@@ -343,11 +383,11 @@ export function readSyncResponse(eventCount: number, body: unknown): ClientSyncR
 }
 
 /**
- * Why an event was held for the owner's review instead of applied: a revoked device or staff member (AC 21), or a
+ * Why an event was held for the owner's review instead of applied: a revoked device or staff member (AC 21), a
  * visit that arrived more than two days after it happened (its time is the device's to set, and decides the daily
- * cap and the cooldown).
+ * cap and the cooldown), or a visit with a discount its campaign did not allow at that time (AC 35).
  */
-export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked", "late_sync"] as const;
+export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked", "late_sync", "campaign_check"] as const;
 
 export type SyncHoldReason = (typeof SYNC_HOLD_REASONS)[number];
 

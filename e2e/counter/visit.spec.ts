@@ -25,7 +25,25 @@ const RAMI = {
   pinIterations: 1000,
 };
 const COFFEE = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
-const CATALOG = { catalogVersion: 4, orderTypes: [COFFEE], program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } };
+const CATALOG = {
+  catalogVersion: 4,
+  timeZone: "Asia/Beirut",
+  campaigns: [] as unknown[],
+  orderTypes: [COFFEE],
+  program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
+};
+/** Half off coffee all day, every day, keeping 30% over its $0.90 cost. */
+const ALL_DAY = {
+  id: "6f7a8b9c-0d1e-4f2a-9b3c-4d5e6f7a8b9c",
+  nameAr: "عرض",
+  nameEn: "All-day offer",
+  weekdays: [1, 2, 3, 4, 5, 6, 7],
+  startsMinute: 0,
+  endsMinute: 1440,
+  discount: { kind: "percent", value: 50 },
+  minMarginPercent: 30,
+  orderTypeIds: [COFFEE.id],
+};
 
 const json = (route: Route): unknown => route.request().postDataJSON();
 
@@ -67,7 +85,29 @@ test("records a visit for a phone number and sends it, priced as the menu showed
         type: "visit.recorded",
         staffId: RAMI.id,
         deviceId: PAIRED.deviceId,
-        payload: { card: { kind: "phone", phone: "+96170123456" }, items: [{ orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, catalogVersion: 4 }], totalCents: 600 },
+        schemaVersion: 2,
+        payload: {
+          card: { kind: "phone", phone: "+96170123456" },
+          items: [{ orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, catalogVersion: 4, campaignId: null, unitDiscountCents: 0 }],
+          totalCents: 600,
+        },
+      },
+    ]);
+});
+
+test("gives a running campaign's discount and sends it with the visit (AC 35)", async ({ page }) => {
+  const synced = await signedIn(page, { "GET /api/device/catalog": reply(200, { ...CATALOG, campaigns: [ALL_DAY] }) });
+  await expect(page.getByText("$1.50 (All-day offer)", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "One more Coffee" }).click();
+  await expect(page.getByText("Total $1.50 · 1 stamp")).toBeVisible();
+  await page.getByLabel("Or the customer's mobile number").fill("70 123 456");
+  await page.getByRole("button", { name: "Record visit" }).click();
+  await expect
+    .poll(() => synced)
+    .toMatchObject([
+      {
+        schemaVersion: 2,
+        payload: { items: [{ orderTypeId: COFFEE.id, quantity: 1, unitPriceCents: 300, campaignId: ALL_DAY.id, unitDiscountCents: 150 }], totalCents: 150 },
       },
     ]);
 });

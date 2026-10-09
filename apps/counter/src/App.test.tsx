@@ -175,7 +175,7 @@ describe("Counter App", () => {
     setOnline(true);
     window.history.replaceState(null, "", "/pair#code=ABCD-1234-EFGH");
     const coffee = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
-    const catalog = { catalogVersion: 1, orderTypes: [coffee], program: null };
+    const catalog = { catalogVersion: 1, timeZone: "Asia/Beirut", campaigns: [], orderTypes: [coffee], program: null };
     await workingApi((call) => (call.path === "/api/device/catalog" ? { status: 200, body: catalog } : undefined));
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Pair this phone" }));
@@ -190,6 +190,20 @@ describe("Counter App", () => {
     await waitFor(() => {
       expect(canApply()).toBe(true);
     });
+  });
+
+  it("works offline from a catalog an older build stored, which has no campaigns", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id });
+    const coffee = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
+    await setMeta("catalog", { catalogVersion: 1, orderTypes: [coffee], program: null });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "One more Coffee" }));
+    expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
   });
 
   it("says so when the server no longer serves this build (AC 26)", async () => {

@@ -7,7 +7,8 @@ test.beforeEach(async ({ page }) => {
 
 const SIGNED_IN = {
   "GET /api/auth/session": reply(200, SESSION),
-  "GET /api/cafe": reply(200, { cafe: { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1 }, program: null, orderTypes: [] }),
+  "GET /api/cafe": reply(200, { cafe: { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30 }, program: null, orderTypes: [] }),
+  "GET /api/campaigns": reply(200, { running: [], ended: [] }),
   "GET /api/cafe/join": reply(200, { joinUrl: "https://card.example.test/join/0123456789abcdef0123456789abcdef" }),
   "GET /api/staff": reply(200, { staff: [] }),
   "GET /api/devices": reply(200, { devices: [], pairingCodes: [] }),
@@ -16,7 +17,7 @@ const SIGNED_IN = {
   "GET /api/cafe/visit-hours": reply(200, visitHours(Array.from({ length: 7 }, () => Array.from({ length: 24 }, (_, hour) => 100 + hour)))),
 };
 
-for (const path of ["/", "/cafe", "/staff", "/devices", "/review", "/account"]) {
+for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/account"]) {
   test(`fits a 360 px phone screen when signed in at ${path}`, async ({ page }) => {
     await page.unrouteAll();
     await mockApi(page, SIGNED_IN);

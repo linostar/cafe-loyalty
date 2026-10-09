@@ -1,7 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 import { SESSION, UNAUTHENTICATED, mockApi, reply } from "./api-mock.js";
 
-const CAFE = { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1 };
+const CAFE = { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30 };
 const ESPRESSO = { id: "3d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f41", nameAr: "إسبريسو", nameEn: "Espresso", priceCents: 250, costCents: 70, stampsEarned: 1, active: true };
 const PROGRAM = { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" };
 
@@ -182,4 +182,27 @@ test("returns to sign-in when the session ends on a page", async ({ page }) => {
   await page.goto("/staff");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Your session has ended. Sign in again.");
+});
+
+test("saves the minimum margin campaigns must keep", async ({ page }) => {
+  let setup = { cafe: CAFE, program: PROGRAM, orderTypes: [ESPRESSO] };
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "PATCH /api/cafe": async (route) => {
+      expect(json(route)).toEqual({ minMarginPercent: 35 });
+      setup = { ...setup, cafe: { ...CAFE, minMarginPercent: 35 } };
+      await route.fulfill({ json: setup });
+    },
+  });
+  await page.goto("/cafe");
+  const margin = page.getByRole("form", { name: "Minimum margin" });
+  await expect(margin.getByLabel("Minimum margin over cost (%)")).toHaveValue("30");
+  await margin.getByLabel("Minimum margin over cost (%)").fill("thirty");
+  await margin.getByRole("button", { name: "Save margin" }).click();
+  await expect(margin.getByText("Enter a whole percentage from 0 to 1000, such as 30.")).toBeVisible();
+  await margin.getByLabel("Minimum margin over cost (%)").fill("35");
+  await margin.getByRole("button", { name: "Save margin" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved.");
 });

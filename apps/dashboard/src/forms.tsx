@@ -91,7 +91,13 @@ export function useSubmit(): SubmitState {
         onSessionEnded(caught.message);
       } else if (caught instanceof ApiRequestError) {
         setError(caught.message);
-        setFieldErrors(Object.fromEntries(caught.details.map((detail) => [detail.path, detail.issue])));
+        // Several issues of one field (such as each order type below a campaign's floor) are all shown.
+        const byField: Record<string, string> = {};
+        for (const detail of caught.details) {
+          const earlier = byField[detail.path];
+          byField[detail.path] = earlier === undefined ? detail.issue : `${earlier} ${detail.issue}`;
+        }
+        setFieldErrors(byField);
       } else {
         setError("Something went wrong on this page. Reload it and try again.");
       }
