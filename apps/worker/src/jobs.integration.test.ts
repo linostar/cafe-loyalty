@@ -203,6 +203,8 @@ describe("job queue", () => {
       expect(await boss.findJobs(APPLE_PASS_UPDATE_QUEUE, { id })).toMatchObject([{ state: "created" }]);
     } finally {
       await task.stop();
+      // The next test's worker has APNs and would take it.
+      await admin.query("DELETE FROM pgboss.job WHERE data->>'passId' = $1", [pass.passId]);
     }
   });
 

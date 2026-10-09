@@ -41,8 +41,9 @@ describe("startJobQueue", () => {
     } finally {
       await admin.query("UPDATE pgboss.version SET version = '45'");
     }
+    // A database that does not exist (CI's server trusts any password, so a wrong one would still connect).
     const unreachable = new URL(db.appUrl);
-    unreachable.password = "wrong-password";
+    unreachable.pathname = "/no_such_database";
     const other = await startFailure(unreachable.toString());
     expect(other).toBeInstanceOf(Error);
     expect(isJobQueueVersionMismatch(other)).toBe(false);
