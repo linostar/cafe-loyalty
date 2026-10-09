@@ -157,7 +157,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
   });
 
   /**
-   * The latest version of a pass: 304 when it has not changed since If-Modified-Since and the device has the current
+   * The latest version of a pass: 304 when it has not changed since If-Modified-Since and was built on the current
    * layout. A pass of an earlier epoch than its card's is voided (the card moved to another phone, AC 8).
    */
   app.get("/v1/passes/:passTypeIdentifier/:serialNumber", async (request, reply) => {
@@ -168,12 +168,22 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
     }
     const since = Date.parse(request.headers["if-modified-since"] ?? "");
     const found = await withCafe(db, pass.cafe_id, async (trx) => {
-      const row = await trx.selectFrom("apple_passes").select(["modified_at", "layout_version"]).where("id", "=", pass.id).executeTakeFirstOrThrow();
-      if (row.layout_version === APPLE_PASS_LAYOUT_VERSION && !Number.isNaN(since) && row.modified_at.getTime() <= since) {
-        return undefined;
-      }
+      let row = await trx.selectFrom("apple_passes").select(["modified_at", "layout_version"]).where("id", "=", pass.id).executeTakeFirstOrThrow();
       if (row.layout_version !== APPLE_PASS_LAYOUT_VERSION) {
-        await trx.updateTable("apple_passes").set({ layout_version: APPLE_PASS_LAYOUT_VERSION }).where("id", "=", pass.id).execute();
+        // Built on another layout: marked changed for every device of the pass, which Wallet fetches one by one (the
+        // request names no device), and before this response, so a failed one is fetched again.
+        row = await trx
+          .updateTable("apple_passes")
+          .set({
+            layout_version: APPLE_PASS_LAYOUT_VERSION,
+            updated_xid: sql<string>`pg_current_xact_id()`,
+            modified_at: sql<Date>`greatest(date_trunc('second', now()), modified_at + interval '1 second')`,
+          })
+          .where("id", "=", pass.id)
+          .returning(["modified_at", "layout_version"])
+          .executeTakeFirstOrThrow();
+      } else if (!Number.isNaN(since) && row.modified_at.getTime() <= since) {
+        return undefined;
       }
       const card = await trx.selectFrom("cards").select(["epoch", "stamps"]).where("id", "=", pass.card_id).executeTakeFirstOrThrow();
       const cafe = await trx.selectFrom("cafes").select("name").where("id", "=", pass.cafe_id).executeTakeFirstOrThrow();

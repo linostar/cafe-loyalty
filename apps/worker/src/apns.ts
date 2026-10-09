@@ -22,8 +22,11 @@ export interface ApnsOptions {
   timeoutMs?: number;
 }
 
-/** Errors APNs answers with 400 for a token that will never work for this topic. */
-const DEAD_TOKEN_REASONS = new Set(["BadDeviceToken", "DeviceTokenNotForTopic"]);
+/**
+ * APNs's 400 for a token that will never work. Not DeviceTokenNotForTopic: that one also answers a worker whose pass
+ * type id differs from the server's, and must fail loudly rather than delete every registration.
+ */
+const DEAD_TOKEN_REASONS = new Set(["BadDeviceToken"]);
 
 /**
  * An APNs client over one HTTP/2 connection, opened on the first push and again after it closes. Each push has a

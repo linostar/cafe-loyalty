@@ -2,23 +2,24 @@ import { APPLE_PASS_UPDATE_QUEUE, sendInTransaction, type Database, type PassUpd
 import { sql, type Transaction } from "kysely";
 
 /**
- * Marks a card's Apple passes changed and queues the push that tells their devices (AC 12, 13), inside the caller's
- * transaction (withCafe for the card's café): a change that rolls back sends nothing, one that commits always has its
- * job, and the stamp itself never waits for APNs. Call it wherever a card's stamps or epoch change.
+ * Queues the push for each of a card's Apple passes this transaction changed (AC 12, 13), inside the same transaction
+ * (withCafe for the card's café): a change that rolls back sends nothing, and the stamp itself never waits for APNs.
+ * The database marks the passes changed when the card's stamps or epoch change (cards_touch_apple_passes, migration
+ * 0008); call this after such a change. Without a job queue (it failed to start) the passes are still marked, and
+ * devices see the change when Wallet next refreshes them.
  */
-export async function queuePassUpdate(trx: Transaction<Database>, jobs: PgBoss, cafeId: string, cardId: string): Promise<void> {
+export async function queuePassUpdate(trx: Transaction<Database>, jobs: PgBoss | undefined, cafeId: string, cardId: string): Promise<void> {
+  if (jobs === undefined) {
+    return;
+  }
   const changed = await trx
-    .updateTable("apple_passes")
-    .set({
-      updated_xid: sql<string>`pg_current_xact_id()`,
-      // Whole seconds, at least one later than before: each change gets a Last-Modified of its own.
-      modified_at: sql<Date>`greatest(date_trunc('second', now()), modified_at + interval '1 second')`,
-    })
+    .selectFrom("apple_passes")
+    .select("id")
     .where("card_id", "=", cardId)
-    .returning("id")
+    .where("updated_xid", "=", sql<string>`pg_current_xact_id()`)
     .execute();
-  if (changed.length > 0) {
-    const job: PassUpdateJob = { cafeId, cardId };
-    await sendInTransaction(jobs, trx, APPLE_PASS_UPDATE_QUEUE, job, { singletonKey: cardId });
+  for (const pass of changed) {
+    const job: PassUpdateJob = { cafeId, passId: pass.id };
+    await sendInTransaction(jobs, trx, APPLE_PASS_UPDATE_QUEUE, job, { singletonKey: pass.id });
   }
 }

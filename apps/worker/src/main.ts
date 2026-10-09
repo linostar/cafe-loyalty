@@ -1,4 +1,4 @@
-import { createDatabase, createJobQueue } from "@cafe-loyalty/db";
+import { JOB_STATEMENT_TIMEOUT_MS, createDatabase, createJobQueue } from "@cafe-loyalty/db";
 import { formatStartupFailure } from "@cafe-loyalty/shared";
 import { createApnsPusher } from "./apns.js";
 import { loadWorkerConfig, type WorkerConfig } from "./config.js";
@@ -15,7 +15,7 @@ try {
 }
 const logger = createLogger(config.LOG_LEVEL);
 if (config.applePasses === undefined) {
-  logger.warn("Apple Wallet is off: no APPLE_PASS_* variables are set, so Apple pass update jobs will fail");
+  logger.warn("Apple Wallet is off: no APPLE_PASS_* variables are set, so Apple pass updates stay queued for a worker that has them");
 }
 
 const database = createDatabase({
@@ -23,8 +23,9 @@ const database = createDatabase({
   applicationName: "cafe-loyalty-worker",
   maxConnections: 4,
   connectionTimeoutMs: 5_000,
-  statementTimeoutMs: 10_000,
-  idleInTransactionTimeoutMs: 15_000,
+  // As short as the job queue's: shutdown waits for a statement on either pool (jobs.ts).
+  statementTimeoutMs: JOB_STATEMENT_TIMEOUT_MS,
+  idleInTransactionTimeoutMs: 3 * JOB_STATEMENT_TIMEOUT_MS,
   idleTimeoutMs: 30_000,
   onPoolError: (error) => {
     logger.error({ err: error }, "database pool error");

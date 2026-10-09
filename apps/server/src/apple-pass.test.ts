@@ -49,7 +49,7 @@ describe("buildApplePass", () => {
   it("has every text in Arabic and English (AC 10)", () => {
     const { text } = open(buildApplePass(apple, "https://card.example.test", content));
     expect(text("en.lproj/pass.strings")).toContain('"stamps_value" = "⁨4⁩ of ⁨9 stamps⁩";');
-    expect(text("en.lproj/pass.strings")).toContain('"reward_value" = "Collect ⁨9⁩ stamps and get: ⁨Free coffee⁩.";');
+    expect(text("en.lproj/pass.strings")).toContain('"reward_value" = "Free coffee";');
     expect(text("en.lproj/pass.strings")).toContain('"description" = "Loyalty card at ⁨Café Nour⁩";');
     expect(text("ar.lproj/pass.strings")).toContain('"stamps_label" = "الأختام";');
     expect(text("ar.lproj/pass.strings")).toContain("قهوة مجانية");
@@ -60,11 +60,15 @@ describe("buildApplePass", () => {
     expect(text("en.lproj/pass.strings")).toContain('"description" = "Loyalty card at ⁨The \\"Bean\\" \\\\ Co⁩";');
   });
 
-  it("voids the pass of an earlier epoch, without a QR code (AC 8)", () => {
+  it("voids the pass of an earlier epoch, without a QR code, saying so in short on its front and in full on its back (AC 8)", () => {
     const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null }));
     expect(json).toMatchObject({ voided: true, storeCard: { secondaryFields: [] } });
     expect(json).not.toHaveProperty("barcodes");
-    expect(text("en.lproj/pass.strings")).toContain('"stamps_value" = "This card was restored on another phone. Use the card there.";');
+    const english = text("en.lproj/pass.strings");
+    expect(english).toContain('"stamps_value" = "Use your new card";');
+    expect(english).toContain('"about_value" = "This card was restored on another phone. Use the card there.";');
+    expect(english).not.toContain("collect stamps");
+    expect(text("ar.lproj/pass.strings")).toContain('"stamps_value" = "استخدم بطاقتك الجديدة";');
   });
 
   it("lists every file in the manifest by its SHA-1 and signs the manifest with the pass type certificate", () => {

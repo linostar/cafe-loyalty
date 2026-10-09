@@ -17,36 +17,42 @@ const PURGE_CRON = "17 * * * *";
 export async function purgeExpiredCredentials(boss: PgBoss, logger: Logger): Promise<Record<string, number>> {
   const { rows } = await boss.getDb().executeSql("SELECT table_name, deleted FROM app.purge_expired_credentials()");
   const deleted = Object.fromEntries((rows as { table_name: string; deleted: string }[]).map((row) => [row.table_name, Number(row.deleted)]));
-  logger.info({ job: PURGE_QUEUE, deleted }, "expired credentials purged");
+  logger.info({ deleted }, "expired credentials purged");
   return deleted;
 }
 
 export interface JobDependencies {
   /** The app's database, for the café jobs (withCafe with the café id from the job). */
   db: Kysely<Database>;
-  /** APNs, or undefined when Apple Wallet is not configured: pass update jobs then fail, logged. */
+  /** APNs, or undefined when Apple Wallet is not configured: this worker then leaves pass updates queued. */
   pusher: PassPusher | undefined;
 }
 
-/** A job handler whose failures are logged: pg-boss records them and retries, but reports them nowhere else. */
-function logged(queue: string, logger: Logger, run: (job: Job) => Promise<object>) {
+/**
+ * A job handler that logs under the job's queue, id and café (when its data names one), and logs its failure:
+ * pg-boss records failures and retries, but reports them nowhere else.
+ */
+function logged(queue: string, logger: Logger, run: (job: Job, log: Logger) => Promise<object>) {
   return async ([job]: Job[]) => {
     if (job === undefined) {
       return {};
     }
+    const cafeId = (job.data as { cafeId?: unknown } | null)?.cafeId;
+    const log = logger.child({ job: queue, jobId: job.id, ...(typeof cafeId === "string" ? { cafeId } : {}) });
     try {
       // The result becomes the job's output.
-      return await run(job);
+      return await run(job, log);
     } catch (error) {
-      logger.error({ err: error, job: queue, jobId: job.id }, "job failed");
+      log.error({ err: error }, "job failed");
       throw error;
     }
   };
 }
 
 /**
- * Runs the job queue: the hourly purge and Apple pass updates. Stopping waits for running jobs at most what is left
- * of `shutdownTimeoutMs` after the longest statement (closing the pool waits for that), so the worker stops in time.
+ * Runs the job queue: the hourly purge and, with APNs, Apple pass updates (without it they wait, queued, for a worker
+ * that has it). Stopping waits for running jobs at most what is left of `shutdownTimeoutMs` after the longest
+ * statement on each of the two pools (pg-boss's and the app's, both closed after it), so the worker stops in time.
  */
 export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: number, dependencies: JobDependencies): WorkerTask {
   return {
@@ -57,20 +63,18 @@ export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: nu
       await boss.schedule(PURGE_QUEUE, PURGE_CRON);
       await boss.work(
         PURGE_QUEUE,
-        logged(PURGE_QUEUE, logger, () => purgeExpiredCredentials(boss, logger)),
+        logged(PURGE_QUEUE, logger, (_job, log) => purgeExpiredCredentials(boss, log)),
       );
-      await boss.work(
-        APPLE_PASS_UPDATE_QUEUE,
-        logged(APPLE_PASS_UPDATE_QUEUE, logger, (job) => {
-          if (dependencies.pusher === undefined) {
-            throw new Error("Apple Wallet is not configured on the worker: set the APPLE_PASS_* variables.");
-          }
-          return pushPassUpdate(dependencies.db, dependencies.pusher, logger, job.data);
-        }),
-      );
+      const { pusher } = dependencies;
+      if (pusher !== undefined) {
+        await boss.work(
+          APPLE_PASS_UPDATE_QUEUE,
+          logged(APPLE_PASS_UPDATE_QUEUE, logger, (job, log) => pushPassUpdate(dependencies.db, pusher, log, job.data)),
+        );
+      }
     },
     async stop() {
-      await boss.stop({ graceful: true, timeout: Math.max(0, shutdownTimeoutMs - JOB_STATEMENT_TIMEOUT_MS - 1_000) });
+      await boss.stop({ graceful: true, timeout: Math.max(0, shutdownTimeoutMs - 2 * JOB_STATEMENT_TIMEOUT_MS - 1_000) });
       dependencies.pusher?.close();
     },
   };

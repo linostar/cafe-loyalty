@@ -205,16 +205,19 @@ export function useApiHarness() {
       return jobs;
     },
 
-    /** Apple pass update jobs queued for a café's cards, oldest first: the card ids, and the job states. */
-    queuedPassUpdates: async (cafeId: string): Promise<{ cardId: string; state: string }[]> => {
-      const { rows } = await context.admin.query<{ card_id: string; state: string }>(
-        "SELECT data->>'cardId' AS card_id, state FROM pgboss.job WHERE name = $1 AND data->>'cafeId' = $2 ORDER BY created_on, id",
+    /** Apple pass update jobs queued for a café's passes, oldest first: the pass ids, and the job states. */
+    queuedPassUpdates: async (cafeId: string): Promise<{ passId: string; state: string }[]> => {
+      const { rows } = await context.admin.query<{ pass_id: string; state: string }>(
+        "SELECT data->>'passId' AS pass_id, state FROM pgboss.job WHERE name = $1 AND data->>'cafeId' = $2 ORDER BY created_on, id",
         [APPLE_PASS_UPDATE_QUEUE, cafeId],
       );
-      return rows.map((row) => ({ cardId: row.card_id, state: row.state }));
+      return rows.map((row) => ({ passId: row.pass_id, state: row.state }));
     },
 
-    harness: async (overrides: { customerLimits?: { signupPerCafe?: number }; secrets?: CustomerSecrets; apple?: ApplePassConfig | null } = {}): Promise<Harness> => {
+    /** `jobs: null` builds the app as the server runs when its job queue could not start. */
+    harness: async (
+      overrides: { customerLimits?: { signupPerCafe?: number }; secrets?: CustomerSecrets; apple?: ApplePassConfig | null; jobs?: null } = {},
+    ): Promise<Harness> => {
       const logs: string[] = [];
       const routes: RegisteredRoute[] = [];
       const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
@@ -235,7 +238,7 @@ export function useApiHarness() {
         publicUrl: PUBLIC_URL,
         releaseBuiltAt: RELEASE_BUILT_AT,
         secrets: overrides.secrets ?? TEST_SECRETS,
-        jobs: context.jobs,
+        jobs: overrides.jobs === null ? undefined : context.jobs,
       });
       const apple = overrides.apple === null ? undefined : (overrides.apple ?? TEST_APPLE);
       await app.register(customerPages, {
@@ -244,7 +247,7 @@ export function useApiHarness() {
         background,
         publicUrl: PUBLIC_URL,
         secrets: overrides.secrets ?? TEST_SECRETS,
-        jobs: context.jobs,
+        jobs: overrides.jobs === null ? undefined : context.jobs,
         apple,
         ...(overrides.customerLimits === undefined ? {} : { limits: overrides.customerLimits }),
       });

@@ -136,7 +136,7 @@ const OUTCOME_CODES: Readonly<Record<Exclude<VisitOutcome, "held" | "discarded">
  * so its daily count is exact. Every stamp is audit-logged with the device and the staff member (AC 30), and the card's
  * wallet passes are updated by a job queued in the same transaction (AC 13).
  */
-export async function applyVisit(trx: Transaction<Database>, jobs: PgBoss, cafeId: string, visitId: string): Promise<SyncResultCode> {
+export async function applyVisit(trx: Transaction<Database>, jobs: PgBoss | undefined, cafeId: string, visitId: string): Promise<SyncResultCode> {
   const visit = await trx
     .selectFrom("visits")
     .select(["card_id", "identified_by", "device_id", "staff_id", "occurred_at", "stamps_earned"])
@@ -200,7 +200,7 @@ export async function applyVisit(trx: Transaction<Database>, jobs: PgBoss, cafeI
 export interface StampingRoutesOptions {
   db: Kysely<Database>;
   secrets: CustomerSecrets;
-  jobs: PgBoss;
+  jobs: PgBoss | undefined;
   releaseBuiltAt: Date;
 }
 

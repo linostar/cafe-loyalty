@@ -6,6 +6,10 @@
 -- old pass stays, so the old phone can still fetch it and gets it voided (AC 8). Deleting the card deletes its passes
 -- and their registrations (AC 9).
 --
+-- A change to a card's stamps or epoch marks its passes changed in the database itself (cards_touch_apple_passes), so
+-- writes from any release, a previous one during a rollback or a deploy included, reach the passes; the application
+-- queues the push.
+--
 -- The PassKit web service finds a pass by the authenticationToken the device sends (its SHA-256 hash) and a device's
 -- passes by its device library identifier (likewise hashed), both through current_secret_hash() (withLookup).
 -- Runs as cl_owner with search_path = app.
@@ -19,7 +23,8 @@ CREATE TABLE apple_passes (
   epoch integer NOT NULL CHECK (epoch >= 1),
   -- SHA-256 of the pass's authenticationToken (AC 11).
   auth_token_hash bytea NOT NULL CHECK (octet_length(auth_token_hash) = 32),
-  -- The layout the device last received (AC 12), so a later layout can be pushed to the passes that lack it.
+  -- The layout the pass was last built with (AC 12): serving a pass on another layout marks it changed, so every
+  -- device of the pass fetches the new layout.
   layout_version integer NOT NULL CHECK (layout_version >= 1),
   -- The transaction that last changed the pass, a 64-bit counter that only grows: the web service's lastUpdated
   -- tags (AC 11). Unlike a sequence value it tells which changes may still be uncommitted (pg_snapshot_xmin), so a
@@ -47,6 +52,26 @@ CREATE TABLE apple_pass_registrations (
   PRIMARY KEY (pass_id, device_library_hash),
   CONSTRAINT apple_pass_registrations_pass_fkey FOREIGN KEY (cafe_id, pass_id) REFERENCES apple_passes (cafe_id, id) ON DELETE CASCADE
 );
+
+-- Marks the passes a card change shows on changed: a stamp change, the card's current pass; an epoch change (recovery),
+-- the pass it replaced, which is now voided. Passes voided before stay as they are, so a lost phone hears nothing of
+-- later visits. Runs as the caller, under its café.
+CREATE FUNCTION touch_apple_passes() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = app, pg_temp
+  AS $$
+BEGIN
+  UPDATE apple_passes
+     SET updated_xid = pg_current_xact_id(),
+         modified_at = greatest(date_trunc('second', now()), modified_at + interval '1 second')
+   WHERE card_id = NEW.id AND epoch = OLD.epoch;
+  RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER cards_touch_apple_passes AFTER UPDATE OF stamps, epoch ON cards
+  FOR EACH ROW WHEN (OLD.stamps IS DISTINCT FROM NEW.stamps OR OLD.epoch IS DISTINCT FROM NEW.epoch)
+  EXECUTE FUNCTION touch_apple_passes();
 
 CREATE INDEX apple_pass_registrations_device_idx ON apple_pass_registrations (device_library_hash);
 
@@ -76,3 +101,4 @@ GRANT SELECT, INSERT ON apple_passes TO cl_app;
 GRANT UPDATE (layout_version, updated_xid, modified_at) ON apple_passes TO cl_app;
 GRANT SELECT, INSERT, DELETE ON apple_pass_registrations TO cl_app;
 GRANT UPDATE (push_token) ON apple_pass_registrations TO cl_app;
+REVOKE ALL ON FUNCTION touch_apple_passes() FROM PUBLIC;

@@ -15,6 +15,7 @@ export {
   APPLE_PASS_UPDATE_QUEUE,
   JOB_STATEMENT_TIMEOUT_MS,
   createJobQueue,
+  isJobQueueVersionMismatch,
   passUpdateJobSchema,
   sendInTransaction,
   startJobQueue,
@@ -24,6 +25,7 @@ export {
 export type { Job, PgBoss } from "pg-boss";
 export { MigrationStateError, migrate, type MigrationLog, type MigrationOutcome } from "./migrate.js";
 export { MIGRATIONS_DIR, MigrationFileError, loadMigrations, parseMigration, type MigrationFile, type MigrationKind } from "./migrations.js";
+export { base64PemSchema, keyFitsCertificate } from "./pem.js";
 export { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 export {
   TABLE_COLUMNS,

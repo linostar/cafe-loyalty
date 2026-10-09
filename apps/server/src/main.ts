@@ -1,4 +1,4 @@
-import { JOB_STATEMENT_TIMEOUT_MS, createDatabase, createJobQueue, startJobQueue } from "@cafe-loyalty/db";
+import { JOB_STATEMENT_TIMEOUT_MS, createDatabase, createJobQueue, isJobQueueVersionMismatch, startJobQueue } from "@cafe-loyalty/db";
 import { formatStartupFailure } from "@cafe-loyalty/shared";
 import { apiRoutes } from "./api.js";
 import { buildApp } from "./app.js";
@@ -46,12 +46,23 @@ const secrets = {
   cardQr: { keys: config.CARD_QR_KEYS },
 };
 
+// pg-boss refuses a database whose pg-boss schema is another version than this release's (a later release upgraded it
+// and this one was rolled back). The server then still serves: stamps are recorded and passes marked changed, but no
+// pass update is pushed until a matching release runs. Any other failure (no database) stops the server.
+let startedJobs: typeof jobs | undefined;
 try {
-  // Refuses a database whose pg-boss schema is not the one this release expects.
   await startJobQueue(jobs);
+  startedJobs = jobs;
 } catch (error) {
-  app.log.fatal({ err: error }, "job queue failed to start");
-  process.exit(1);
+  if (!isJobQueueVersionMismatch(error)) {
+    app.log.fatal({ err: error }, "job queue failed to start");
+    process.exit(1);
+  }
+  app.log.error({ err: error }, "job queue schema is another version than this release's: running without it, so wallet pass updates are not pushed");
+  // Releases whatever the failed start opened.
+  await jobs.stop({ graceful: false }).catch((stopError: unknown) => {
+    app.log.error({ err: stopError }, "job queue failed to stop after its failed start");
+  });
 }
 if (config.applePasses === undefined) {
   app.log.warn("Apple Wallet is off: no APPLE_* variables are set, so web cards offer no Apple pass");
@@ -67,7 +78,7 @@ await app.register(apiRoutes, {
   publicUrl: config.PUBLIC_URL,
   releaseBuiltAt: config.BUILT_AT,
   secrets,
-  jobs,
+  jobs: startedJobs,
 });
 await app.register(customerPages, {
   db: database.db,
@@ -75,7 +86,7 @@ await app.register(customerPages, {
   background,
   publicUrl: config.PUBLIC_URL,
   secrets,
-  jobs,
+  jobs: startedJobs,
   apple: config.applePasses,
 });
 if (config.applePasses !== undefined) {
@@ -85,7 +96,7 @@ if (config.applePasses !== undefined) {
 app.addHook("onClose", async () => {
   await background.drain();
   mailer.close();
-  await jobs.stop({ graceful: true, timeout: JOB_STATEMENT_TIMEOUT_MS + 1_000 });
+  await startedJobs?.stop({ graceful: true, timeout: JOB_STATEMENT_TIMEOUT_MS + 1_000 });
   await database.close();
 });
 

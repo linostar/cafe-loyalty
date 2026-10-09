@@ -48,7 +48,7 @@ export interface SyncRoutesOptions {
   /** To check card QR codes and look up phone numbers of visits. */
   secrets: CustomerSecrets;
   /** The job queue, for the pass updates of stamped cards. */
-  jobs: PgBoss;
+  jobs: PgBoss | undefined;
 }
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
@@ -103,7 +103,7 @@ const alreadyDecided = () => new ApiError("NOT_FOUND", "This event was already a
  * conflict with other content. Actions from a revoked device, a key it had when revoked or a revoked staff member are
  * held for the owner's review (AC 21); PIN lockout reports are audited whatever their source.
  */
-async function recordEvent(db: Kysely<Database>, jobs: PgBoss, secrets: CustomerSecrets, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
+async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secrets: CustomerSecrets, device: DeviceContext, raw: unknown, index: number): Promise<SyncResult> {
   const parsed = parseSyncEvent(raw);
   if (parsed.status === "unsupported") {
     return syncResult(index, parsed.eventId, "UNSUPPORTED_EVENT");
@@ -253,7 +253,7 @@ async function recordEvent(db: Kysely<Database>, jobs: PgBoss, secrets: Customer
 
 async function recordEventSafely(
   db: Kysely<Database>,
-  jobs: PgBoss,
+  jobs: PgBoss | undefined,
   secrets: CustomerSecrets,
   device: DeviceContext,
   raw: unknown,

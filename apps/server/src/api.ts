@@ -26,8 +26,8 @@ export interface ApiOptions {
   releaseBuiltAt: Date;
   /** Card QR keys and the phone lookup pepper, to identify the cards of visits and redemptions. */
   secrets: CustomerSecrets;
-  /** The job queue (send only), for pass updates queued with stamps and redemptions. */
-  jobs: PgBoss;
+  /** The job queue (send only), for pass updates queued with stamps and redemptions; undefined when it could not start. */
+  jobs: PgBoss | undefined;
 }
 
 /** Every API route, behind the access control each declares. Register with `{ prefix: "/api" }`. */

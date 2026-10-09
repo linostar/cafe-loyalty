@@ -38,13 +38,13 @@ class FakePusher implements PassPusher {
   }
 }
 
-/** A worker's job queue writing its log lines to `lines`. */
-function jobQueue() {
+/** A worker's job queue writing its log lines to `lines`; `apns: false` is a worker without Apple Wallet. */
+function jobQueue({ apns = true } = {}) {
   const lines: Record<string, unknown>[] = [];
   const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as Record<string, unknown>) });
   const boss = createJobQueue(db.appUrl, logger, { applicationName: "worker-test", maxConnections: 4 });
   const pusher = new FakePusher();
-  return { boss, task: jobQueueTask(boss, logger, 10_000, { db: db.app.db, pusher }), lines, pusher };
+  return { boss, task: jobQueueTask(boss, logger, 15_000, { db: db.app.db, pusher: apns ? pusher : undefined }), lines, pusher };
 }
 
 const codeOf = (query: Promise<unknown>) =>
@@ -63,28 +63,22 @@ const finished = async (boss: ReturnType<typeof jobQueue>["boss"], queue: string
   return (await boss.findJobs(queue, { id }))[0];
 };
 
-/** A café with a card whose passes (one per epoch given) each have one registered device; returns the push tokens. */
-async function cardWithPasses(epochs: readonly number[]): Promise<{ cafeId: string; cardId: string; tokens: string[] }> {
+/** A café's card with an Apple pass registered on `devices` devices; returns their push tokens. */
+async function passWithDevices(devices: number): Promise<{ cafeId: string; passId: string; tokens: string[] }> {
   const cafeId = randomUUID();
   const cardId = randomUUID();
+  const passId = randomUUID();
   await admin.query("INSERT INTO app.cafes (id, name) VALUES ($1, 'Café')", [cafeId]);
-  await admin.query("INSERT INTO app.cards (id, cafe_id, web_secret_hash, privacy_accepted_at, epoch) VALUES ($1, $2, $3, now(), $4)", [
-    cardId,
+  await admin.query("INSERT INTO app.cards (id, cafe_id, web_secret_hash, privacy_accepted_at) VALUES ($1, $2, $3, now())", [cardId, cafeId, randomBytes(32)]);
+  await admin.query("INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version) VALUES ($1, $2, $3, 1, $4, 1)", [
+    passId,
     cafeId,
+    cardId,
     randomBytes(32),
-    Math.max(...epochs),
   ]);
   const tokens: string[] = [];
-  for (const epoch of epochs) {
-    const passId = randomUUID();
+  for (let device = 0; device < devices; device += 1) {
     const token = randomBytes(32).toString("hex");
-    await admin.query("INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version) VALUES ($1, $2, $3, $4, $5, 1)", [
-      passId,
-      cafeId,
-      cardId,
-      epoch,
-      randomBytes(32),
-    ]);
     await admin.query("INSERT INTO app.apple_pass_registrations (cafe_id, pass_id, device_library_hash, push_token) VALUES ($1, $2, $3, $4)", [
       cafeId,
       passId,
@@ -93,7 +87,7 @@ async function cardWithPasses(epochs: readonly number[]): Promise<{ cafeId: stri
     ]);
     tokens.push(token);
   }
-  return { cafeId, cardId, tokens };
+  return { cafeId, passId, tokens: tokens.sort() };
 }
 
 const registrationTokens = async (cafeId: string): Promise<string[]> =>
@@ -137,49 +131,89 @@ describe("job queue", () => {
     }
   });
 
-  it("pushes an update to every device registered for a card's passes, old epochs included, and drops those APNs reports gone", async () => {
-    const card = await cardWithPasses([1, 2, 3]);
-    const other = await cardWithPasses([1]);
+  it("pushes an update to every device registered for a pass and drops those APNs reports gone", async () => {
+    const pass = await passWithDevices(3);
+    const other = await passWithDevices(1);
     const { boss, task, pusher } = jobQueue();
-    const [kept, gone, alsoKept] = card.tokens;
+    const [kept, gone, alsoKept] = pass.tokens;
     pusher.answers.set(gone ?? "", "unregistered");
     await task.start();
     try {
-      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: card.cafeId, cardId: card.cardId })) ?? "";
+      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: pass.cafeId, passId: pass.passId })) ?? "";
       expect(await finished(boss, APPLE_PASS_UPDATE_QUEUE, id, "completed")).toMatchObject({ output: { sent: 2, removed: 1 } });
-      expect([...pusher.pushed].sort()).toEqual([...card.tokens].sort());
-      expect(await registrationTokens(card.cafeId)).toEqual([kept, alsoKept].sort());
+      expect([...pusher.pushed].sort()).toEqual(pass.tokens);
+      expect(await registrationTokens(pass.cafeId)).toEqual([kept, alsoKept]);
       expect(await registrationTokens(other.cafeId)).toEqual(other.tokens);
     } finally {
       await task.stop();
     }
   });
 
-  it("fails and logs a pass update APNs did not take, keeping the registration for the retry", async () => {
-    const card = await cardWithPasses([1]);
+  it("fails and logs a pass update APNs did not take, with its job and café, keeping the registration", async () => {
+    const pass = await passWithDevices(1);
     const { boss, task, pusher, lines } = jobQueue();
-    pusher.answers.set(card.tokens[0] ?? "", new Error("APNs answered 503."));
+    pusher.answers.set(pass.tokens[0] ?? "", new Error("APNs answered 503."));
     await task.start();
     try {
-      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: card.cafeId, cardId: card.cardId }, { retryLimit: 0 })) ?? "";
+      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: pass.cafeId, passId: pass.passId }, { retryLimit: 0 })) ?? "";
       await finished(boss, APPLE_PASS_UPDATE_QUEUE, id, "failed");
-      expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: "job failed", job: APPLE_PASS_UPDATE_QUEUE, jobId: id }));
-      expect(await registrationTokens(card.cafeId)).toEqual(card.tokens);
+      expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: "job failed", job: APPLE_PASS_UPDATE_QUEUE, jobId: id, cafeId: pass.cafeId }));
+      expect(await registrationTokens(pass.cafeId)).toEqual(pass.tokens);
       // The push token never reaches the logs.
-      expect(JSON.stringify(lines)).not.toContain(card.tokens[0]);
+      expect(JSON.stringify(lines)).not.toContain(pass.tokens[0]);
     } finally {
       await task.stop();
     }
   });
 
-  it("reads only the job's café: a job naming another café's card pushes nothing and removes nothing (AC 2)", async () => {
-    const mine = await cardWithPasses([1]);
-    const theirs = await cardWithPasses([1]);
+  it("retries a failed pass update with backoff, as its queue is set up (AC 13)", async () => {
+    const pass = await passWithDevices(1);
+    const { boss, task, pusher } = jobQueue();
+    pusher.answers.set(pass.tokens[0] ?? "", new Error("APNs answered 503."));
+    await task.start();
+    try {
+      expect(await boss.getQueue(APPLE_PASS_UPDATE_QUEUE)).toMatchObject({
+        policy: "short",
+        retryLimit: 12,
+        retryDelay: 30,
+        retryBackoff: true,
+        retryDelayMax: 3_600,
+        expireInSeconds: 120,
+      });
+      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: pass.cafeId, passId: pass.passId })) ?? "";
+      await vi.waitFor(
+        async () => {
+          expect(await boss.findJobs(APPLE_PASS_UPDATE_QUEUE, { id })).toMatchObject([{ state: "retry", retryLimit: 12 }]);
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("leaves pass updates queued on a worker without Apple Wallet, for one that has it", async () => {
+    const pass = await passWithDevices(1);
+    const { boss, task } = jobQueue({ apns: false });
+    await task.start();
+    try {
+      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: pass.cafeId, passId: pass.passId })) ?? "";
+      // Longer than pg-boss's polling interval (2 seconds).
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(await boss.findJobs(APPLE_PASS_UPDATE_QUEUE, { id })).toMatchObject([{ state: "created" }]);
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("reads only the job's café: a job naming another café's pass pushes nothing and removes nothing (AC 2)", async () => {
+    const mine = await passWithDevices(1);
+    const theirs = await passWithDevices(1);
     const { boss, task, pusher } = jobQueue();
     pusher.answers.set(theirs.tokens[0] ?? "", "unregistered");
     await task.start();
     try {
-      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: mine.cafeId, cardId: theirs.cardId })) ?? "";
+      const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: mine.cafeId, passId: theirs.passId })) ?? "";
       expect(await finished(boss, APPLE_PASS_UPDATE_QUEUE, id, "completed")).toMatchObject({ output: { sent: 0, removed: 0 } });
       expect(pusher.pushed).toEqual([]);
       expect(await registrationTokens(theirs.cafeId)).toEqual(theirs.tokens);

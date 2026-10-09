@@ -1,4 +1,4 @@
-import { X509Certificate, createPrivateKey } from "node:crypto";
+import { base64PemSchema, keyFitsCertificate } from "@cafe-loyalty/db";
 import { loadEnv } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
@@ -43,23 +43,6 @@ const keyringSchema = z
     return keys;
   });
 export const counterUrlSchema = originSchema("counter app", "https://counter.example.com");
-
-/** A PEM certificate or private key, base64-encoded on one line (kept in step with the worker's config.ts). */
-const base64Pem = (kind: "certificate" | "private key") =>
-  z.string().transform((value, context) => {
-    const pem = Buffer.from(value, "base64").toString("utf8");
-    try {
-      if (kind === "certificate") {
-        new X509Certificate(pem);
-      } else {
-        createPrivateKey(pem);
-      }
-    } catch {
-      context.addIssue({ code: "custom", message: `Use the ${kind} as PEM, base64-encoded on one line (base64 -w0).` });
-      return z.NEVER;
-    }
-    return pem;
-  });
 
 const APPLE_KEYS = ["APPLE_PASS_TYPE_ID", "APPLE_TEAM_ID", "APPLE_PASS_CERTIFICATE", "APPLE_PASS_KEY", "APPLE_WWDR_CERTIFICATE"] as const;
 
@@ -114,9 +97,9 @@ const serverEnvSchema = z.object({
    */
   APPLE_PASS_TYPE_ID: z.string().regex(/^pass(\.[A-Za-z0-9-]+)+$/, "Use the pass type identifier, such as pass.com.example.loyalty.").optional(),
   APPLE_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, "Use the 10-character team id of the Apple developer account.").optional(),
-  APPLE_PASS_CERTIFICATE: base64Pem("certificate").optional(),
-  APPLE_PASS_KEY: base64Pem("private key").optional(),
-  APPLE_WWDR_CERTIFICATE: base64Pem("certificate").optional(),
+  APPLE_PASS_CERTIFICATE: base64PemSchema("certificate").optional(),
+  APPLE_PASS_KEY: base64PemSchema("private key").optional(),
+  APPLE_WWDR_CERTIFICATE: base64PemSchema("certificate").optional(),
 })
   .superRefine((env, context) => {
     const missingApple = APPLE_KEYS.filter((key) => env[key] === undefined);
@@ -128,7 +111,7 @@ const serverEnvSchema = z.object({
     if (
       env.APPLE_PASS_CERTIFICATE !== undefined &&
       env.APPLE_PASS_KEY !== undefined &&
-      !new X509Certificate(env.APPLE_PASS_CERTIFICATE).checkPrivateKey(createPrivateKey(env.APPLE_PASS_KEY))
+      !keyFitsCertificate(env.APPLE_PASS_CERTIFICATE, env.APPLE_PASS_KEY)
     ) {
       context.addIssue({ code: "custom", path: ["APPLE_PASS_KEY"], message: "Use the private key of APPLE_PASS_CERTIFICATE." });
     }

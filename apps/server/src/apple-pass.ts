@@ -13,8 +13,9 @@ export interface ApplePassConfig {
 }
 
 /**
- * The pass layout this release builds, stored per pass when a device receives it (AC 12). Bump it when the layout
- * changes, so the passes still on an older one can be found and pushed.
+ * The pass layout this release builds, stored per pass (AC 12). A pass on another layout counts as changed when next
+ * fetched, so every device of it gets the new layout; bump this when the layout changes (and, to reach passes nobody
+ * fetches, push those whose layout_version is older).
  */
 export const APPLE_PASS_LAYOUT_VERSION = 1;
 
@@ -77,20 +78,20 @@ const stringsValue = (value: string): string => value.replace(/\\/g, "\\\\").rep
 function passStrings(lang: Lang, content: ApplePassContent): Record<string, string> {
   const { program } = content;
   const reward = program === undefined ? undefined : lang === "ar" ? program.rewardNameAr : program.rewardNameEn;
+  // A voided pass says so in short on its front, where Wallet cuts long text, and in full on its back.
+  const moved = content.qr === null;
   const strings: Record<string, string> = {
     description: t(lang, "passDescription", { cafe: content.cafeName }),
-    stamps_label: t(lang, content.qr === null ? "passMovedLabel" : "passStampsLabel"),
-    stamps_value:
-      content.qr === null
-        ? t(lang, "passMovedText")
-        : program === undefined
-          ? count(lang, "stamps", content.stamps)
-          : t(lang, "stampsProgress", { stamps: content.stamps, required: count(lang, "stamps", program.stampsRequired) }),
-    about_label: t(lang, "passAboutLabel"),
-    about_value: t(lang, "passAboutText"),
-    ...(program === undefined || reward === undefined
-      ? {}
-      : { reward_label: t(lang, "passRewardLabel"), reward_value: t(lang, "programSummary", { stamps: program.stampsRequired, reward }) }),
+    stamps_label: t(lang, moved ? "passMovedLabel" : "passStampsLabel"),
+    stamps_value: moved
+      ? t(lang, "passMovedValue")
+      : program === undefined
+        ? count(lang, "stamps", content.stamps)
+        : t(lang, "stampsProgress", { stamps: content.stamps, required: count(lang, "stamps", program.stampsRequired) }),
+    about_label: t(lang, moved ? "passMovedLabel" : "passAboutLabel"),
+    about_value: t(lang, moved ? "passMovedText" : "passAboutText"),
+    // The stamps it takes show above, as "4 of 9 stamps".
+    ...(reward === undefined ? {} : { reward_label: t(lang, "passRewardLabel"), reward_value: reward }),
   };
   return Object.fromEntries(Object.entries(strings).map(([key, value]) => [key, stringsValue(value)]));
 }

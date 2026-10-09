@@ -95,14 +95,18 @@ describe("APNs pusher", () => {
   });
 
   it("reports a device APNs says is gone (410) or whose token can never work", async () => {
-    const answers = [reply(410, { reason: "Unregistered" }), reply(400, { reason: "BadDeviceToken" }), reply(400, { reason: "DeviceTokenNotForTopic" })];
+    const answers = [reply(410, { reason: "Unregistered" }), reply(400, { reason: "BadDeviceToken" })];
     const { origin } = await fakeApns((response) => {
       answers.shift()?.(response);
     });
     const apnsClient = client(origin);
     expect(await apnsClient.push(TOKEN)).toBe("unregistered");
     expect(await apnsClient.push(TOKEN)).toBe("unregistered");
-    expect(await apnsClient.push(TOKEN)).toBe("unregistered");
+  });
+
+  it("fails a token for another topic, which a worker with the wrong pass type id gets for every device", async () => {
+    const { origin } = await fakeApns(reply(400, { reason: "DeviceTokenNotForTopic" }));
+    await expect(client(origin).push(TOKEN)).rejects.toThrow("APNs answered 400 (DeviceTokenNotForTopic).");
   });
 
   it("fails any other answer, naming the status and reason but never the token", async () => {

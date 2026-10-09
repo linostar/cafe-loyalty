@@ -46,7 +46,7 @@ export interface CustomerPagesOptions {
   publicUrl: string;
   secrets: CustomerSecrets;
   /** The job queue, for pass updates after a recovery. */
-  jobs: PgBoss;
+  jobs: PgBoss | undefined;
   /** Apple Wallet settings; without them the web card offers no Apple pass. */
   apple?: ApplePassConfig | undefined;
   /** Overrides for tests: signups per café per hour (default 1,000). */
@@ -74,6 +74,12 @@ const formOf = (request: FastifyRequest): Form =>
     : {};
 
 const queryLang = (request: FastifyRequest): unknown => (request.query as { lang?: unknown } | undefined)?.lang;
+
+/**
+ * Whether the browser is on an Apple device, which can add a pass to Apple Wallet (an iPhone, an iPad, or a Mac with
+ * Wallet through iCloud). Others are not offered a file they cannot open.
+ */
+const onAppleDevice = (request: FastifyRequest): boolean => /\b(iPhone|iPad|iPod|Macintosh)\b/.test(request.headers["user-agent"] ?? "");
 
 const langOf = (request: FastifyRequest): Lang => pickLang(queryLang(request) ?? formOf(request).lang, request.headers["accept-language"]);
 
@@ -354,10 +360,11 @@ ${errorBlock(errors.privacy, "privacy-error")}
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     const { saved } = request.query as { saved?: string };
-    return sendPage(reply, 200, await cardPage(lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
+    return sendPage(reply, 200, await cardPage(request, lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
   });
 
   async function cardPage(
+    request: FastifyRequest,
     lang: Lang,
     secret: string,
     card: NonNullable<Awaited<ReturnType<typeof findCard>>>,
@@ -379,7 +386,7 @@ ${notice === undefined ? null : html`<p class="notice" role="status">${notice}</
 <p class="stamps">${program === undefined ? count(lang, "stamps", card.stamps) : t(lang, "stampsProgress", { stamps: card.stamps, required: count(lang, "stamps", program.stamps_required) })}</p>
 ${reward === undefined || program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
 <img class="qr" src="${qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
-${options.apple === undefined ? null : html`<p><a class="wallet" href="${path}/apple-pass" lang="${lang}">${t(lang, "addToAppleWallet")}</a></p>`}
+${options.apple === undefined || !onAppleDevice(request) ? null : html`<p><a class="wallet" href="${path}/apple-pass?lang=${lang}">${t(lang, "addToAppleWallet")}</a></p>`}
 <p>${t(lang, "keepLink")}</p>
 <section aria-labelledby="email-title">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
@@ -464,7 +471,7 @@ ${errorBlock(errors.delete, "delete-error")}
     const raw = formOf(request).email?.trim() ?? "";
     const parsed = raw === "" ? null : ownerEmailSchema.safeParse(raw);
     if (parsed !== null && !parsed.success) {
-      return sendPage(reply, 400, await cardPage(lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
+      return sendPage(reply, 400, await cardPage(request, lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
     }
     const email = parsed === null ? null : parsed.data;
     await withCafe(db, card.cafe_id, async (trx) => {
@@ -505,7 +512,7 @@ ${errorBlock(errors.delete, "delete-error")}
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     if (formOf(request).confirm !== "yes") {
-      return sendPage(reply, 400, await cardPage(lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
+      return sendPage(reply, 400, await cardPage(request, lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
     }
     await withCafe(db, card.cafe_id, (trx) => deleteCard(trx, card));
     request.log.info({ cafeId: card.cafe_id }, "customer card deleted");

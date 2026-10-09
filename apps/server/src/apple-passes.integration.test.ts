@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { withCafe } from "@cafe-loyalty/db";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
+import pg from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { applePassToken } from "./apple-pass.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, signCardQr } from "./customer-crypto.js";
+import { queuePassUpdate } from "./pass-updates.js";
 import { MAX_REGISTRATIONS_PER_PASS } from "./passkit-routes.js";
 import { unzipPass } from "./testing/certificates.js";
 import { TEST_SECRETS, signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
@@ -15,6 +18,8 @@ const { harness, signUp, pairDevice, issueCard, queuedPassUpdates } = context;
 const PASS_TYPE = "pass.example.test";
 const PUSH_TOKEN = "ab".repeat(32);
 const HOUR = 60 * 60 * 1000;
+const IPHONE = { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" };
+const ANDROID = { "user-agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36" };
 
 const formBody = (fields: Record<string, string>) => ({
   headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -90,6 +95,11 @@ const serials = (app: App, device: string, since?: string) =>
 const latest = (app: App, pass: Pick<DownloadedPass, "serial" | "token">, headers: Record<string, string> = {}) =>
   app.app.inject({ method: "GET", url: `/passkit/v1/passes/${PASS_TYPE}/${pass.serial}`, headers: { ...auth(pass.token), ...headers } });
 
+async function modifiedAt(passId: string): Promise<Date | undefined> {
+  const { rows } = await context.admin.query<{ modified_at: Date }>("SELECT modified_at FROM app.apple_passes WHERE id = $1", [passId]);
+  return rows[0]?.modified_at;
+}
+
 async function registrations(passId: string) {
   const { rows } = await context.admin.query<{ device_library_hash: Buffer; push_token: string }>(
     "SELECT device_library_hash, push_token FROM app.apple_pass_registrations WHERE pass_id = $1 ORDER BY updated_at",
@@ -99,12 +109,14 @@ async function registrations(passId: string) {
 }
 
 describe("Apple pass downloads", () => {
-  it("offers the card as an Apple pass on the web card, the same pass on every download (AC 10, 11)", async () => {
+  it("offers the card as an Apple pass on an Apple device's web card, the same pass on every download (AC 10, 11)", async () => {
     const app = await cafeApp();
     const card = await issueCard(app.owner.cafeId);
-    const page = await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en` });
-    expect(page.body).toContain(`href="/c/${card.webSecret}/apple-pass"`);
+    const page = await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: IPHONE });
+    expect(page.body).toContain(`href="/c/${card.webSecret}/apple-pass?lang=en"`);
     expect(page.body).toContain("Add to Apple Wallet");
+    // An Android phone cannot open a .pkpass, so it is not offered one.
+    expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: ANDROID })).body).not.toContain("apple-pass");
 
     const first = await download(app, card.webSecret);
     const again = await download(app, card.webSecret);
@@ -120,7 +132,7 @@ describe("Apple pass downloads", () => {
   it("offers no Apple pass when Apple Wallet is not configured", async () => {
     const app = await cafeApp({ apple: null });
     const card = await issueCard(app.owner.cafeId);
-    expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en` })).body).not.toContain("apple-pass");
+    expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: IPHONE })).body).not.toContain("apple-pass");
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}/apple-pass` })).statusCode).toBe(404);
     expect((await app.app.inject({ method: "GET", url: `/passkit/v1/devices/device-1/registrations/${PASS_TYPE}` })).statusCode).toBe(404);
   });
@@ -181,6 +193,27 @@ describe("PassKit web service (AC 11)", () => {
     expect((await serials(app, "device-2", "99999999999999999999")).statusCode).toBe(400);
   });
 
+  it("lists a pass changed by a transaction that was still running when the device got its tag", async () => {
+    const app = await cafeApp();
+    const pass = await download(app, (await issueCard(app.owner.cafeId)).webSecret);
+    await register(app, pass, "device-3");
+    const writer = new pg.Client({ connectionString: context.testDb.adminUrl });
+    await writer.connect();
+    try {
+      // A stamp's transaction: it changed the pass before the tag was read, and commits after.
+      await writer.query("BEGIN");
+      await writer.query("UPDATE app.apple_passes SET updated_xid = pg_current_xact_id() WHERE id = $1", [pass.serial]);
+      const tag = (await serials(app, "device-3")).json<{ lastUpdated: string }>().lastUpdated;
+      await writer.query("COMMIT");
+      const next = await serials(app, "device-3", tag);
+      expect(next.statusCode).toBe(200);
+      expect(next.json<{ serialNumbers: string[] }>().serialNumbers).toEqual([pass.serial]);
+    } finally {
+      await writer.query("ROLLBACK").catch(() => undefined);
+      await writer.end();
+    }
+  });
+
   it("sends the latest pass, 304 while it is unchanged, and the new stamps after a visit", async () => {
     const app = await cafeApp();
     const card = await issueCard(app.owner.cafeId);
@@ -196,6 +229,34 @@ describe("PassKit web service (AC 11)", () => {
     expect(updated.statusCode).toBe(200);
     expect(readPass(updated).strings("en")).toContain('"stamps_value" = "⁨1⁩ of ⁨2 stamps⁩";');
     expect(Date.parse(String(updated.headers["last-modified"]))).toBeGreaterThan(Date.parse(lastModified));
+  });
+
+  it("sends a pass built on another layout to every device again, even one that has the current version", async () => {
+    const app = await cafeApp();
+    const pass = await download(app, (await issueCard(app.owner.cafeId)).webSecret);
+    const lastModified = String((await latest(app, pass)).headers["last-modified"]);
+    // As a release with another pass layout left it.
+    await context.admin.query("UPDATE app.apple_passes SET layout_version = 2 WHERE id = $1", [pass.serial]);
+    const relaid = await latest(app, pass, { "if-modified-since": lastModified });
+    expect(relaid.statusCode).toBe(200);
+    expect(Date.parse(String(relaid.headers["last-modified"]))).toBeGreaterThan(Date.parse(lastModified));
+    // A second device of the pass, still holding the old version, gets it too; the new version is then current.
+    expect((await latest(app, pass, { "if-modified-since": lastModified })).statusCode).toBe(200);
+    expect((await latest(app, pass, { "if-modified-since": String(relaid.headers["last-modified"]) })).statusCode).toBe(304);
+    const { rows } = await context.admin.query("SELECT layout_version FROM app.apple_passes WHERE id = $1", [pass.serial]);
+    expect(rows).toEqual([{ layout_version: 1 }]);
+  });
+
+  it("marks a pass changed by any write to its card's stamps, a previous release's included", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const pass = await download(app, card.webSecret);
+    const lastModified = String((await latest(app, pass)).headers["last-modified"]);
+    // Not through this release's code: the database marks the pass.
+    await context.admin.query("UPDATE app.cards SET stamps = 1 WHERE id = $1", [card.cardId]);
+    const updated = await latest(app, pass, { "if-modified-since": lastModified });
+    expect(updated.statusCode).toBe(200);
+    expect(readPass(updated).strings("en")).toContain('"stamps_value" = "⁨1⁩ of ⁨2 stamps⁩";');
   });
 
   it("unregisters a device, and keeps only a pass's newest registrations", async () => {
@@ -222,15 +283,15 @@ describe("PassKit web service (AC 11)", () => {
 });
 
 describe("pass updates", () => {
-  it("queues one update job per card in the stamping transaction, folding updates while one waits, and none without a pass (AC 13)", async () => {
+  it("queues one update job per pass in the stamping transaction, folding updates while one waits, and none without a pass (AC 13)", async () => {
     const app = await cafeApp();
     const withPass = await issueCard(app.owner.cafeId);
     const withoutPass = await issueCard(app.owner.cafeId);
-    await download(app, withPass.webSecret);
+    const pass = await download(app, withPass.webSecret);
     expect(await stamp(app, withPass.qr, new Date(Date.now() - 2 * HOUR))).toBe("OK");
     expect(await stamp(app, withPass.qr, new Date(Date.now() - HOUR))).toBe("OK");
     expect(await stamp(app, withoutPass.qr)).toBe("OK");
-    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ cardId: withPass.cardId, state: "created" }]);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
 
     // A reward changes the stamps too.
     await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
@@ -241,7 +302,35 @@ describe("pass updates", () => {
       payload: { eventId: randomUUID(), staffId: app.staffId, cardQr: withPass.qr },
     });
     expect(redeemed.statusCode).toBe(201);
-    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ cardId: withPass.cardId, state: "created" }]);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+  });
+
+  it("queues nothing when the stamp's transaction rolls back", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const pass = await download(app, card.webSecret);
+    const change = (rollBack: boolean) =>
+      withCafe(context.testDb.app.db, app.owner.cafeId, async (trx) => {
+        await trx.updateTable("cards").set({ stamps: rollBack ? 2 : 1 }).where("id", "=", card.cardId).execute();
+        await queuePassUpdate(trx, context.jobs, app.owner.cafeId, card.cardId);
+        if (rollBack) {
+          throw new Error("rolled back");
+        }
+      });
+    await expect(change(true)).rejects.toThrow("rolled back");
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([]);
+    await change(false);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+  });
+
+  it("still records stamps and marks passes changed when the job queue could not start, pushing nothing", async () => {
+    const app = await cafeApp({ jobs: null });
+    const card = await issueCard(app.owner.cafeId);
+    const pass = await download(app, card.webSecret);
+    const before = await modifiedAt(pass.serial);
+    expect(await stamp(app, card.qr)).toBe("OK");
+    expect((await modifiedAt(pass.serial))?.getTime()).toBeGreaterThan(before?.getTime() ?? Infinity);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([]);
   });
 
   it("voids the old phone's pass by an update after a recovery, and gives the new phone a pass of its own (AC 8)", async () => {
@@ -260,7 +349,7 @@ describe("pass updates", () => {
     const restored = await app.app.inject({ method: "POST", url: `/r/${recovery}`, ...formBody({ action: "restore", lang: "en" }) });
     expect(restored.statusCode).toBe(303);
     const newSecret = /^\/c\/([A-Za-z0-9_-]{43})\?/.exec(String(restored.headers.location))?.[1] ?? "missing";
-    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ cardId: card.cardId, state: "created" }]);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: old.serial, state: "created" }]);
 
     const voided = readPass(await latest(app, old));
     expect(voided.json).toMatchObject({ voided: true });
@@ -269,7 +358,15 @@ describe("pass updates", () => {
     const fresh = await download(app, newSecret);
     expect(fresh.serial).not.toBe(old.serial);
     expect(fresh.token).not.toBe(old.token);
-    expect(fresh.json).toMatchObject({ barcodes: [{ message: signCardQr(TEST_SECRETS, { cardId: card.cardId, cafeId: app.owner.cafeId, epoch: 2 }) }] });
+    const newQr = signCardQr(TEST_SECRETS, { cardId: card.cardId, cafeId: app.owner.cafeId, epoch: 2 });
+    expect(fresh.json).toMatchObject({ barcodes: [{ message: newQr }] });
+
+    // Visits on the new phone reach its pass only: the old one is never touched or pushed again.
+    await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
+    const oldModified = await modifiedAt(old.serial);
+    expect(await stamp(app, newQr)).toBe("OK");
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: fresh.serial, state: "created" }]);
+    expect(await modifiedAt(old.serial)).toEqual(oldModified);
   });
 
   it("deletes a card's passes and their registrations with the card (AC 9)", async () => {
