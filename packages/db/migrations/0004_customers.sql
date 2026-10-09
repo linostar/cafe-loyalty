@@ -19,7 +19,9 @@ CREATE FUNCTION current_customer_id() RETURNS uuid
 ALTER TABLE cafes
   ADD COLUMN join_code text NOT NULL DEFAULT pg_catalog.replace(pg_catalog.gen_random_uuid()::text, '-', '')
     CHECK (join_code ~ '^[0-9a-f]{32}$'),
-  ADD COLUMN join_code_hash bytea GENERATED ALWAYS AS (pg_catalog.sha256(pg_catalog.convert_to(join_code, 'UTF8'))) STORED;
+  -- decode(..., 'escape') is immutable, as a generated column needs (convert_to is not); for a code of hex digits
+  -- it gives the same bytes as the UTF-8 the server hashes.
+  ADD COLUMN join_code_hash bytea GENERATED ALWAYS AS (pg_catalog.sha256(pg_catalog.decode(join_code, 'escape'))) STORED;
 
 ALTER TABLE cafes ADD CONSTRAINT cafes_join_code_key UNIQUE (join_code);
 
