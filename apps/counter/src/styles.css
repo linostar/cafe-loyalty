@@ -99,4 +99,6 @@ button.danger {
 
 .build {
   color: #4a4a4f;
+  /* A 40-character commit hash in CI and production: let it wrap on a phone. */
+  overflow-wrap: anywhere;
 }

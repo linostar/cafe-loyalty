@@ -130,6 +130,11 @@ button.danger {
   background: #ffffff;
 }
 
+/* The build id is a 40-character commit hash in CI and production: let it wrap on a phone. */
+footer {
+  overflow-wrap: anywhere;
+}
+
 .link {
   overflow-wrap: anywhere;
   font-family: ui-monospace, monospace;
