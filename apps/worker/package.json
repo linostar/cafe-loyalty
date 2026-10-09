@@ -11,10 +11,13 @@
   },
   "dependencies": {
     "@cafe-loyalty/shared": "workspace:*",
+    "pg-boss": "^12.37.0",
     "pino": "^10.4.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@cafe-loyalty/db": "workspace:*",
+    "kysely": "^0.29.6",
     "tsx": "^4.23.15"
   }
 }

@@ -63,6 +63,16 @@ describe("findForbiddenStatements", () => {
     },
   );
 
+  it("allows a function's own search path, but not a session's", () => {
+    expect(
+      findForbiddenStatements("CREATE FUNCTION f() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = app, pg_temp AS $$ SELECT 1 $$;"),
+    ).toEqual([]);
+    expect(findForbiddenStatements("CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$; SET search_path = public;")).toHaveLength(1);
+    // Only the path itself is let through: another SET clause after it is still caught.
+    expect(findForbiddenStatements("CREATE FUNCTION f() RETURNS int LANGUAGE sql SET search_path TO app SET role TO cl_owner AS $$ SELECT 1 $$;")).toHaveLength(1);
+    expect(findForbiddenStatements("CREATE FUNCTION f() RETURNS int LANGUAGE sql SET search_path = app, pg_temp SET session authorization TO x AS $$ SELECT 1 $$;")).toHaveLength(1);
+  });
+
   it("allows plpgsql BEGIN and END inside a function body", () => {
     expect(findForbiddenStatements("CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;")).toEqual([]);
   });
