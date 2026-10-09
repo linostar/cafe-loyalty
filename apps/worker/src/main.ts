@@ -1,5 +1,6 @@
 import { formatStartupFailure } from "@cafe-loyalty/shared";
 import { loadWorkerConfig, type WorkerConfig } from "./config.js";
+import { createJobQueue, jobQueueTask } from "./jobs.js";
 import { createLogger } from "./logger.js";
 import { runWorker, type WorkerTask } from "./worker.js";
 
@@ -12,7 +13,7 @@ try {
 }
 const logger = createLogger(config.LOG_LEVEL);
 
-const tasks: WorkerTask[] = [];
+const tasks: WorkerTask[] = [jobQueueTask(createJobQueue(config.DATABASE_URL, logger), logger, config.SHUTDOWN_TIMEOUT_MS)];
 const controller = new AbortController();
 
 function requestStop(signal: NodeJS.Signals): void {

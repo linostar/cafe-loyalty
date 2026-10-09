@@ -83,13 +83,16 @@ export function findBreakingStatements(sql: string): string[] {
  */
 const FORBIDDEN = /\b(BEGIN|COMMIT|ROLLBACK|ABORT|END|SAVEPOINT|RELEASE|START\s+TRANSACTION|SET\s+(SESSION\s+|LOCAL\s+)?(ROLE|SESSION\s+AUTHORIZATION|SEARCH_PATH)|RESET\s+(ROLE|ALL|SESSION\s+AUTHORIZATION|SEARCH_PATH))\b/i;
 
+/** A function's own SET search_path clause pins the path while that function runs (SECURITY DEFINER needs it). */
+const FUNCTION_SEARCH_PATH = /^(CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\b.*?)\bSET\s+SEARCH_PATH\s*(=|TO)\s*\w+(\s*,\s*\w+)*/i;
+
 /** Statements that control transactions or change role or search path, which only the runner may do. */
 export function findForbiddenStatements(sql: string): string[] {
   return stripSqlNoise(sql)
     .split(";")
     .map((statement) => statement.replace(/\s+/g, " ").trim())
     .filter((statement) => statement.length > 0)
-    .filter((statement) => FORBIDDEN.test(statement));
+    .filter((statement) => FORBIDDEN.test(statement.replace(FUNCTION_SEARCH_PATH, "$1")));
 }
 
 export interface MigrationProblem {
