@@ -22,6 +22,17 @@ const ownerIdOf = (cafeId: string): string => {
   return id;
 };
 const inOneHour = (): Date => new Date(Date.now() + 3_600_000);
+/** The device each café's fixtures use, like ownerIdOf. */
+const deviceIds = new Map<string, string>();
+const deviceIdOf = (cafeId: string): string => {
+  let id = deviceIds.get(cafeId);
+  if (id === undefined) {
+    id = randomUUID();
+    deviceIds.set(cafeId, id);
+  }
+  return id;
+};
+const PUBLIC_KEY = JSON.stringify({ kty: "EC", crv: "P-256", x: "A".repeat(43), y: "B".repeat(43) });
 
 /**
  * Inserts one row of each tenant table for a café, in this order. Every table in schema app needs an entry
@@ -59,6 +70,31 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<D
     trx
       .insertInto("password_reset_tokens")
       .values({ cafe_id: cafeId, owner_id: ownerIdOf(cafeId), token_hash: randomBytes(32), expires_at: inOneHour() })
+      .execute(),
+  staff: (trx, cafeId) =>
+    trx
+      .insertInto("staff")
+      .values({ cafe_id: cafeId, name: "Rami", pin_salt: randomBytes(16), pin_hash: randomBytes(32), pin_iterations: 600_000 })
+      .execute(),
+  devices: (trx, cafeId) => trx.insertInto("devices").values({ id: deviceIdOf(cafeId), cafe_id: cafeId, name: "Counter" }).execute(),
+  device_keys: (trx, cafeId) =>
+    trx.insertInto("device_keys").values({ cafe_id: cafeId, device_id: deviceIdOf(cafeId), public_key: PUBLIC_KEY }).execute(),
+  device_tokens: (trx, cafeId) =>
+    trx
+      .insertInto("device_tokens")
+      .values({ cafe_id: cafeId, device_id: deviceIdOf(cafeId), token_hash: randomBytes(32), expires_at: inOneHour() })
+      .execute(),
+  pairing_codes: (trx, cafeId) =>
+    trx
+      .insertInto("pairing_codes")
+      .values({
+        cafe_id: cafeId,
+        owner_id: ownerIdOf(cafeId),
+        device_name: "Counter 2",
+        lookup_hash: randomBytes(32),
+        secret_hash: randomBytes(32),
+        expires_at: inOneHour(),
+      })
       .execute(),
 };
 

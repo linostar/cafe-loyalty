@@ -37,6 +37,36 @@ describe("RateLimiter", () => {
     expect(limiter.hit("a")).toBe(0);
   });
 
+  it("never tracks more than 50,000 keys, dropping the oldest", () => {
+    const limiter = new RateLimiter(1, 60_000, () => 0);
+    for (let index = 0; index < 50_010; index += 1) {
+      limiter.hit(`key-${String(index)}`);
+    }
+    const windows = (limiter as unknown as { windows: Map<string, unknown> }).windows;
+    expect(windows.size).toBe(50_000);
+    expect(windows.has("key-0")).toBe(false);
+    expect(windows.has("key-50009")).toBe(true);
+  });
+
+  it("clears matching keys", () => {
+    const limiter = new RateLimiter(1, 60_000, () => 0);
+    limiter.hit("rana@example.com 203.0.113.1");
+    limiter.hit("sami@example.com 203.0.113.1");
+    limiter.clearWhere((key) => key.startsWith("rana@example.com "));
+    expect(limiter.check("rana@example.com 203.0.113.1")).toBe(0);
+    expect(limiter.check("sami@example.com 203.0.113.1")).toBe(60);
+  });
+
+  it("stays fast when the table is full of live keys", () => {
+    const limiter = new RateLimiter(1, 60_000, () => 0);
+    const started = performance.now();
+    for (let index = 0; index < 100_000; index += 1) {
+      limiter.hit(`key-${String(index)}`);
+    }
+    // Constant-time pruning takes well under a second; the old full scan per new key took minutes at this size.
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
   it("forgets expired keys once many are tracked", () => {
     let now = 0;
     const limiter = new RateLimiter(1, 1_000, () => now);
@@ -61,5 +91,17 @@ describe("clientKey", () => {
     expect(clientKey("2001:DB8::1")).toBe("2001:db8:0:0::/64");
     expect(clientKey("::1")).toBe("0:0:0:0::/64");
     expect(clientKey("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
+  });
+
+  it("unwraps every IPv4-mapped form, so they never share ::1's bucket", () => {
+    expect(clientKey("::FFFF:203.0.113.7")).toBe("203.0.113.7");
+    expect(clientKey("::ffff:cb00:7107")).toBe("203.0.113.7");
+    expect(clientKey("0:0:0:0:0:ffff:cb00:7107")).toBe("203.0.113.7");
+    expect(clientKey("2001:DB8::1")).toBe(clientKey("2001:db8::2"));
+  });
+
+  it("keeps an unparseable address as its own key", () => {
+    expect(clientKey("1::2::3")).toBe("1::2::3");
+    expect(clientKey("::ffff:999.1.1.1")).toBe("::ffff:999.1.1.1");
   });
 });

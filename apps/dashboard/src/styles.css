@@ -63,3 +63,62 @@ button {
   border-inline-start: 4px solid #26a269;
   background: #eef8f1;
 }
+
+nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+nav a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.items {
+  padding: 0;
+  list-style: none;
+}
+
+.items > li {
+  padding-block: 0.5rem;
+  border-block-end: 1px solid #d0d0d7;
+  overflow-wrap: anywhere;
+}
+
+.actions,
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+button.danger {
+  border-color: #a51d2d;
+  color: #a51d2d;
+}
+
+.new-code img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #ffffff;
+}
+
+.new-code .code {
+  font-family: ui-monospace, monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.1em;
+}
+
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -1,113 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
-import type { FastifyInstance, LightMyRequestResponse } from "fastify";
-import pg from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { buildApp } from "./app.js";
-import { BackgroundTasks } from "./background.js";
-import { hashToken, newToken } from "./credentials.js";
+import type { LightMyRequestResponse } from "fastify";
+import { describe, expect, it } from "vitest";
+import { hashPassword, hashToken, newToken } from "./credentials.js";
 import { createOwnerInvite } from "./invites.js";
-import { EmailDeliveryError, type EmailMessage, type Mailer } from "./mailer.js";
-import { RESET_REQUESTED_MESSAGE, ownerAuthRoutes } from "./owner-auth.js";
+import { EmailDeliveryError, type EmailMessage } from "./mailer.js";
+import { RESET_REQUESTED_MESSAGE } from "./owner-auth.js";
+import { PASSWORD, cookieToken, signIn, uniqueEmail, useApiHarness, withCookie, type Harness } from "./testing/api-harness.js";
 
-const DASHBOARD_URL = "https://dashboard.example.test";
-const PASSWORD = "correct horse battery";
-
-class FakeMailer implements Mailer {
-  readonly sent: EmailMessage[] = [];
-  /** When set, send waits for it, to show that a request does not wait for its email. */
-  gate: Promise<void> | undefined;
-  failWith: Error | undefined;
-
-  async send(message: EmailMessage): Promise<void> {
-    await this.gate;
-    if (this.failWith !== undefined) {
-      throw this.failWith;
-    }
-    this.sent.push(message);
-  }
-
-  close(): void {
-    // Nothing to release.
-  }
-}
-
-interface Harness {
-  app: FastifyInstance;
-  mailer: FakeMailer;
-  background: BackgroundTasks;
-  logs: string[];
-}
-
-let testDb: TestDatabase;
-let admin: pg.Client;
-const open: Harness[] = [];
-
-beforeAll(async () => {
-  testDb = await createTestDatabase();
-  admin = new pg.Client({ connectionString: testDb.adminUrl });
-  await admin.connect();
-});
-
-afterAll(async () => {
-  await admin.end();
-  await testDb.cleanup();
-});
-
-afterEach(async () => {
-  for (const harness of open.splice(0)) {
-    await harness.background.drain();
-    await harness.app.close();
-  }
-});
-
-/** A fresh app (with fresh rate limits) on the shared test database. */
-async function harness(): Promise<Harness> {
-  const logs: string[] = [];
-  const app = buildApp({ logLevel: "info", logDestination: { write: (line) => logs.push(line) } });
-  const mailer = new FakeMailer();
-  const background = new BackgroundTasks(app.log);
-  await app.register(ownerAuthRoutes, { prefix: "/api/auth", db: testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL });
-  await app.ready();
-  const created = { app, mailer, background, logs };
-  open.push(created);
-  return created;
-}
-
-const uniqueEmail = (): string => `owner-${randomUUID()}@example.com`;
-
-function cookieToken(response: LightMyRequestResponse): string {
-  const header = response.headers["set-cookie"];
-  const value = Array.isArray(header) ? header[0] : header;
-  const match = /^__Host-cl_session=([A-Za-z0-9_-]{43});/.exec(value ?? "");
-  if (match?.[1] === undefined) {
-    throw new Error(`No session cookie in the response (status ${String(response.statusCode)}).`);
-  }
-  return match[1];
-}
-
-const withCookie = (token: string) => ({ cookie: `__Host-cl_session=${token}` });
-
-async function invite(cafeName = "Café Test"): Promise<{ cafeId: string; token: string }> {
-  return createOwnerInvite(testDb.app.db, { newCafeName: cafeName });
-}
-
-async function signUp(app: FastifyInstance, email = uniqueEmail()): Promise<{ email: string; cafeId: string; ownerId: string; session: string }> {
-  const { token, cafeId } = await invite();
-  const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email, password: PASSWORD } });
-  expect(response.statusCode).toBe(201);
-  const body = response.json<{ owner: { id: string } }>();
-  return { email, cafeId, ownerId: body.owner.id, session: cookieToken(response) };
-}
-
-async function signIn(app: FastifyInstance, email: string, password = PASSWORD, remoteAddress = "203.0.113.1"): Promise<LightMyRequestResponse> {
-  return app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password }, remoteAddress });
-}
-
-async function auditActions(cafeId: string): Promise<string[]> {
-  const { rows } = await admin.query<{ action: string }>("SELECT action FROM app.audit_log WHERE cafe_id = $1 ORDER BY id", [cafeId]);
-  return rows.map((row) => row.action);
-}
+const context = useApiHarness();
+const { harness, invite, signUp, auditActions, holdOwnerRow } = context;
 
 describe("signup", () => {
   it("creates the invited café's owner and signs them in", async () => {
@@ -128,7 +29,7 @@ describe("signup", () => {
     expect(session.statusCode).toBe(200);
     expect(session.json()).toEqual(body);
 
-    const stored = await admin.query<{ password_hash: string }>("SELECT password_hash FROM app.owners WHERE id = $1", [body.owner.id]);
+    const stored = await context.admin.query<{ password_hash: string }>("SELECT password_hash FROM app.owners WHERE id = $1", [body.owner.id]);
     expect(stored.rows[0]?.password_hash).toMatch(/^\$argon2id\$/);
     expect(await auditActions(cafeId)).toEqual(["cafe.created", "owner_invite.created", "owner.signed_up"]);
   });
@@ -146,7 +47,7 @@ describe("signup", () => {
   it("refuses an expired or unknown invite", async () => {
     const { app } = await harness();
     const { token } = await invite();
-    await admin.query("UPDATE app.owner_invites SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [hashToken(token)]);
+    await context.admin.query("UPDATE app.owner_invites SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [hashToken(token)]);
     for (const inviteToken of [token, newToken()]) {
       const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken, email: uniqueEmail(), password: PASSWORD } });
       expect(response.statusCode).toBe(410);
@@ -177,11 +78,11 @@ describe("invites", () => {
   it("can be issued again for an existing café, and never for an unknown one", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    const again = await createOwnerInvite(testDb.app.db, { cafeId: owner.cafeId });
+    const again = await createOwnerInvite(context.testDb.app.db, { cafeId: owner.cafeId });
     const second = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: again.token, email: uniqueEmail(), password: PASSWORD } });
     expect(second.statusCode).toBe(201);
     expect(second.json()).toMatchObject({ cafe: { id: owner.cafeId } });
-    await expect(createOwnerInvite(testDb.app.db, { cafeId: randomUUID() })).rejects.toThrow("No café has this id.");
+    await expect(createOwnerInvite(context.testDb.app.db, { cafeId: randomUUID() })).rejects.toThrow("No café has this id.");
   });
 });
 
@@ -276,7 +177,7 @@ describe("sessions", () => {
   it("end after 7 days idle and clear the cookie", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    await admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '7 days 1 second' WHERE token_hash = $1", [hashToken(owner.session)]);
+    await context.admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '7 days 1 second' WHERE token_hash = $1", [hashToken(owner.session)]);
     const response = await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) });
     expect(response.statusCode).toBe(401);
     expect(response.headers["set-cookie"]).toContain("Max-Age=0");
@@ -285,16 +186,16 @@ describe("sessions", () => {
   it("end at their absolute expiry however recently used", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    await admin.query("UPDATE app.owner_sessions SET expires_at = now() - interval '1 second', last_seen_at = now() WHERE token_hash = $1", [hashToken(owner.session)]);
+    await context.admin.query("UPDATE app.owner_sessions SET expires_at = now() - interval '1 second', last_seen_at = now() WHERE token_hash = $1", [hashToken(owner.session)]);
     expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) })).statusCode).toBe(401);
   });
 
   it("record use, so an active session stays open", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    await admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '6 days' WHERE token_hash = $1", [hashToken(owner.session)]);
+    await context.admin.query("UPDATE app.owner_sessions SET last_seen_at = now() - interval '6 days' WHERE token_hash = $1", [hashToken(owner.session)]);
     expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) })).statusCode).toBe(200);
-    const { rows } = await admin.query<{ recent: boolean }>(
+    const { rows } = await context.admin.query<{ recent: boolean }>(
       "SELECT last_seen_at > now() - interval '1 minute' AS recent FROM app.owner_sessions WHERE token_hash = $1",
       [hashToken(owner.session)],
     );
@@ -304,7 +205,7 @@ describe("sessions", () => {
   it("are stored as hashes only", async () => {
     const { app } = await harness();
     const owner = await signUp(app);
-    const { rows } = await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.owner_sessions WHERE token_hash = $1", [
+    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.owner_sessions WHERE token_hash = $1", [
       Buffer.from(owner.session),
     ]);
     expect(rows[0]?.n).toBe(0);
@@ -316,7 +217,7 @@ describe("sign-out", () => {
     const { app } = await harness();
     const owner = await signUp(app);
     const other = cookieToken(await signIn(app, owner.email));
-    const response = await app.inject({ method: "POST", url: "/api/auth/logout", headers: withCookie(owner.session) });
+    const response = await app.inject({ method: "POST", url: "/api/auth/logout", headers: withCookie(owner.session), payload: {} });
     expect(response.statusCode).toBe(204);
     expect(response.headers["set-cookie"]).toContain("Max-Age=0");
     for (const token of [owner.session, other]) {
@@ -327,7 +228,24 @@ describe("sign-out", () => {
 
   it("succeeds without a session", async () => {
     const { app } = await harness();
-    expect((await app.inject({ method: "POST", url: "/api/auth/logout" })).statusCode).toBe(204);
+    expect((await app.inject({ method: "POST", url: "/api/auth/logout", payload: {} })).statusCode).toBe(204);
+  });
+
+  it("refuses a write without a JSON body, which a cross-site page could send", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const noBody = await app.inject({ method: "POST", url: "/api/auth/logout", headers: withCookie(owner.session) });
+    const formBody = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: { ...withCookie(owner.session), "content-type": "text/plain" },
+      payload: "x",
+    });
+    for (const response of [noBody, formBody]) {
+      expect(response.statusCode).toBe(415);
+      expect(response.json()).toMatchObject({ code: "UNSUPPORTED_MEDIA_TYPE" });
+    }
+    expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) })).statusCode).toBe(200);
   });
 });
 
@@ -363,7 +281,7 @@ describe("password change", () => {
     for (const token of [owner.session, other]) {
       expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(token) })).statusCode).toBe(401);
     }
-    const resets = await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
+    const resets = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
     expect(resets.rows[0]?.n).toBe(0);
     expect((await signIn(app, owner.email)).statusCode).toBe(401);
     expect((await signIn(app, owner.email, "a brand new password")).statusCode).toBe(200);
@@ -399,7 +317,7 @@ describe("password reset", () => {
     expect(h.mailer.sent[0]).toMatchObject({ to: owner.email, subject: "Reset your Cafe Loyalty password" });
   });
 
-  it("replies before looking the email up or sending anything", async () => {
+  it("replies without waiting for the email", async () => {
     const h = await harness();
     const owner = await signUp(h.app);
     let release: () => void = () => undefined;
@@ -419,7 +337,7 @@ describe("password reset", () => {
     const owner = await signUp(h.app);
     await requestReset(h, owner.email);
     const token = linkToken(h.mailer.sent[0]);
-    const { rows } = await admin.query<{ token_hash: Buffer; lifetime_seconds: number }>(
+    const { rows } = await context.admin.query<{ token_hash: Buffer; lifetime_seconds: number }>(
       "SELECT token_hash, extract(epoch FROM expires_at - created_at)::int AS lifetime_seconds FROM app.password_reset_tokens WHERE owner_id = $1",
       [owner.ownerId],
     );
@@ -456,7 +374,7 @@ describe("password reset", () => {
     const h = await harness();
     const owner = await signUp(h.app);
     await requestReset(h, owner.email);
-    await admin.query("UPDATE app.password_reset_tokens SET expires_at = now() - interval '1 second' WHERE owner_id = $1", [owner.ownerId]);
+    await context.admin.query("UPDATE app.password_reset_tokens SET expires_at = now() - interval '1 second' WHERE owner_id = $1", [owner.ownerId]);
     const response = await h.app.inject({
       method: "POST",
       url: "/api/auth/password-reset/complete",
@@ -470,8 +388,41 @@ describe("password reset", () => {
     const owner = await signUp(h.app);
     await Promise.all([1, 2, 3].map(() => h.app.inject({ method: "POST", url: "/api/auth/password-reset", payload: { email: owner.email } })));
     await h.background.drain();
-    const { rows } = await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
-    expect(rows[0]?.n).toBe(1);
+    const { rows } = await context.admin.query<{ token_hash: Buffer }>("SELECT token_hash FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]);
+    expect(rows).toHaveLength(1);
+    const surviving = h.mailer.sent.map((message) => linkToken(message)).find((token) => hashToken(token).equals(rows[0]?.token_hash ?? Buffer.alloc(0)));
+    const completed = await h.app.inject({ method: "POST", url: "/api/auth/password-reset/complete", payload: { token: surviving ?? "missing", password: "reset password 123" } });
+    expect(completed.statusCode).toBe(204);
+  });
+
+  it("completes a link once when two requests race", async () => {
+    const h = await harness();
+    const owner = await signUp(h.app);
+    await requestReset(h, owner.email);
+    const token = linkToken(h.mailer.sent[0]);
+    const replies = await Promise.all(
+      ["first password 123", "second password 456"].map((password) =>
+        h.app.inject({ method: "POST", url: "/api/auth/password-reset/complete", payload: { token, password } }),
+      ),
+    );
+    expect(replies.map((reply) => reply.statusCode).sort()).toEqual([204, 410]);
+  });
+
+  it("lifts the sign-in lockout once the owner proves control of the email", async () => {
+    const h = await harness();
+    const owner = await signUp(h.app);
+    for (let attempt = 1; attempt <= 10; attempt += 1) {
+      await signIn(h.app, owner.email, "wrong password!", "198.51.100.9");
+    }
+    expect((await signIn(h.app, owner.email, PASSWORD, "198.51.100.9")).statusCode).toBe(429);
+    await requestReset(h, owner.email);
+    const completed = await h.app.inject({
+      method: "POST",
+      url: "/api/auth/password-reset/complete",
+      payload: { token: linkToken(h.mailer.sent[0]), password: "reset password 123" },
+    });
+    expect(completed.statusCode).toBe(204);
+    expect((await signIn(h.app, owner.email, "reset password 123", "198.51.100.9")).statusCode).toBe(200);
   });
 
   it("limits requests per email", async () => {
@@ -495,12 +446,87 @@ describe("password reset", () => {
   });
 });
 
+describe("races", () => {
+  it("lets one of two signups claim an invite", async () => {
+    const { app } = await harness();
+    const { token } = await invite();
+    const replies = await Promise.all(
+      [uniqueEmail(), uniqueEmail()].map((email) => app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email, password: PASSWORD } })),
+    );
+    expect(replies.map((reply) => reply.statusCode).sort()).toEqual([201, 410]);
+  });
+
+  it("drops a sign-in that checked the password just before it changed", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const hold = await holdOwnerRow(owner.ownerId);
+    const login = signIn(app, owner.email);
+    await hold.untilBlocked();
+    const changedHash = await hashPassword("another password 789");
+    await hold.release((client) => client.query("UPDATE app.owners SET password_hash = $1 WHERE id = $2", [changedHash, owner.ownerId]));
+    expect((await login).statusCode).toBe(401);
+  });
+
+  it("does not let a password change overwrite one that finished in between", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const hold = await holdOwnerRow(owner.ownerId);
+    const change = app.inject({
+      method: "POST",
+      url: "/api/auth/password",
+      headers: withCookie(owner.session),
+      payload: { currentPassword: PASSWORD, newPassword: "a brand new password" },
+    });
+    await hold.untilBlocked();
+    const resetHash = await hashPassword("reset password 123");
+    await hold.release((client) => client.query("UPDATE app.owners SET password_hash = $1 WHERE id = $2", [resetHash, owner.ownerId]));
+    const response = await change;
+    expect(response.statusCode).toBe(409);
+    expect((await signIn(app, owner.email, "reset password 123")).statusCode).toBe(200);
+  });
+});
+
+describe("lock order", () => {
+  it("makes reset completion wait for the owner row before touching its token", async () => {
+    const h = await harness();
+    const owner = await signUp(h.app);
+    await h.app.inject({ method: "POST", url: "/api/auth/password-reset", payload: { email: owner.email } });
+    await h.background.drain();
+    const token = /token=([A-Za-z0-9_-]{43})/.exec(h.mailer.sent[0]?.text ?? "")?.[1] ?? "missing";
+    const hold = await holdOwnerRow(owner.ownerId);
+    const completion = h.app.inject({ method: "POST", url: "/api/auth/password-reset/complete", payload: { token, password: "reset password 123" } });
+    // Completion locks the owner first, like every other path, so it waits here without holding the token's lock.
+    await hold.untilBlocked();
+    await hold.release((client) => client.query("DELETE FROM app.password_reset_tokens WHERE owner_id = $1", [owner.ownerId]));
+    expect((await completion).statusCode).toBe(410);
+  });
+
+  it("lets pairing codes be created while a password change holds the owner row", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const hold = await holdOwnerRow(owner.ownerId);
+    // The app's NO KEY UPDATE lock does not block the KEY SHARE lock a referencing insert takes.
+    const created = await app.inject({ method: "POST", url: "/api/devices/pairing-codes", headers: withCookie(owner.session), payload: { deviceName: "Counter 1" } });
+    expect(created.statusCode).toBe(201);
+    await hold.release();
+  });
+});
+
 describe("logs", () => {
   it("never contain emails, passwords or tokens", async () => {
     const h = await harness();
-    const owner = await signUp(h.app);
+    const { token: inviteToken } = await invite();
+    const email = uniqueEmail();
+    const signedUp = await h.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken, email, password: PASSWORD } });
+    const owner = { email, session: cookieToken(signedUp) };
+    await h.app.inject({
+      method: "POST",
+      url: "/api/auth/password",
+      headers: withCookie(owner.session),
+      payload: { currentPassword: PASSWORD, newPassword: "changed password 456" },
+    });
     await signIn(h.app, owner.email, "wrong password!");
-    const session = cookieToken(await signIn(h.app, owner.email));
+    const session = cookieToken(await signIn(h.app, owner.email, "changed password 456"));
     await h.app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(session) });
     await h.app.inject({ method: "POST", url: "/api/auth/password-reset", payload: { email: owner.email } });
     await h.background.drain();
@@ -509,7 +535,7 @@ describe("logs", () => {
 
     const output = h.logs.join("");
     expect(output).toContain("owner signed in");
-    for (const secret of [owner.email, PASSWORD, "wrong password!", "reset password 123", owner.session, session, reset]) {
+    for (const secret of [owner.email, PASSWORD, "changed password 456", "wrong password!", "reset password 123", inviteToken, owner.session, session, reset]) {
       expect(output).not.toContain(secret);
     }
   });

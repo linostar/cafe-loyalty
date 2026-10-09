@@ -66,14 +66,17 @@ export async function withCafe<T>(db: Kysely<Database>, cafeId: string, work: (t
   });
 }
 
-/** What a caller holds before any café is known: an owner's email (signing in) or a token hash (session, invite, reset). */
-export type LookupKey = { ownerEmail: string } | { secretHash: Buffer };
+/**
+ * What a caller holds before any café is known: an owner's email (signing in), a token hash (session, invite,
+ * reset, device token, pairing code lookup part) or a device's key id (renewing its token).
+ */
+export type LookupKey = { ownerEmail: string } | { secretHash: Buffer } | { deviceKeyId: string };
 
 const SECRET_HASH_BYTES = 32;
 
 /**
  * Runs `work` in one read-only transaction with no café set, in which row-level security shows only the rows
- * matching `key`: the owner with that email, or the session, invite or reset token with that hash. It never shows
+ * matching `key`: the owner with that email, the row with that token hash, or the device key with that id. It never shows
  * other rows and cannot write; follow up with withCafe on the café id it returns.
  */
 export async function withLookup<T>(db: Kysely<Database>, key: LookupKey, work: (trx: Transaction<Database>) => Promise<T>): Promise<T> {
@@ -84,6 +87,11 @@ export async function withLookup<T>(db: Kysely<Database>, key: LookupKey, work: 
       throw new TenantContextError("An owner email lookup must not be empty.");
     }
     [setting, value] = ["app.owner_email", key.ownerEmail];
+  } else if ("deviceKeyId" in key) {
+    if (!cafeIdSchema.safeParse(key.deviceKeyId).success) {
+      throw new TenantContextError("A device key id must be a UUID.");
+    }
+    [setting, value] = ["app.device_key_id", key.deviceKeyId.toLowerCase()];
   } else {
     if (key.secretHash.length !== SECRET_HASH_BYTES) {
       throw new TenantContextError("A secret hash must be 32 bytes.");
