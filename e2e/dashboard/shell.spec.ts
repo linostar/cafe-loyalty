@@ -27,6 +27,19 @@ for (const path of ["/", "/cafe", "/staff", "/devices", "/review", "/account"]) 
   });
 }
 
+test("warns on the home page when customers' wallet cards keep failing to update", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, {
+    ...SIGNED_IN,
+    "GET /api/cafe/wallet-deliveries": reply(200, { failing: [{ wallet: "google", passes: 2, lastFailedAt: "2026-10-09T08:00:00.000Z", lastError: "google_503_UNAVAILABLE" }] }),
+  });
+  await page.goto("/");
+  const warning = page.getByRole("alert");
+  await expect(warning).toContainText("Some customers' wallet cards are not updating");
+  await expect(warning).toContainText("Google Wallet: 2 cards");
+  await expect(warning).toContainText("google_503_UNAVAILABLE");
+});
+
 test("shows the heading and build", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Cafe Loyalty Dashboard" })).toBeVisible();

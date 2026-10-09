@@ -278,6 +278,25 @@ export interface ApplePassesTable {
   updated_xid: ColumnType<string, never, string>;
   /** Last-Modified, in whole seconds, later by at least a second on every change. */
   modified_at: ColumnType<Date, never, Date>;
+  /** Failed pushes in a row, the last one's time and error code (never personal data); reset by a push that succeeds. */
+  delivery_failures: ColumnType<number, never, number>;
+  delivery_failed_at: ColumnType<Date | null, never, Date | null>;
+  delivery_error: ColumnType<string | null, never, string | null>;
+  created_at: CreatedAt;
+}
+
+/** A card's Google Wallet loyalty object at one epoch (Step 10); deleted with the card. */
+export interface GooglePassesTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  card_id: ColumnType<string, string, never>;
+  epoch: ColumnType<number, number, never>;
+  /** The transaction that last changed the pass (xid8, as a decimal string). */
+  updated_xid: ColumnType<string, never, string>;
+  /** Failed writes to Google in a row, the last one's time and error code; reset by a write that succeeds. */
+  delivery_failures: ColumnType<number, never, number>;
+  delivery_failed_at: ColumnType<Date | null, never, Date | null>;
+  delivery_error: ColumnType<string | null, never, string | null>;
   created_at: CreatedAt;
 }
 
@@ -329,6 +348,7 @@ export interface Database {
   redemptions: RedemptionsTable;
   apple_passes: ApplePassesTable;
   apple_pass_registrations: ApplePassRegistrationsTable;
+  google_passes: GooglePassesTable;
 }
 
 export type TableName = keyof Database;
@@ -416,8 +436,22 @@ export const TABLE_COLUMNS = {
   ],
   visit_items: ["cafe_id", "visit_id", "line", "order_type_id", "quantity", "unit_price_cents", "unit_cost_cents", "catalog_version", "stamps_each"],
   redemptions: ["id", "cafe_id", "device_id", "event_id", "card_id", "staff_id", "stamps_used", "stamps_left", "redeemed_at"],
-  apple_passes: ["id", "cafe_id", "card_id", "epoch", "auth_token_hash", "layout_version", "updated_xid", "modified_at", "created_at"],
+  apple_passes: [
+    "id",
+    "cafe_id",
+    "card_id",
+    "epoch",
+    "auth_token_hash",
+    "layout_version",
+    "updated_xid",
+    "modified_at",
+    "delivery_failures",
+    "delivery_failed_at",
+    "delivery_error",
+    "created_at",
+  ],
   apple_pass_registrations: ["cafe_id", "pass_id", "device_library_hash", "push_token", "created_at", "updated_at"],
+  google_passes: ["id", "cafe_id", "card_id", "epoch", "updated_xid", "delivery_failures", "delivery_failed_at", "delivery_error", "created_at"],
 } as const satisfies ColumnLists;
 
 /**
@@ -447,6 +481,7 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   redemptions: "cafe_id",
   apple_passes: "cafe_id",
   apple_pass_registrations: "cafe_id",
+  google_passes: "cafe_id",
 };
 
 type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };

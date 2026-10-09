@@ -200,7 +200,25 @@ export const deviceStaffSchema = z.object({
   staff: z.array(z.object({ id: z.uuid(), name: z.string(), pinSalt: z.string(), pinHash: z.string(), pinIterations: z.int() })),
 });
 
+/** A pass counts as failing once this many updates in a row have failed (AC 13): the first retries are routine. */
+export const REPEATED_DELIVERY_FAILURES = 3;
+
+/** The wallets whose pass updates keep failing, for the owner dashboard (AC 13); empty when all are going through. */
+export const walletDeliveriesSchema = z.object({
+  failing: z.array(
+    z.object({
+      wallet: z.enum(["apple", "google"]),
+      /** Passes whose last REPEATED_DELIVERY_FAILURES or more updates failed. */
+      passes: z.int().min(1),
+      lastFailedAt: timestamp,
+      /** A short code of the last failure (such as google_503_UNAVAILABLE), for support. */
+      lastError: z.string(),
+    }),
+  ),
+});
+
 export type CafeSetup = z.output<typeof cafeSetupSchema>;
+export type WalletDeliveries = z.output<typeof walletDeliveriesSchema>;
 export type OrderType = z.output<typeof orderTypeSchema>;
 export type LoyaltyProgram = z.output<typeof loyaltyProgramSchema>;
 export type StaffMember = z.output<typeof staffMemberSchema>;

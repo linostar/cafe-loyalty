@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { PASS_TEXT } from "@cafe-loyalty/db";
 
 export type Lang = "ar" | "en";
 
@@ -79,6 +80,7 @@ export const CUSTOMER_CSP = [
 /** Strings for the customer pages. `{name}` style placeholders are filled by `t`. */
 const MESSAGES = {
   en: {
+    ...PASS_TEXT.en,
     other: "العربية",
     joinTitle: "Get your loyalty card at {cafe}",
     programSummary: "Collect {stamps} stamps and get: {reward}.",
@@ -98,14 +100,7 @@ const MESSAGES = {
     qrAlt: "Your card's QR code. Show it to the barista.",
     keepLink: "This page is your card. Bookmark it or add it to your home screen, and do not share its link.",
     addToAppleWallet: "Add to Apple Wallet",
-    passDescription: "Loyalty card at {cafe}",
-    passStampsLabel: "Stamps",
-    passRewardLabel: "Reward",
-    passAboutLabel: "How it works",
-    passAboutText: "Show this card to the barista to collect stamps. Your stamps update here by themselves.",
-    passMovedLabel: "Card moved",
-    passMovedValue: "Use your new card",
-    passMovedText: "This card was restored on another phone. Use the card there.",
+    addToGoogleWallet: "Add to Google Wallet",
     emailTitle: "Recovery email",
     emailText: "If you lose this phone, we can email you a link to restore your card.",
     emailLabel: "Email",
@@ -144,6 +139,7 @@ const MESSAGES = {
     notFound: "No such page. Check the link, or scan the café's code again.",
   },
   ar: {
+    ...PASS_TEXT.ar,
     other: "English",
     joinTitle: "احصل على بطاقة الولاء في {cafe}",
     programSummary: "اجمع {stamps} أختام واحصل على: {reward}.",
@@ -163,14 +159,7 @@ const MESSAGES = {
     qrAlt: "رمز QR الخاص ببطاقتك. أظهره للباريستا.",
     keepLink: "هذه الصفحة هي بطاقتك. احفظها في المفضلة أو أضفها إلى الشاشة الرئيسية، ولا تشارك رابطها.",
     addToAppleWallet: "إضافة إلى Apple Wallet",
-    passDescription: "بطاقة الولاء في {cafe}",
-    passStampsLabel: "الأختام",
-    passRewardLabel: "المكافأة",
-    passAboutLabel: "كيف تعمل",
-    passAboutText: "أظهر هذه البطاقة للباريستا لجمع الأختام. تُحدَّث أختامك هنا تلقائياً.",
-    passMovedLabel: "نُقلت البطاقة",
-    passMovedValue: "استخدم بطاقتك الجديدة",
-    passMovedText: "استُعيدت هذه البطاقة على هاتف آخر. استخدم البطاقة هناك.",
+    addToGoogleWallet: "إضافة إلى Google Wallet",
     emailTitle: "بريد الاستعادة",
     emailText: "إذا فقدت هذا الهاتف، يمكننا أن نرسل لك رابطاً لاستعادة بطاقتك.",
     emailLabel: "البريد الإلكتروني",

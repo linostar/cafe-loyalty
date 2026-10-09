@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { EnvError } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { loadServerConfig } from "./config.js";
@@ -138,6 +139,32 @@ describe("loadServerConfig", () => {
       expect(message).toContain("APPLE_PASS_KEY");
       expect(message).toContain("APPLE_TEAM_ID");
       expect(message).not.toContain(b64("not a key"));
+    }
+  });
+
+  it("takes Google Wallet settings both together or neither, with the service account's RSA key, without echoing it", () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const keyFile = (fields: Record<string, unknown>) => Buffer.from(JSON.stringify({ type: "service_account", ...fields })).toString("base64");
+    const google = { GOOGLE_WALLET_ISSUER_ID: "3388000000012345678", GOOGLE_WALLET_SERVICE_ACCOUNT: keyFile({ client_email: "wallet@example.iam.gserviceaccount.com", private_key: pem }) };
+    expect(loadServerConfig(valid).googlePasses).toBeUndefined();
+    expect(loadServerConfig({ ...valid, ...google }).googlePasses).toEqual({
+      issuerId: "3388000000012345678",
+      serviceAccount: { email: "wallet@example.iam.gserviceaccount.com", privateKey: pem },
+    });
+    expect(() => loadServerConfig({ ...valid, ...google, GOOGLE_WALLET_ISSUER_ID: undefined })).toThrow(/GOOGLE_WALLET_ISSUER_ID: Set both/);
+    expect(() => loadServerConfig({ ...valid, ...google, GOOGLE_WALLET_ISSUER_ID: "issuer" })).toThrow(/GOOGLE_WALLET_ISSUER_ID: Use the issuer id/);
+    const ecKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    for (const wrong of [keyFile({ client_email: "wallet@example.iam.gserviceaccount.com", private_key: ecKey }), keyFile({ private_key: pem }), "bm90IGpzb24="]) {
+      try {
+        loadServerConfig({ ...valid, ...google, GOOGLE_WALLET_SERVICE_ACCOUNT: wrong });
+        expect.unreachable();
+      } catch (error) {
+        const message = (error as EnvError).message;
+        expect(message).toContain("GOOGLE_WALLET_SERVICE_ACCOUNT: Use the service account's JSON key file");
+        expect(message).not.toContain(wrong);
+        expect(message).not.toContain("PRIVATE KEY");
+      }
     }
   });
 

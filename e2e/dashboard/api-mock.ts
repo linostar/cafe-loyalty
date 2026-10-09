@@ -16,8 +16,20 @@ export const UNAUTHENTICATED = { code: "UNAUTHENTICATED", message: "Your session
 
 type Handler = (route: Route) => Promise<void>;
 
-/** Answers the dashboard's API calls; anything not listed gets a 404 envelope, so a missing mock fails loudly. */
-export async function mockApi(page: Page, handlers: Readonly<Record<string, Handler>>): Promise<void> {
+export const reply =
+  (status: number, json?: unknown): Handler =>
+  (route) =>
+    json === undefined ? route.fulfill({ status }) : route.fulfill({ status, json });
+
+/** What the home page's wallet check gets unless a test says otherwise: every wallet card update going through. */
+const DEFAULTS: Readonly<Record<string, Handler>> = { "GET /api/cafe/wallet-deliveries": reply(200, { failing: [] }) };
+
+/**
+ * Answers the dashboard's API calls; anything not listed (or in DEFAULTS) gets a 404 envelope, so a missing mock
+ * fails loudly.
+ */
+export async function mockApi(page: Page, listed: Readonly<Record<string, Handler>>): Promise<void> {
+  const handlers = { ...DEFAULTS, ...listed };
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const key = `${request.method()} ${new URL(request.url()).pathname}`;
@@ -34,8 +46,3 @@ export async function mockApi(page: Page, handlers: Readonly<Record<string, Hand
     await handler(route);
   });
 }
-
-export const reply =
-  (status: number, json?: unknown): Handler =>
-  (route) =>
-    json === undefined ? route.fulfill({ status }) : route.fulfill({ status, json });

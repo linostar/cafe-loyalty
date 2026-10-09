@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { crc32, deflateSync } from "node:zlib";
+import { PASS_BACKGROUND } from "@cafe-loyalty/db";
 import { PKPass } from "passkit-generator";
 import type { CustomerSecrets } from "./customer-crypto.js";
 import { count, t, type Lang } from "./customer-html.js";
@@ -38,8 +39,11 @@ export interface ApplePassContent {
   qr: string | null;
 }
 
-/** A square PNG of one colour, for the pass icon. ponytail: a plain colour; the café's own logo when cafés upload one. */
-function solidPng(size: number, rgb: readonly [number, number, number]): Buffer {
+/**
+ * A square PNG of one colour, for the Apple pass icon and the Google class logo. ponytail: a plain colour; the café's
+ * own logo when cafés upload one.
+ */
+export function solidPng(size: number, rgb: readonly [number, number, number]): Buffer {
   const chunk = (type: string, data: Buffer) => {
     const length = Buffer.alloc(4);
     length.writeUInt32BE(data.length);
@@ -64,9 +68,8 @@ function solidPng(size: number, rgb: readonly [number, number, number]): Buffer 
   ]);
 }
 
-const BACKGROUND = [74, 44, 42] as const;
 /** Apple's icon sizes: 29 points at 1x, 2x and 3x. */
-const ICONS = { "icon.png": solidPng(29, BACKGROUND), "icon@2x.png": solidPng(58, BACKGROUND), "icon@3x.png": solidPng(87, BACKGROUND) };
+const ICONS = { "icon.png": solidPng(29, PASS_BACKGROUND), "icon@2x.png": solidPng(58, PASS_BACKGROUND), "icon@3x.png": solidPng(87, PASS_BACKGROUND) };
 
 /** A value for a pass.strings file, which passkit-generator writes between quotes as given. */
 const stringsValue = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
@@ -113,7 +116,7 @@ export function buildApplePass(config: ApplePassConfig, publicUrl: string, conte
     description: "description",
     logoText: content.cafeName,
     sharingProhibited: true,
-    backgroundColor: `rgb(${BACKGROUND.join(", ")})`,
+    backgroundColor: `rgb(${PASS_BACKGROUND.join(", ")})`,
     foregroundColor: "rgb(255, 255, 255)",
     labelColor: "rgb(235, 214, 190)",
     ...(content.qr === null ? { voided: true } : { barcodes: [{ format: "PKBarcodeFormatQR", message: content.qr, messageEncoding: "iso-8859-1" }] }),

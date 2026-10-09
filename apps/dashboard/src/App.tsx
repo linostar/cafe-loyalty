@@ -1,4 +1,4 @@
-import { OWNER_PASSWORD_MIN_LENGTH, ownerSessionSchema, type OwnerSession } from "@cafe-loyalty/shared";
+import { OWNER_PASSWORD_MIN_LENGTH, ownerSessionSchema, walletDeliveriesSchema, type OwnerSession } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, noContent } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
@@ -6,7 +6,7 @@ import { CafePage } from "./cafe-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
 import { ReviewPage } from "./review-page.js";
-import { SessionEndedContext } from "./session.js";
+import { SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
 type SessionState =
@@ -77,11 +77,47 @@ function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
   );
 }
 
+const WALLET_NAMES = { apple: "Apple Wallet", google: "Google Wallet" } as const;
+const failureTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
+
+/** Warns when customers' wallet cards keep failing to update (AC 13); shows nothing while all goes through. */
+function WalletDeliveryNotice() {
+  const [state] = useApiData("/api/cafe/wallet-deliveries", walletDeliveriesSchema);
+  if (state.status === "loading") {
+    return null;
+  }
+  if (state.status === "failed") {
+    return (
+      <p role="alert" className="form-error">
+        Could not check wallet card updates: {state.message}
+      </p>
+    );
+  }
+  if (state.data.failing.length === 0) {
+    return null;
+  }
+  return (
+    <div role="alert" className="form-error">
+      <p>Some customers&apos; wallet cards are not updating:</p>
+      <ul>
+        {state.data.failing.map((entry) => (
+          <li key={entry.wallet}>
+            {WALLET_NAMES[entry.wallet]}: {entry.passes} {entry.passes === 1 ? "card" : "cards"}, last failure{" "}
+            {failureTime.format(new Date(entry.lastFailedAt))} (code {entry.lastError})
+          </li>
+        ))}
+      </ul>
+      <p>Stamps are still saved and these cards catch up once updates go through again. If this lasts more than a day, contact support with the codes above.</p>
+    </div>
+  );
+}
+
 function HomePage({ session }: { session: OwnerSession }) {
   return (
     <section aria-labelledby="cafe-title">
       <h2 id="cafe-title">{session.cafe.name}</h2>
       <p>Signed in as {session.owner.email}</p>
+      <WalletDeliveryNotice />
       <ul className="items">
         <li>
           <a href="/cafe">Café</a>: name, loyalty program and order types

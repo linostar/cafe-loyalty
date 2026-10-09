@@ -12,23 +12,30 @@ export const JOB_STATEMENT_TIMEOUT_MS = 5_000;
  * worker reads the rest inside withCafe for the job's café.
  */
 export const APPLE_PASS_UPDATE_QUEUE = "apple-pass-update";
+/** Writes a Google pass's loyalty object as it now is (AC 12, 13); the same job data, naming a google_passes row. */
+export const GOOGLE_PASS_UPDATE_QUEUE = "google-pass-update";
 export const passUpdateJobSchema = z.object({ cafeId: z.uuid(), passId: z.uuid() });
 export type PassUpdateJob = z.infer<typeof passUpdateJobSchema>;
 
+/**
+ * A pass update queue: at most one waiting job per pass (sent with the pass id as singletonKey), since a job sends
+ * the pass as it is when the job runs, so changes made while one waits go out with it.
+ */
+const PASS_UPDATE_QUEUE: Omit<Queue, "name"> = {
+  policy: "short",
+  // Backing off from 30 seconds to an hour, for most of a day of APNs or Google trouble before a job fails.
+  retryLimit: 12,
+  retryDelay: 30,
+  retryBackoff: true,
+  retryDelayMax: 3_600,
+  // Each request times out long before this.
+  expireInSeconds: 120,
+};
+
 /** The queues the server sends to, created by whichever of the server and the worker starts first. */
 const SHARED_QUEUES: Readonly<Record<string, Omit<Queue, "name">>> = {
-  [APPLE_PASS_UPDATE_QUEUE]: {
-    // At most one waiting job per pass (sent with the pass id as singletonKey): a push carries no content, so
-    // changes made while one waits are fetched by it.
-    policy: "short",
-    // Backing off from 30 seconds to an hour, for most of a day of APNs trouble before a job fails.
-    retryLimit: 12,
-    retryDelay: 30,
-    retryBackoff: true,
-    retryDelayMax: 3_600,
-    // Each push times out long before this.
-    expireInSeconds: 120,
-  },
+  [APPLE_PASS_UPDATE_QUEUE]: PASS_UPDATE_QUEUE,
+  [GOOGLE_PASS_UPDATE_QUEUE]: PASS_UPDATE_QUEUE,
 };
 
 export interface JobQueueOptions {

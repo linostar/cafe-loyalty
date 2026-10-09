@@ -67,6 +67,9 @@ try {
 if (config.applePasses === undefined) {
   app.log.warn("Apple Wallet is off: no APPLE_* variables are set, so web cards offer no Apple pass");
 }
+if (config.googlePasses === undefined) {
+  app.log.warn("Google Wallet is off: no GOOGLE_WALLET_* variables are set, so web cards offer no Google pass");
+}
 
 await app.register(apiRoutes, {
   prefix: "/api",
@@ -88,6 +91,7 @@ await app.register(customerPages, {
   secrets,
   jobs: startedJobs,
   apple: config.applePasses,
+  google: config.googlePasses,
 });
 if (config.applePasses !== undefined) {
   await app.register(passkitRoutes, { prefix: "/passkit", db: database.db, secrets, apple: config.applePasses, publicUrl: config.PUBLIC_URL });

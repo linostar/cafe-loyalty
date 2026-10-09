@@ -1,8 +1,11 @@
-import { APPLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
+import { APPLE_PASS_UPDATE_QUEUE, GOOGLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
 import type { Kysely } from "kysely";
 import type { Logger } from "pino";
 import type { PassPusher } from "./apns.js";
 import { pushPassUpdate } from "./apple-passes.js";
+import { trackDelivery } from "./delivery.js";
+import { writeGooglePass, type GooglePassSettings } from "./google-passes.js";
+import type { GoogleWallet } from "./google-wallet.js";
 import type { WorkerTask } from "./worker.js";
 
 /** Removes expired owner sessions, reset links, invites, device tokens, pairing codes and card recovery links. */
@@ -26,6 +29,8 @@ export interface JobDependencies {
   db: Kysely<Database>;
   /** APNs, or undefined when Apple Wallet is not configured: this worker then leaves pass updates queued. */
   pusher: PassPusher | undefined;
+  /** Google Wallet and what building its objects takes, or undefined (Google pass updates then stay queued). */
+  google: { wallet: GoogleWallet; settings: GooglePassSettings } | undefined;
 }
 
 /**
@@ -50,8 +55,8 @@ function logged(queue: string, logger: Logger, run: (job: Job, log: Logger) => P
 }
 
 /**
- * Runs the job queue: the hourly purge and, with APNs, Apple pass updates (without it they wait, queued, for a worker
- * that has it). Stopping waits for running jobs at most what is left of `shutdownTimeoutMs` after the longest
+ * Runs the job queue: the hourly purge and, with APNs and Google Wallet, each one's pass updates (without them, those
+ * wait, queued, for a worker that has them), recording each update's outcome on its pass (trackDelivery). Stopping waits for running jobs at most what is left of `shutdownTimeoutMs` after the longest
  * statement on each of the two pools (pg-boss's and the app's, both closed after it), so the worker stops in time.
  */
 export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: number, dependencies: JobDependencies): WorkerTask {
@@ -65,11 +70,19 @@ export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: nu
         PURGE_QUEUE,
         logged(PURGE_QUEUE, logger, (_job, log) => purgeExpiredCredentials(boss, log)),
       );
-      const { pusher } = dependencies;
+      const { db, pusher, google } = dependencies;
       if (pusher !== undefined) {
         await boss.work(
           APPLE_PASS_UPDATE_QUEUE,
-          logged(APPLE_PASS_UPDATE_QUEUE, logger, (job, log) => pushPassUpdate(dependencies.db, pusher, log, job.data)),
+          logged(APPLE_PASS_UPDATE_QUEUE, logger, (job, log) => trackDelivery(db, "apple_passes", job.data, log, (pass) => pushPassUpdate(db, pusher, log, pass))),
+        );
+      }
+      if (google !== undefined) {
+        await boss.work(
+          GOOGLE_PASS_UPDATE_QUEUE,
+          logged(GOOGLE_PASS_UPDATE_QUEUE, logger, (job, log) =>
+            trackDelivery(db, "google_passes", job.data, log, (pass) => writeGooglePass(db, google.wallet, google.settings, log, pass)),
+          ),
         );
       }
     },

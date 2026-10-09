@@ -1,11 +1,13 @@
 import { withCafe, type Database } from "@cafe-loyalty/db";
 import {
   ApiError,
+  REPEATED_DELIVERY_FAILURES,
   cafeUpdateSchema,
   loyaltyProgramSchema,
   orderTypeCreateSchema,
   orderTypeUpdateSchema,
   type CafeSetup,
+  type WalletDeliveries,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -65,6 +67,31 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
   app.get("/cafe", { config: { access: "owner" } }, async (request) => {
     const { cafeId } = ownerOf(request);
     return withCafe(db, cafeId, (trx) => loadSetup(trx, cafeId));
+  });
+
+  /**
+   * Wallets whose pass updates keep failing (AC 13): per wallet, the passes whose last REPEATED_DELIVERY_FAILURES or
+   * more updates failed, when the last one failed and its code. Stamps are recorded regardless; this tells the owner
+   * that customers' wallet cards lag behind.
+   */
+  app.get("/cafe/wallet-deliveries", { config: { access: "owner" } }, async (request): Promise<WalletDeliveries> => {
+    const { cafeId } = ownerOf(request);
+    const { rows } = await withCafe(db, cafeId, (trx) =>
+      sql<{ wallet: "apple" | "google"; passes: number; last_failed_at: Date | null; last_error: string | null }>`
+        SELECT 'apple' AS wallet, count(*)::int AS passes, max(delivery_failed_at) AS last_failed_at,
+               (array_agg(delivery_error ORDER BY delivery_failed_at DESC))[1] AS last_error
+          FROM apple_passes WHERE delivery_failures >= ${REPEATED_DELIVERY_FAILURES}
+        UNION ALL
+        SELECT 'google', count(*)::int, max(delivery_failed_at), (array_agg(delivery_error ORDER BY delivery_failed_at DESC))[1]
+          FROM google_passes WHERE delivery_failures >= ${REPEATED_DELIVERY_FAILURES}`.execute(trx),
+    );
+    return {
+      failing: rows.flatMap((row) =>
+        row.passes > 0 && row.last_failed_at !== null
+          ? [{ wallet: row.wallet, passes: row.passes, lastFailedAt: row.last_failed_at.toISOString(), lastError: row.last_error ?? "error" }]
+          : [],
+      ),
+    };
   });
 
   const joinLink = (code: string) => ({ joinUrl: new URL(`/join/${code}`, options.publicUrl).toString() });

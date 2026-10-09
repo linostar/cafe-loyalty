@@ -1,4 +1,5 @@
 export { bootstrap, withDatabase, type BootstrapLog, type BootstrapOptions } from "./bootstrap.js";
+export { currentKey, keyringSchema, signCardQr, verifyCardQr, type Keyring } from "./card-qr.js";
 export { checkMigrations, findBreakingStatements, findForbiddenStatements, type MigrationCheckContext, type MigrationProblem } from "./check-migrations.js";
 export {
   TenantContextError,
@@ -13,6 +14,7 @@ export {
 } from "./database.js";
 export {
   APPLE_PASS_UPDATE_QUEUE,
+  GOOGLE_PASS_UPDATE_QUEUE,
   JOB_STATEMENT_TIMEOUT_MS,
   createJobQueue,
   isJobQueueVersionMismatch,
@@ -27,6 +29,22 @@ export { MigrationStateError, migrate, type MigrationLog, type MigrationOutcome 
 export { MIGRATIONS_DIR, MigrationFileError, loadMigrations, parseMigration, type MigrationFile, type MigrationKind } from "./migrations.js";
 export { base64PemSchema, keyFitsCertificate } from "./pem.js";
 export { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
+export {
+  PASS_BACKGROUND,
+  PASS_TEXT,
+  googleClassId,
+  googleIssuerIdSchema,
+  googleLogoUrl,
+  googleLoyaltyClass,
+  googleLoyaltyObject,
+  googleObjectId,
+  googleServiceAccountSchema,
+  signJwt,
+  type GoogleLoyaltyClass,
+  type GoogleLoyaltyObject,
+  type GooglePassContent,
+  type GoogleWalletConfig,
+} from "./wallet.js";
 export {
   TABLE_COLUMNS,
   TENANT_KEY,
@@ -43,6 +61,7 @@ export {
   type DevicePublicKey,
   type DeviceTokensTable,
   type DevicesTable,
+  type GooglePassesTable,
   type LoyaltyProgramsTable,
   type OwnerInvitesTable,
   type OwnerSessionsTable,

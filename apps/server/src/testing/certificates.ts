@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import forge from "node-forge";
+import type { GoogleWalletConfig } from "@cafe-loyalty/db";
 import type { ApplePassConfig } from "../apple-pass.js";
 
 /** A self-signed certificate for `commonName` and its private key, as PEM: fake credentials for tests only. */
@@ -24,6 +25,18 @@ export function testApplePasses(): ApplePassConfig {
     passTypeId: "pass.example.test",
     teamId: "TEAMID1234",
     certificates: { signerCert: signer.certificate, signerKey: signer.privateKey, wwdr: selfSigned("Test WWDR").certificate },
+  };
+}
+
+/** Google Wallet settings with a fresh RSA key for a made-up service account, and its public key to check signatures. */
+export function testGoogleWallet(): { config: GoogleWalletConfig; publicKey: string } {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return {
+    config: {
+      issuerId: "3388000000012345678",
+      serviceAccount: { email: "wallet@example-test.iam.gserviceaccount.com", privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString() },
+    },
+    publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
   };
 }
 

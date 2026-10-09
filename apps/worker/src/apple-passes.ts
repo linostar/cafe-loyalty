@@ -1,4 +1,4 @@
-import { passUpdateJobSchema, withCafe, type Database } from "@cafe-loyalty/db";
+import { withCafe, type Database, type PassUpdateJob } from "@cafe-loyalty/db";
 import type { Kysely } from "kysely";
 import type { Logger } from "pino";
 import type { PassPusher } from "./apns.js";
@@ -9,8 +9,7 @@ import type { PassPusher } from "./apns.js";
  * registration; any other failure fails the job for pg-boss to retry, pushing again to every device (one that already
  * has the change gets 304 from the web service).
  */
-export async function pushPassUpdate(db: Kysely<Database>, pusher: PassPusher, logger: Logger, data: unknown): Promise<{ sent: number; removed: number }> {
-  const job = passUpdateJobSchema.parse(data);
+export async function pushPassUpdate(db: Kysely<Database>, pusher: PassPusher, logger: Logger, job: PassUpdateJob): Promise<{ sent: number; removed: number }> {
   const registrations = await withCafe(db, job.cafeId, (trx) =>
     trx.selectFrom("apple_pass_registrations").select(["device_library_hash", "push_token"]).where("pass_id", "=", job.passId).execute(),
   );
