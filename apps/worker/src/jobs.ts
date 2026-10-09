@@ -1,43 +1,14 @@
-import { PgBoss } from "pg-boss";
+import { APPLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
+import type { Kysely } from "kysely";
 import type { Logger } from "pino";
+import type { PassPusher } from "./apns.js";
+import { pushPassUpdate } from "./apple-passes.js";
 import type { WorkerTask } from "./worker.js";
 
 /** Removes expired owner sessions, reset links, invites, device tokens, pairing codes and card recovery links. */
 export const PURGE_QUEUE = "purge-expired-credentials";
 /** Hourly, off the top of the hour. */
 const PURGE_CRON = "17 * * * *";
-/** The longest any job-queue statement may run, the purge included (its tables are small). */
-export const JOB_STATEMENT_TIMEOUT_MS = 5_000;
-
-/**
- * pg-boss as this app runs it. The schema is the migrator's (packages/db/migrations/0007_job_queue.sql) and the app
- * role may not change it, so everything that would create or alter tables is off; start() refuses a database whose
- * pg-boss schema version differs from this library's.
- */
-export function createJobQueue(connectionString: string, logger: Logger, applicationName = "cafe-loyalty-worker"): PgBoss {
-  const boss = new PgBoss({
-    connectionString,
-    schema: "pgboss",
-    application_name: applicationName,
-    max: 4,
-    migrate: false,
-    createSchema: false,
-    reindex: false,
-    persistQueueStats: false,
-    persistWarnings: false,
-    // Like the app's pool (packages/db/src/database.ts): no statement, and no transaction left open, runs unbounded.
-    options: `-c statement_timeout=${String(JOB_STATEMENT_TIMEOUT_MS)} -c idle_in_transaction_session_timeout=${String(3 * JOB_STATEMENT_TIMEOUT_MS)}`,
-  });
-  boss.on("error", (error) => {
-    logger.error({ err: error }, "job queue error");
-  });
-  // Not stored (persistWarnings is off), so logged: a schedule that cannot fire, clock skew, a backlog, a slow query.
-  // The message only: a slow query's data carries its SQL and values.
-  boss.on("warning", (warning) => {
-    logger.warn({ warning: warning.message }, "job queue warning");
-  });
-  return boss;
-}
 
 /**
  * Deletes expired credentials in every café. The one job that is not a café's own: the function it calls runs as
@@ -50,30 +21,57 @@ export async function purgeExpiredCredentials(boss: PgBoss, logger: Logger): Pro
   return deleted;
 }
 
+export interface JobDependencies {
+  /** The app's database, for the café jobs (withCafe with the café id from the job). */
+  db: Kysely<Database>;
+  /** APNs, or undefined when Apple Wallet is not configured: pass update jobs then fail, logged. */
+  pusher: PassPusher | undefined;
+}
+
+/** A job handler whose failures are logged: pg-boss records them and retries, but reports them nowhere else. */
+function logged(queue: string, logger: Logger, run: (job: Job) => Promise<object>) {
+  return async ([job]: Job[]) => {
+    if (job === undefined) {
+      return {};
+    }
+    try {
+      // The result becomes the job's output.
+      return await run(job);
+    } catch (error) {
+      logger.error({ err: error, job: queue, jobId: job.id }, "job failed");
+      throw error;
+    }
+  };
+}
+
 /**
- * Runs the job queue: the hourly purge for now. Stopping waits for a running job at most what is left of
- * `shutdownTimeoutMs` after the longest statement (closing the pool waits for that), so the worker stops in time.
+ * Runs the job queue: the hourly purge and Apple pass updates. Stopping waits for running jobs at most what is left
+ * of `shutdownTimeoutMs` after the longest statement (closing the pool waits for that), so the worker stops in time.
  */
-export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: number): WorkerTask {
+export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: number, dependencies: JobDependencies): WorkerTask {
   return {
     name: "job-queue",
     async start() {
-      await boss.start();
+      await startJobQueue(boss);
       await boss.createQueue(PURGE_QUEUE);
       await boss.schedule(PURGE_QUEUE, PURGE_CRON);
-      await boss.work(PURGE_QUEUE, async ([job]) => {
-        try {
-          // The counts become the job's output.
-          return await purgeExpiredCredentials(boss, logger);
-        } catch (error) {
-          // pg-boss records the failure and retries, but reports it nowhere else.
-          logger.error({ err: error, job: PURGE_QUEUE, jobId: job?.id }, "expired credential purge failed");
-          throw error;
-        }
-      });
+      await boss.work(
+        PURGE_QUEUE,
+        logged(PURGE_QUEUE, logger, () => purgeExpiredCredentials(boss, logger)),
+      );
+      await boss.work(
+        APPLE_PASS_UPDATE_QUEUE,
+        logged(APPLE_PASS_UPDATE_QUEUE, logger, (job) => {
+          if (dependencies.pusher === undefined) {
+            throw new Error("Apple Wallet is not configured on the worker: set the APPLE_PASS_* variables.");
+          }
+          return pushPassUpdate(dependencies.db, dependencies.pusher, logger, job.data);
+        }),
+      );
     },
     async stop() {
       await boss.stop({ graceful: true, timeout: Math.max(0, shutdownTimeoutMs - JOB_STATEMENT_TIMEOUT_MS - 1_000) });
+      dependencies.pusher?.close();
     },
   };
 }

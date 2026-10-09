@@ -1,4 +1,4 @@
-import { withCafe, type Database, type VisitOutcome } from "@cafe-loyalty/db";
+import { withCafe, type Database, type PgBoss, type VisitOutcome } from "@cafe-loyalty/db";
 import { ApiError, redemptionRequestSchema, type DeviceCatalog, type Redemption, type SyncResultCode, type VisitRecordedV1Event } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -7,6 +7,7 @@ import { phoneLookup, verifyCardQr, type CustomerSecrets } from "./customer-cryp
 import { audit, isUniqueViolation, now } from "./db-helpers.js";
 import { requireSupportedBuild } from "./device-routes.js";
 import { parseInput } from "./http-errors.js";
+import { queuePassUpdate } from "./pass-updates.js";
 
 /** Minutes after a stamped visit in which the same card gets no more stamps (AC 30). Kept in step with the
  * visits_card_cooldown constraint (migration 0006), which enforces it in the database. */
@@ -132,9 +133,10 @@ const OUTCOME_CODES: Readonly<Record<Exclude<VisitOutcome, "held" | "discarded">
  * Applies a stored visit: adds its stamps to the card unless the card got stamps within the cooldown or the device
  * reached its daily cap, both by the visit's own time, in the café's time zone (AC 30). The visit counts either way.
  * The card row is locked, so two visits of one card are applied one after the other; the sync locks the device row,
- * so its daily count is exact. Every stamp is audit-logged with the device and the staff member (AC 30).
+ * so its daily count is exact. Every stamp is audit-logged with the device and the staff member (AC 30), and the card's
+ * wallet passes are updated by a job queued in the same transaction (AC 13).
  */
-export async function applyVisit(trx: Transaction<Database>, cafeId: string, visitId: string): Promise<SyncResultCode> {
+export async function applyVisit(trx: Transaction<Database>, jobs: PgBoss, cafeId: string, visitId: string): Promise<SyncResultCode> {
   const visit = await trx
     .selectFrom("visits")
     .select(["card_id", "identified_by", "device_id", "staff_id", "occurred_at", "stamps_earned"])
@@ -187,6 +189,7 @@ export async function applyVisit(trx: Transaction<Database>, cafeId: string, vis
     // Logged against the visit, never the card: the visit loses its card when the card is deleted, and the log must
     // not keep the link (AC 9).
     await audit(trx, { cafeId, actorType: "device", actorId: visit.device_id, action: "visit.stamped", entityType: "visit", entityId: visitId, changes: { staffId: visit.staff_id, stamps } });
+    await queuePassUpdate(trx, jobs, cafeId, card.id);
   } else if (card !== undefined && visit.identified_by === "qr") {
     // Scanned at the counter: the card may be stamped by phone number from now on, even if this visit added none.
     await trx.updateTable("cards").set({ phone_confirmed_at: sql<Date>`coalesce(phone_confirmed_at, ${now()})` }).where("id", "=", card.id).execute();
@@ -197,6 +200,7 @@ export async function applyVisit(trx: Transaction<Database>, cafeId: string, vis
 export interface StampingRoutesOptions {
   db: Kysely<Database>;
   secrets: CustomerSecrets;
+  jobs: PgBoss;
   releaseBuiltAt: Date;
 }
 
@@ -326,6 +330,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           entityId: created.id,
           changes: { staffId: body.staffId, stampsUsed: program.stamps_required },
         });
+        await queuePassUpdate(trx, options.jobs, device.cafeId, card.cardId);
         return { redemption: { stampsUsed: program.stamps_required, stampsLeft: updated.stamps, ...names }, created: true };
       });
     let result: { redemption: Redemption; created: boolean };

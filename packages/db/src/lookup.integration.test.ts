@@ -270,3 +270,73 @@ describe("device lookups", () => {
     expect(affected).toEqual({ tokens: 0n, burned: 0n, deleted: 0n, revoked: 0n });
   });
 });
+
+describe("Apple pass lookups", () => {
+  interface SeededPass {
+    cafeId: string;
+    passId: string;
+    tokenHash: Buffer;
+  }
+  /** One phone (Wallet's device library) with a pass of each café. */
+  const deviceHash = hashOf(randomBytes(32));
+  let passA: SeededPass;
+  let passB: SeededPass;
+
+  async function seedPass(cafe: SeededCafe): Promise<SeededPass> {
+    const seeded = { cafeId: cafe.cafeId, passId: randomUUID(), tokenHash: hashOf(randomBytes(32)) };
+    const cardId = randomUUID();
+    await withCafe(testDb.app.db, cafe.cafeId, async (trx) => {
+      await trx.insertInto("cards").values({ id: cardId, cafe_id: cafe.cafeId, web_secret_hash: hashOf(randomBytes(32)), privacy_accepted_at: new Date() }).execute();
+      await trx
+        .insertInto("apple_passes")
+        .values({ id: seeded.passId, cafe_id: cafe.cafeId, card_id: cardId, epoch: 1, auth_token_hash: seeded.tokenHash, layout_version: 1 })
+        .execute();
+      await trx
+        .insertInto("apple_pass_registrations")
+        .values({ cafe_id: cafe.cafeId, pass_id: seeded.passId, device_library_hash: deviceHash, push_token: "ab".repeat(32) })
+        .execute();
+    });
+    return seeded;
+  }
+
+  async function passCounts(key: Parameters<typeof withLookup>[1]): Promise<Record<string, number>> {
+    return withLookup(testDb.app.db, key, async (trx) => {
+      const counts: Record<string, number> = {};
+      for (const table of ["apple_passes", "apple_pass_registrations", "cards"] as const) {
+        const result = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ${sql.table(table)}`.execute(trx);
+        counts[table] = result.rows[0]?.n ?? -1;
+      }
+      return counts;
+    });
+  }
+
+  beforeAll(async () => {
+    passA = await seedPass(cafeA);
+    passB = await seedPass(cafeB);
+  });
+
+  it("show only the pass with that authenticationToken hash, without its registrations or card", async () => {
+    const passes = await withLookup(testDb.app.db, { secretHash: passB.tokenHash }, (trx) => trx.selectFrom("apple_passes").select(["id", "cafe_id"]).execute());
+    expect(passes).toEqual([{ id: passB.passId, cafe_id: passB.cafeId }]);
+    expect(await passCounts({ secretHash: passB.tokenHash })).toEqual({ apple_passes: 1, apple_pass_registrations: 0, cards: 0 });
+  });
+
+  it("show a device's registrations and their passes, in every café, and nothing for another device", async () => {
+    const passes = await withLookup(testDb.app.db, { secretHash: deviceHash }, (trx) => trx.selectFrom("apple_passes").select("id").orderBy("id").execute());
+    expect(passes.map((pass) => pass.id)).toEqual([passA.passId, passB.passId].sort());
+    expect(await passCounts({ secretHash: deviceHash })).toEqual({ apple_passes: 2, apple_pass_registrations: 2, cards: 0 });
+    expect(await passCounts({ secretHash: hashOf(randomBytes(32)) })).toEqual({ apple_passes: 0, apple_pass_registrations: 0, cards: 0 });
+  });
+
+  it("never let a café change another café's passes or registrations, even holding their hashes", async () => {
+    const affected = await withCafe(testDb.app.db, cafeA.cafeId, async (trx) => {
+      await sql`SELECT set_config('app.secret_hash', ${deviceHash.toString("hex")}, true)`.execute(trx);
+      const unregistered = await trx.deleteFrom("apple_pass_registrations").where("cafe_id", "=", cafeB.cafeId).executeTakeFirst();
+      const repointed = await trx.updateTable("apple_pass_registrations").set({ push_token: "cd".repeat(32) }).where("cafe_id", "=", cafeB.cafeId).executeTakeFirst();
+      await sql`SELECT set_config('app.secret_hash', ${passB.tokenHash.toString("hex")}, true)`.execute(trx);
+      const relaid = await trx.updateTable("apple_passes").set({ layout_version: 2 }).where("id", "=", passB.passId).executeTakeFirst();
+      return { unregistered: unregistered.numDeletedRows, repointed: repointed.numUpdatedRows, relaid: relaid.numUpdatedRows };
+    });
+    expect(affected).toEqual({ unregistered: 0n, repointed: 0n, relaid: 0n });
+  });
+});

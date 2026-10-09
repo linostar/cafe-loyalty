@@ -265,6 +265,33 @@ export interface RedemptionsTable {
   redeemed_at: CreatedAt;
 }
 
+/** A card's Apple Wallet pass at one epoch (Step 10); the id is its serial number. Deleted with the card. */
+export interface ApplePassesTable {
+  id: ColumnType<string, string | undefined, never>;
+  cafe_id: ColumnType<string, string, never>;
+  card_id: ColumnType<string, string, never>;
+  epoch: ColumnType<number, number, never>;
+  /** SHA-256 of the pass's authenticationToken. */
+  auth_token_hash: ColumnType<Buffer, Buffer, never>;
+  layout_version: ColumnType<number, number, number>;
+  /** The transaction that last changed the pass (xid8, as a decimal string): the web service's lastUpdated tag. */
+  updated_xid: ColumnType<string, never, string>;
+  /** Last-Modified, in whole seconds, later by at least a second on every change. */
+  modified_at: ColumnType<Date, never, Date>;
+  created_at: CreatedAt;
+}
+
+/** A device registered for a pass's updates. */
+export interface ApplePassRegistrationsTable {
+  cafe_id: ColumnType<string, string, never>;
+  pass_id: ColumnType<string, string, never>;
+  /** SHA-256 of the device library identifier. */
+  device_library_hash: ColumnType<Buffer, Buffer, never>;
+  push_token: ColumnType<string, string, string>;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
 export interface CustomerRecoveryTokensTable {
   id: ColumnType<string, string | undefined, never>;
   /** HMAC of the email the link was sent to; one link per email. */
@@ -300,6 +327,8 @@ export interface Database {
   visits: VisitsTable;
   visit_items: VisitItemsTable;
   redemptions: RedemptionsTable;
+  apple_passes: ApplePassesTable;
+  apple_pass_registrations: ApplePassRegistrationsTable;
 }
 
 export type TableName = keyof Database;
@@ -387,6 +416,8 @@ export const TABLE_COLUMNS = {
   ],
   visit_items: ["cafe_id", "visit_id", "line", "order_type_id", "quantity", "unit_price_cents", "unit_cost_cents", "catalog_version", "stamps_each"],
   redemptions: ["id", "cafe_id", "device_id", "event_id", "card_id", "staff_id", "stamps_used", "stamps_left", "redeemed_at"],
+  apple_passes: ["id", "cafe_id", "card_id", "epoch", "auth_token_hash", "layout_version", "updated_xid", "modified_at", "created_at"],
+  apple_pass_registrations: ["cafe_id", "pass_id", "device_library_hash", "push_token", "created_at", "updated_at"],
 } as const satisfies ColumnLists;
 
 /**
@@ -414,6 +445,8 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   visits: "cafe_id",
   visit_items: "cafe_id",
   redemptions: "cafe_id",
+  apple_passes: "cafe_id",
+  apple_pass_registrations: "cafe_id",
 };
 
 type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };

@@ -1,4 +1,4 @@
-import { createDatabase } from "@cafe-loyalty/db";
+import { JOB_STATEMENT_TIMEOUT_MS, createDatabase, createJobQueue, startJobQueue } from "@cafe-loyalty/db";
 import { formatStartupFailure } from "@cafe-loyalty/shared";
 import { apiRoutes } from "./api.js";
 import { buildApp } from "./app.js";
@@ -6,6 +6,7 @@ import { BackgroundTasks } from "./background.js";
 import { loadServerConfig, type ServerConfig } from "./config.js";
 import { customerPages } from "./customer-pages.js";
 import { createSmtpMailer } from "./mailer.js";
+import { passkitRoutes } from "./passkit-routes.js";
 
 let config: ServerConfig;
 try {
@@ -36,12 +37,25 @@ const mailer = createSmtpMailer({
   from: config.EMAIL_FROM,
 });
 const background = new BackgroundTasks(app.log);
+// Send only: stamps queue their pass updates for the worker, inside their own transactions.
+const jobs = createJobQueue(config.DATABASE_URL, app.log, { applicationName: "cafe-loyalty-server", maxConnections: 2, sendOnly: true });
 
 const secrets = {
   phoneLookupPepper: Buffer.from(config.PHONE_LOOKUP_PEPPER, "base64"),
   phoneEncryption: { keys: config.PHONE_ENCRYPTION_KEYS },
   cardQr: { keys: config.CARD_QR_KEYS },
 };
+
+try {
+  // Refuses a database whose pg-boss schema is not the one this release expects.
+  await startJobQueue(jobs);
+} catch (error) {
+  app.log.fatal({ err: error }, "job queue failed to start");
+  process.exit(1);
+}
+if (config.applePasses === undefined) {
+  app.log.warn("Apple Wallet is off: no APPLE_* variables are set, so web cards offer no Apple pass");
+}
 
 await app.register(apiRoutes, {
   prefix: "/api",
@@ -53,6 +67,7 @@ await app.register(apiRoutes, {
   publicUrl: config.PUBLIC_URL,
   releaseBuiltAt: config.BUILT_AT,
   secrets,
+  jobs,
 });
 await app.register(customerPages, {
   db: database.db,
@@ -60,11 +75,17 @@ await app.register(customerPages, {
   background,
   publicUrl: config.PUBLIC_URL,
   secrets,
+  jobs,
+  apple: config.applePasses,
 });
+if (config.applePasses !== undefined) {
+  await app.register(passkitRoutes, { prefix: "/passkit", db: database.db, secrets, apple: config.applePasses, publicUrl: config.PUBLIC_URL });
+}
 // Runs once the server has stopped taking requests: finish emails in flight, then release connections.
 app.addHook("onClose", async () => {
   await background.drain();
   mailer.close();
+  await jobs.stop({ graceful: true, timeout: JOB_STATEMENT_TIMEOUT_MS + 1_000 });
   await database.close();
 });
 
