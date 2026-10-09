@@ -4,6 +4,7 @@ import { apiRoutes } from "./api.js";
 import { buildApp } from "./app.js";
 import { BackgroundTasks } from "./background.js";
 import { loadServerConfig, type ServerConfig } from "./config.js";
+import { customerPages } from "./customer-pages.js";
 import { createSmtpMailer } from "./mailer.js";
 
 let config: ServerConfig;
@@ -43,6 +44,14 @@ await app.register(apiRoutes, {
   background,
   dashboardUrl: config.DASHBOARD_URL,
   counterUrl: config.COUNTER_URL,
+  publicUrl: config.PUBLIC_URL,
+});
+await app.register(customerPages, {
+  db: database.db,
+  mailer,
+  background,
+  publicUrl: config.PUBLIC_URL,
+  secrets: { phoneLookupPepper: Buffer.from(config.PHONE_LOOKUP_PEPPER, "base64"), phoneEncryption: { keys: config.PHONE_ENCRYPTION_KEYS }, cardQr: { keys: config.CARD_QR_KEYS } },
 });
 // Runs once the server has stopped taking requests: finish emails in flight, then release connections.
 app.addHook("onClose", async () => {

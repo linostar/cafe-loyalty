@@ -75,7 +75,17 @@ export {
   type PasswordResetRequest,
   type SignupRequest,
 } from "./owner-auth.js";
-export { e164PhoneSchema, type E164Phone } from "./phone.js";
+export {
+  CARD_QR_SIGNING_PREFIX,
+  CARD_QR_VERSION,
+  cardQrSigningPayload,
+  formatCardQr,
+  joinCodeSchema,
+  joinLinkSchema,
+  parseCardQr,
+  type CardQrFields,
+} from "./customer.js";
+export { e164PhoneSchema, normalizePhoneInput, type E164Phone } from "./phone.js";
 export { formatStartupFailure } from "./startup.js";
 export {
   MAX_SYNC_BATCH,

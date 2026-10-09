@@ -11,6 +11,33 @@ const originSchema = (app: string, example: string) =>
   }, `Use the ${app}'s address without a path, such as ${example}.`);
 
 export const dashboardUrlSchema = originSchema("dashboard", "https://dashboard.example.com");
+export const publicUrlSchema = originSchema("customer pages", "https://card.example.com");
+
+/** A 32-byte secret in base64. */
+const secretBytes = (name: string) =>
+  z.string().refine((value) => /^[A-Za-z0-9+/]+={0,2}$/.test(value) && Buffer.from(value, "base64").length >= 32, `Use at least 32 random bytes in base64 (${name}).`);
+
+/**
+ * A keyring: comma-separated `id:base64key` entries of 32-byte keys, the newest (used for new data) first. Older
+ * keys stay listed while data made with them may still exist.
+ */
+const keyringSchema = z
+  .string()
+  .transform((value, context) => {
+    const keys = value.split(",").map((entry) => {
+      const [id = "", key = ""] = entry.trim().split(":");
+      return { id, key: Buffer.from(key, "base64") };
+    });
+    const valid =
+      keys.length > 0 &&
+      keys.every((entry) => /^[a-z0-9]{1,16}$/.test(entry.id) && entry.key.length === 32) &&
+      new Set(keys.map((entry) => entry.id)).size === keys.length;
+    if (!valid) {
+      context.addIssue({ code: "custom", message: "Use comma-separated id:key entries: ids of 1 to 16 lower-case letters or digits, each key 32 bytes in base64, newest first." });
+      return z.NEVER;
+    }
+    return keys;
+  });
 export const counterUrlSchema = originSchema("counter app", "https://counter.example.com");
 
 const serverEnvSchema = z.object({
@@ -27,6 +54,14 @@ const serverEnvSchema = z.object({
   DASHBOARD_URL: dashboardUrlSchema,
   /** Public address of the counter app; pairing QR codes open its /pair page. */
   COUNTER_URL: counterUrlSchema,
+  /** Public address of this server's customer pages: café signup QR codes, web cards and recovery links. */
+  PUBLIC_URL: publicUrlSchema,
+  /** Secret pepper for the HMAC lookup hashes of phone numbers and recovery emails (AC 6). Never change it. */
+  PHONE_LOOKUP_PEPPER: secretBytes("PHONE_LOOKUP_PEPPER"),
+  /** AES-256-GCM keys for phone numbers at rest. */
+  PHONE_ENCRYPTION_KEYS: keyringSchema,
+  /** HMAC-SHA256 keys that sign card QR codes (AC 7). */
+  CARD_QR_KEYS: keyringSchema,
   /**
    * Number of reverse proxies in front of the server (Caddy: 1), so rate limits see the client's address.
    * Required in production: left at 0 behind a proxy, every client would share the proxy's rate limits.
@@ -57,7 +92,7 @@ const serverEnvSchema = z.object({
     if (env.TRUST_PROXY_HOPS === undefined) {
       context.addIssue({ code: "custom", path: ["TRUST_PROXY_HOPS"], message: "Set it in production (1 behind Caddy)." });
     }
-    for (const key of ["DASHBOARD_URL", "COUNTER_URL"] as const) {
+    for (const key of ["DASHBOARD_URL", "COUNTER_URL", "PUBLIC_URL"] as const) {
       if (new URL(env[key]).protocol !== "https:") {
         context.addIssue({ code: "custom", path: [key], message: "Use an https address in production." });
       }

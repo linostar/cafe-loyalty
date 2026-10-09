@@ -38,7 +38,10 @@ const PUBLIC_KEY = JSON.stringify({ kty: "EC", crv: "P-256", x: "A".repeat(43), 
  * Inserts one row of each tenant table for a café, in this order. Every table in schema app needs an entry
  * (checked below).
  */
-const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
+/** Tables without a café of their own (TENANT_KEY null), tested in customers.integration.test.ts. */
+type GlobalTable = "customers" | "customer_recovery_tokens";
+
+const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
   loyalty_programs: (trx, cafeId) =>
     trx
       .insertInto("loyalty_programs")
@@ -96,9 +99,16 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes">, (trx: Transaction<D
         expires_at: inOneHour(),
       })
       .execute(),
+  cards: (trx, cafeId) =>
+    trx.insertInto("cards").values({ cafe_id: cafeId, web_secret_hash: randomBytes(32), privacy_accepted_at: new Date() }).execute(),
 };
 
 const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];
+/** Every table scoped to one café, with the column that names it. */
+const CAFE_TABLES = TABLES.flatMap((table) => {
+  const key = TENANT_KEY[table];
+  return key === null ? [] : [{ table: table as Exclude<TableName, GlobalTable>, key }];
+});
 
 let testDb: TestDatabase;
 let admin: pg.Client;
@@ -144,8 +154,8 @@ describe("catalog", () => {
     expect(rows.map((row) => row.relname)).toEqual([...TABLES].sort());
   });
 
-  it("has a fixture for every tenant table", () => {
-    expect([...Object.keys(FIXTURES), "cafes"].sort()).toEqual([...TABLES].sort());
+  it("has a fixture for every café table", () => {
+    expect([...Object.keys(FIXTURES), "cafes"].sort()).toEqual(CAFE_TABLES.map(({ table }) => table).sort());
   });
 
   it("forces row-level security with a café policy on every table, owned by the owner role", async () => {
@@ -186,8 +196,7 @@ describe("roles", () => {
   });
 });
 
-describe.each(TABLES)("isolation of %s", (table) => {
-  const key = TENANT_KEY[table];
+describe.each(CAFE_TABLES)("isolation of $table", ({ table, key }) => {
 
   it("shows café A only its own rows", async () => {
     const counts = await withCafe(testDb.app.db, cafeA, async (trx) => {

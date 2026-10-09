@@ -1,4 +1,4 @@
-import { randomUUID, webcrypto } from "node:crypto";
+import { randomBytes, randomUUID, webcrypto } from "node:crypto";
 import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
 import { deviceTokenSigningPayload } from "@cafe-loyalty/shared";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -6,6 +6,8 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, expect } from "vitest";
 import type { RouteAccess } from "../access.js";
 import { apiRoutes } from "../api.js";
+import { customerPages } from "../customer-pages.js";
+import type { CustomerSecrets } from "../customer-crypto.js";
 import { buildApp } from "../app.js";
 import { BackgroundTasks } from "../background.js";
 import { createOwnerInvite } from "../invites.js";
@@ -14,6 +16,14 @@ import type { EmailMessage, Mailer } from "../mailer.js";
 export const DASHBOARD_URL = "https://dashboard.example.test";
 export const COUNTER_URL = "https://counter.example.test";
 export const PASSWORD = "correct horse battery";
+export const PUBLIC_URL = "https://card.example.test";
+
+/** Test-only secrets, fresh per test file. */
+export const TEST_SECRETS: CustomerSecrets = {
+  phoneLookupPepper: randomBytes(32),
+  phoneEncryption: { keys: [{ id: "p1", key: randomBytes(32) }] },
+  cardQr: { keys: [{ id: "q1", key: randomBytes(32) }] },
+};
 
 export class FakeMailer implements Mailer {
   readonly sent: EmailMessage[] = [];
@@ -157,7 +167,8 @@ export function useApiHarness() {
       });
       const mailer = new FakeMailer();
       const background = new BackgroundTasks(app.log);
-      await app.register(apiRoutes, { prefix: "/api", db: context.testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL, counterUrl: COUNTER_URL });
+      await app.register(apiRoutes, { prefix: "/api", db: context.testDb.app.db, mailer, background, dashboardUrl: DASHBOARD_URL, counterUrl: COUNTER_URL, publicUrl: PUBLIC_URL });
+      await app.register(customerPages, { db: context.testDb.app.db, mailer, background, publicUrl: PUBLIC_URL, secrets: TEST_SECRETS });
       await app.ready();
       const created = { app, mailer, background, logs, routes };
       open.push(created);
