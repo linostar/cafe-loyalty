@@ -34,6 +34,11 @@ export interface DeviceContext {
 declare module "fastify" {
   interface FastifyContextConfig {
     access?: RouteAccess;
+    /**
+     * On a device route: a revoked device's unexpired token is still accepted, so the device can hand over its queue,
+     * which is then held for the owner's review (AC 21). Every other device route answers it DEVICE_REVOKED.
+     */
+    acceptRevokedDevice?: true;
   }
   interface FastifyRequest {
     /** The signed-in owner on `owner` routes, otherwise null. */
@@ -72,7 +77,11 @@ export async function findSession(db: Kysely<Database>, token: string): Promise<
   );
 }
 
-export type DeviceTokenCheck = { status: "valid"; device: DeviceContext } | { status: "unknown" | "expired" | "revoked" };
+export type DeviceTokenCheck =
+  | { status: "valid"; device: DeviceContext }
+  /** `live` says whether the token itself has not expired. */
+  | { status: "revoked"; device: DeviceContext; live: boolean }
+  | { status: "unknown" | "expired" };
 
 /** Checks a device access token and, when valid, records the device as seen. A revoked device is reported first. */
 export async function checkDeviceToken(db: Kysely<Database>, token: string): Promise<DeviceTokenCheck> {
@@ -89,9 +98,10 @@ export async function checkDeviceToken(db: Kysely<Database>, token: string): Pro
   }
   return withCafe(db, found.cafe_id, async (trx) => {
     const device = await trx.selectFrom("devices").select("revoked_at").where("id", "=", found.device_id).executeTakeFirst();
+    const context = { deviceId: found.device_id, cafeId: found.cafe_id };
     // A missing device row (undefined) counts as revoked too.
     if (device?.revoked_at !== null) {
-      return { status: "revoked" } as const;
+      return { status: "revoked", device: context, live: found.live } as const;
     }
     if (!found.live) {
       return { status: "expired" } as const;
@@ -102,7 +112,7 @@ export async function checkDeviceToken(db: Kysely<Database>, token: string): Pro
       .where("id", "=", found.device_id)
       .where("last_seen_at", "<", secondsAgo(TOUCH_SECONDS))
       .execute();
-    return { status: "valid", device: { deviceId: found.device_id, cafeId: found.cafe_id } } as const;
+    return { status: "valid", device: context } as const;
   });
 }
 
@@ -151,12 +161,16 @@ export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>
 
   async function requireDevice(request: FastifyRequest): Promise<void> {
     const bearer = readBearerToken(request.headers.authorization);
-    const check = bearer === undefined ? ({ status: "unknown" } as const) : await checkDeviceToken(db, bearer);
+    const check: DeviceTokenCheck = bearer === undefined ? { status: "unknown" } : await checkDeviceToken(db, bearer);
     switch (check.status) {
       case "valid":
         request.device = check.device;
         return;
       case "revoked":
+        if (check.live && request.routeOptions.config.acceptRevokedDevice === true) {
+          request.device = check.device;
+          return;
+        }
         throw new ApiError("DEVICE_REVOKED", "The owner removed this device. Pair it again from the owner's dashboard to use it.");
       case "expired":
       case "unknown":

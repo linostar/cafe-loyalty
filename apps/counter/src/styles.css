@@ -1,0 +1,91 @@
+:root {
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color: #1d1d1f;
+  background: #ffffff;
+}
+
+body {
+  margin: 0;
+}
+
+header,
+main,
+footer {
+  box-sizing: border-box;
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+}
+
+input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.75rem;
+  font: inherit;
+}
+
+/* Large targets for a busy counter. */
+button {
+  min-height: 3rem;
+  padding: 0.5rem 1.25rem;
+  font: inherit;
+}
+
+form > button,
+.actions {
+  margin-block-start: 1rem;
+}
+
+:focus-visible {
+  outline: 3px solid #1a5fb4;
+  outline-offset: 2px;
+}
+
+.field-error,
+.warning {
+  color: #a51d2d;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.choices {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.choices button {
+  width: 100%;
+}
+
+.rejected {
+  margin-block-start: 2rem;
+  padding: 0.5rem 1rem;
+  border-inline-start: 4px solid #a51d2d;
+  background: #fbeeee;
+  overflow-wrap: anywhere;
+}
+
+.status-bar {
+  margin-block-start: 2rem;
+  border-block-start: 1px solid #d0d0d7;
+}
+
+.status-bar p {
+  margin-block: 0.25rem;
+}
+
+.build {
+  color: #4a4a4f;
+}

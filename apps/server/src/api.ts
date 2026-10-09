@@ -8,6 +8,7 @@ import { deviceRoutes } from "./device-routes.js";
 import type { Mailer } from "./mailer.js";
 import { ownerAuthRoutes } from "./owner-auth.js";
 import { staffRoutes } from "./staff-routes.js";
+import { syncRoutes } from "./sync-routes.js";
 
 export interface ApiOptions {
   db: Kysely<Database>;
@@ -19,6 +20,8 @@ export interface ApiOptions {
   counterUrl: string;
   /** This server's public address (café signup QR codes). */
   publicUrl: string;
+  /** When this release was built: counter builds more than COUNTER_SUPPORT_DAYS older are refused new actions. */
+  releaseBuiltAt: Date;
 }
 
 /** Every API route, behind the access control each declares. Register with `{ prefix: "/api" }`. */
@@ -27,6 +30,7 @@ export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (erro
   void app.register(ownerAuthRoutes, { prefix: "/auth", db: options.db, mailer: options.mailer, background: options.background, dashboardUrl: options.dashboardUrl });
   void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl });
   void app.register(staffRoutes, { db: options.db });
-  void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl });
+  void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl, releaseBuiltAt: options.releaseBuiltAt });
+  void app.register(syncRoutes, { db: options.db });
   done();
 }

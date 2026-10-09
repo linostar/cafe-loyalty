@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PAIRING_CODE_ALPHABET,
+  devicePairProofPayload,
   deviceTokenSigningPayload,
   formatPairingCode,
   normalizePairingCode,
@@ -60,6 +61,24 @@ describe("deviceTokenSigningPayload", () => {
         issuedAt: "2026-10-08T12:00:00.000Z",
       }),
     ).toBe("cafe-loyalty/device-token/v1\n0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d\n6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40\n2026-10-08T12:00:00.000Z");
+  });
+});
+
+describe("devicePairProofPayload", () => {
+  it("is domain-separated from token renewals and bound to the new key", () => {
+    const previous = { deviceId: "0B9A3C4D-1E2F-4A5B-8C7D-6E5F4A3B2C1D", keyId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40" };
+    const key = { kty: "EC" as const, crv: "P-256" as const, x: "X".repeat(43), y: "Y".repeat(43) };
+    expect(devicePairProofPayload(previous, key)).toBe(
+      `cafe-loyalty/device-pair-proof/v1\n0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d\n6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40\n${"X".repeat(43)}\n${"Y".repeat(43)}`,
+    );
+    expect(devicePairProofPayload(previous, { ...key, y: "Z".repeat(43) })).not.toBe(devicePairProofPayload(previous, key));
+  });
+
+  it("travels as an optional previous device in the pairing request", () => {
+    const publicKey = { kty: "EC", crv: "P-256", x: "X".repeat(43), y: "Y".repeat(43) };
+    const previous = { deviceId: "0B9A3C4D-1E2F-4A5B-8C7D-6E5F4A3B2C1D", keyId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", signature: "A".repeat(86) };
+    expect(pairRequestSchema.parse({ code: "ABCD-1234-EFGH", publicKey, previous }).previous?.deviceId).toBe("0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d");
+    expect(pairRequestSchema.safeParse({ code: "ABCD-1234-EFGH", publicKey, previous: { ...previous, signature: "short" } }).success).toBe(false);
   });
 });
 

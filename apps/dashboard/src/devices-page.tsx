@@ -123,7 +123,7 @@ export function DevicesPage() {
                     void submit(() => apiRequest("POST", `/api/devices/${device.id}/revoke`, devicesSchema)).then((result) => {
                       if (result.ok) {
                         setDevices(result.value);
-                        setNotice(`${device.name} is removed. It stops working the next time it connects.`);
+                        setNotice(`${device.name} is removed. It stops working the next time it connects; anything it had not sent waits under Review.`);
                       } else if (isStale(result.error)) {
                         setReload((value) => value + 1);
                       }

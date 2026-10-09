@@ -36,5 +36,8 @@ export {
   type OrderTypesTable,
   type PairingCodesTable,
   type StaffTable,
+  type SyncEventStatus,
+  type SyncEventsTable,
+  type SyncHoldReason,
   type TableName,
 } from "./schema.js";

@@ -20,6 +20,9 @@ export const MAX_SYNC_BATCH = 100;
 /** A UUID, lowercased so ids compare equal to PostgreSQL's uuid output. */
 const idSchema = z.uuid().transform((id) => id.toLowerCase());
 
+/** Largest per-device sequence number: the server stores it as a PostgreSQL integer. */
+export const MAX_SYNC_SEQUENCE = 2_147_483_647;
+
 /** Signature: ECDSA P-256 with SHA-256 in WebCrypto's raw r||s form (64 bytes), base64url without padding. */
 export const syncSignatureSchema = z.string().regex(/^[A-Za-z0-9_-]{86}$/, "Signature must be 64 bytes, base64url-encoded.");
 
@@ -69,7 +72,7 @@ const v1EnvelopeFields = {
   deviceId: idSchema,
   keyId: idSchema,
   staffId: idSchema,
-  sequence: z.number().int().min(0),
+  sequence: z.number().int().min(0).max(MAX_SYNC_SEQUENCE),
   occurredAt: z.iso.datetime({ offset: false }),
   signature: syncSignatureSchema,
 };
@@ -99,13 +102,30 @@ export const visitRecordedV1EventSchema = z.object({
 
 export type VisitRecordedV1Event = z.output<typeof visitRecordedV1EventSchema>;
 
+/**
+ * `staff.pin_lockout`, schema version 1: the device locked out the envelope's staff member after repeated wrong PINs
+ * (AC 19). `failedAttempts` counts the wrong PINs in a row so far; `lockedUntil` is when the device accepts a PIN again.
+ */
+export const staffPinLockoutV1EventSchema = z.object({
+  ...v1EnvelopeFields,
+  type: z.literal("staff.pin_lockout"),
+  schemaVersion: z.literal(1),
+  payload: z.object({
+    failedAttempts: z.number().int().min(1).max(1_000_000),
+    lockedUntil: z.iso.datetime({ offset: false }),
+  }),
+});
+
+export type StaffPinLockoutV1Event = z.output<typeof staffPinLockoutV1EventSchema>;
+
 /** Full event schemas by type and version. A pair missing here is unsupported, not invalid. */
 const EVENT_SCHEMAS = {
   "visit.recorded": { 1: visitRecordedV1EventSchema },
+  "staff.pin_lockout": { 1: staffPinLockoutV1EventSchema },
 } as const;
 
 /** Every event this server understands. */
-export type KnownSyncEvent = VisitRecordedV1Event;
+export type KnownSyncEvent = VisitRecordedV1Event | StaffPinLockoutV1Event;
 
 export interface SyncIssue {
   path: string;
@@ -296,3 +316,27 @@ export function readSyncResponse(eventCount: number, body: unknown): ClientSyncR
   }
   return results;
 }
+
+/** Why an event was held for the owner's review instead of applied (AC 21). */
+export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked"] as const;
+
+export type SyncHoldReason = (typeof SYNC_HOLD_REASONS)[number];
+
+const timestamp = z.iso.datetime({ offset: false });
+
+/** One held event in the owner's review queue. */
+export const reviewItemSchema = z.object({
+  id: z.uuid(),
+  type: z.string(),
+  deviceName: z.string(),
+  staffName: z.string(),
+  reason: z.enum(SYNC_HOLD_REASONS),
+  occurredAt: timestamp,
+  receivedAt: timestamp,
+});
+
+/** A page of the review queue, oldest first; `nextCursor` fetches the next page (AC 40). */
+export const reviewQueueSchema = z.object({ items: z.array(reviewItemSchema), nextCursor: z.string().nullable() });
+
+export type ReviewItem = z.output<typeof reviewItemSchema>;
+export type ReviewQueue = z.output<typeof reviewQueueSchema>;
