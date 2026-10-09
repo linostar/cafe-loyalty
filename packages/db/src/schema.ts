@@ -278,6 +278,8 @@ export interface ApplePassesTable {
   updated_xid: ColumnType<string, never, string>;
   /** Last-Modified, in whole seconds, later by at least a second on every change. */
   modified_at: ColumnType<Date, never, Date>;
+  /** The change (updated_xid) the last successful push delivered; the worker's sweep pushes again when it lags. */
+  delivered_xid: ColumnType<string | null, never, string | null>;
   /** Failed pushes in a row, the last one's time and error code (never personal data); reset by a push that succeeds. */
   delivery_failures: ColumnType<number, never, number>;
   delivery_failed_at: ColumnType<Date | null, never, Date | null>;
@@ -293,6 +295,8 @@ export interface GooglePassesTable {
   epoch: ColumnType<number, number, never>;
   /** The transaction that last changed the pass (xid8, as a decimal string). */
   updated_xid: ColumnType<string, never, string>;
+  /** The change the last successful write delivered; the worker's sweep writes the pass again when it lags. */
+  delivered_xid: ColumnType<string | null, never, string | null>;
   /** Failed writes to Google in a row, the last one's time and error code; reset by a write that succeeds. */
   delivery_failures: ColumnType<number, never, number>;
   delivery_failed_at: ColumnType<Date | null, never, Date | null>;
@@ -445,13 +449,14 @@ export const TABLE_COLUMNS = {
     "layout_version",
     "updated_xid",
     "modified_at",
+    "delivered_xid",
     "delivery_failures",
     "delivery_failed_at",
     "delivery_error",
     "created_at",
   ],
   apple_pass_registrations: ["cafe_id", "pass_id", "device_library_hash", "push_token", "created_at", "updated_at"],
-  google_passes: ["id", "cafe_id", "card_id", "epoch", "updated_xid", "delivery_failures", "delivery_failed_at", "delivery_error", "created_at"],
+  google_passes: ["id", "cafe_id", "card_id", "epoch", "updated_xid", "delivered_xid", "delivery_failures", "delivery_failed_at", "delivery_error", "created_at"],
 } as const satisfies ColumnLists;
 
 /**

@@ -10,7 +10,7 @@ import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, count, html, page, pickLang, t, type Lang, type MessageKey, type SafeHtml } from "./customer-html.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
-import { GOOGLE_LOGO_PNG, googleSaveUrl } from "./google-pass.js";
+import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
@@ -156,6 +156,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     // shut a café's signup page; the per-address limit is the main one.
     signupPerCafe: new RateLimiter(options.limits?.signupPerCafe ?? 1_000, HOUR * 1000),
     cardChangesPerCard: new RateLimiter(20, HOUR * 1000),
+    // Each Google save link queues a write to Google with the issuer's shared account and quota.
+    googleLinksPerCard: new RateLimiter(20, HOUR * 1000),
     recoverPerIp: new RateLimiter(5, HOUR * 1000),
     recoverPerEmail: new RateLimiter(3, HOUR * 1000),
     restorePerIp: new RateLimiter(10, 15 * MINUTE * 1000),
@@ -390,7 +392,7 @@ ${notice === undefined ? null : html`<p class="notice" role="status">${notice}</
 ${reward === undefined || program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
 <img class="qr" src="${qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
 ${options.apple === undefined || !onAppleDevice(request) ? null : html`<p><a class="wallet" href="${path}/apple-pass?lang=${lang}">${t(lang, "addToAppleWallet")}</a></p>`}
-${options.google === undefined || onAppleDevice(request) ? null : html`<p><a class="wallet" href="${path}/google-pass?lang=${lang}">${t(lang, "addToGoogleWallet")}</a></p>`}
+${options.google === undefined || onAppleDevice(request) ? null : html`<p><a class="google-wallet" href="${path}/google-pass?lang=${lang}"><img src="${GOOGLE_WALLET_BADGES[lang]}" alt="${t(lang, "addToGoogleWallet")}" width="199" height="55"></a></p>`}
 <p>${t(lang, "keepLink")}</p>
 <section aria-labelledby="email-title">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
@@ -478,6 +480,7 @@ ${errorBlock(errors.delete, "delete-error")}
     }
     const { secret } = request.params as { secret: string };
     const card = await cardOrGone(secret);
+    enforce(limits.googleLinksPerCard, card.id);
     const found = await withCafe(db, card.cafe_id, async (trx) => {
       await trx
         .insertInto("google_passes")

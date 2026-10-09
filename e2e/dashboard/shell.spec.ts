@@ -34,8 +34,8 @@ test("warns on the home page when customers' wallet cards keep failing to update
     "GET /api/cafe/wallet-deliveries": reply(200, { failing: [{ wallet: "google", passes: 2, lastFailedAt: "2026-10-09T08:00:00.000Z", lastError: "google_503_UNAVAILABLE" }] }),
   });
   await page.goto("/");
-  const warning = page.getByRole("alert");
-  await expect(warning).toContainText("Some customers' wallet cards are not updating");
+  const warning = page.getByRole("region", { name: "Wallet card updates are failing" });
+  await expect(warning).toContainText("Some customers' wallet cards are not showing their latest stamps");
   await expect(warning).toContainText("Google Wallet: 2 cards");
   await expect(warning).toContainText("google_503_UNAVAILABLE");
 });

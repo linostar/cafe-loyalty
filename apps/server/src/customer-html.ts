@@ -62,6 +62,8 @@ button.danger { border-color: #a51d2d; color: #a51d2d; }
 .privacy { font-size: 0.95rem; padding: 0.75rem; background: #f4f4f6; }
 .qr { display: block; width: 100%; max-width: 18rem; height: auto; margin: 1rem auto; background: #fff; }
 .stamps { font-size: 1.25rem; font-weight: 700; }
+.google-wallet { display: inline-block; margin: 8px 0; }
+.google-wallet img { display: block; height: 55px; width: auto; }
 .wallet { display: inline-block; padding: 0.6rem 1.2rem; border-radius: 0.5rem; background: #000; color: #fff; text-decoration: none; }
 section { border-block-start: 1px solid #d0d0d7; margin-block-start: 1.5rem; }
 ul { padding-inline-start: 1.25rem; }
@@ -159,7 +161,7 @@ const MESSAGES = {
     qrAlt: "رمز QR الخاص ببطاقتك. أظهره للباريستا.",
     keepLink: "هذه الصفحة هي بطاقتك. احفظها في المفضلة أو أضفها إلى الشاشة الرئيسية، ولا تشارك رابطها.",
     addToAppleWallet: "إضافة إلى Apple Wallet",
-    addToGoogleWallet: "إضافة إلى Google Wallet",
+    addToGoogleWallet: "إضافة إلى محفظة Google",
     emailTitle: "بريد الاستعادة",
     emailText: "إذا فقدت هذا الهاتف، يمكننا أن نرسل لك رابطاً لاستعادة بطاقتك.",
     emailLabel: "البريد الإلكتروني",

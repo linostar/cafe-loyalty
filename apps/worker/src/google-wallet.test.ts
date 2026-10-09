@@ -113,6 +113,16 @@ describe("Google Wallet client", () => {
     expect(google.tokens()).toBe(2);
   });
 
+  it("keeps the system code of a connection Google's address refuses", async () => {
+    // A port nothing listens on any more: fetch rejects with "fetch failed", the system error as its cause.
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${String((closed.address() as AddressInfo).port)}`;
+    await new Promise((resolve) => closed.close(resolve));
+    const wallet = createGoogleWallet({ serviceAccount: SERVICE_ACCOUNT, apiOrigin: origin, tokenUrl: `${origin}/token`, timeoutMs: 500 });
+    expect(deliveryErrorCode(await wallet.save(CLASS, OBJECT, true).catch((error: unknown) => error))).toBe("ECONNREFUSED");
+  });
+
   it("gives up on a request Google does not answer in time", async () => {
     const google = await fakeGoogle(["hang"]);
     expect(deliveryErrorCode(await google.wallet.save(CLASS, OBJECT, true).catch((error: unknown) => error))).toBe("timeout");

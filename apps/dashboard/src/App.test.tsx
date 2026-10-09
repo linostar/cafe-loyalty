@@ -52,8 +52,8 @@ describe("Dashboard App", () => {
       ),
     );
     render(<App />);
-    const warning = await screen.findByRole("alert");
-    expect(warning).toHaveTextContent("Some customers' wallet cards are not updating");
+    const warning = await screen.findByRole("region", { name: "Wallet card updates are failing" });
+    expect(warning).toHaveTextContent("Some customers' wallet cards are not showing their latest stamps");
     expect(warning).toHaveTextContent("Apple Wallet: 1 card, last failure");
     expect(warning).toHaveTextContent("apns_503_ServiceUnavailable");
   });

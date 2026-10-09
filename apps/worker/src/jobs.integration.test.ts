@@ -9,7 +9,7 @@ import type { PassPusher, PushResult } from "./apns.js";
 import { DeliveryError } from "./delivery.js";
 import type { GooglePassSettings } from "./google-passes.js";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
-import { PURGE_QUEUE, jobQueueTask } from "./jobs.js";
+import { PURGE_QUEUE, RESEND_QUEUE, jobQueueTask } from "./jobs.js";
 
 let db: TestDatabase;
 let admin: pg.Client;
@@ -91,12 +91,11 @@ async function passWithDevices(devices: number): Promise<{ cafeId: string; passI
   const passId = randomUUID();
   await admin.query("INSERT INTO app.cafes (id, name) VALUES ($1, 'Café')", [cafeId]);
   await admin.query("INSERT INTO app.cards (id, cafe_id, web_secret_hash, privacy_accepted_at) VALUES ($1, $2, $3, now())", [cardId, cafeId, randomBytes(32)]);
-  await admin.query("INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version) VALUES ($1, $2, $3, 1, $4, 1)", [
-    passId,
-    cafeId,
-    cardId,
-    randomBytes(32),
-  ]);
+  // Delivered, so a scheduled sweep during the tests leaves it alone.
+  await admin.query(
+    "INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, 1, pg_current_xact_id())",
+    [passId, cafeId, cardId, randomBytes(32)],
+  );
   const tokens: string[] = [];
   for (let device = 0; device < devices; device += 1) {
     const token = randomBytes(32).toString("hex");
@@ -111,7 +110,7 @@ async function passWithDevices(devices: number): Promise<{ cafeId: string; passI
   return { cafeId, passId, tokens: tokens.sort() };
 }
 
-/** A café's card with 3 of 9 stamps at `cardEpoch`, and its Google pass of `epoch`. */
+/** A café's card with 3 of 9 stamps at `cardEpoch`, and its Google pass of `epoch` (delivered, like passWithDevices's). */
 async function googlePass({ epoch = 1, cardEpoch = 1 } = {}): Promise<{ cafeId: string; cardId: string; passId: string }> {
   const cafeId = randomUUID();
   const cardId = randomUUID();
@@ -124,17 +123,28 @@ async function googlePass({ epoch = 1, cardEpoch = 1 } = {}): Promise<{ cafeId: 
     randomBytes(32),
     cardEpoch,
   ]);
-  await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch) VALUES ($1, $2, $3, $4)", [passId, cafeId, cardId, epoch]);
+  await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch, delivered_xid) VALUES ($1, $2, $3, $4, pg_current_xact_id())", [
+    passId,
+    cafeId,
+    cardId,
+    epoch,
+  ]);
   return { cafeId, cardId, passId };
 }
 
+/** A pass's failures in a row, and whether its latest change was delivered. */
 const deliveryState = async (table: "apple_passes" | "google_passes", passId: string) =>
   (
-    await admin.query<{ delivery_failures: number; delivery_error: string | null; failed: boolean }>(
-      `SELECT delivery_failures, delivery_error, delivery_failed_at IS NOT NULL AS failed FROM app.${table} WHERE id = $1`,
+    await admin.query<{ delivery_failures: number; delivery_error: string | null; failed: boolean; delivered: boolean }>(
+      `SELECT delivery_failures, delivery_error, delivery_failed_at IS NOT NULL AS failed, delivered_xid IS NOT DISTINCT FROM updated_xid AS delivered
+         FROM app.${table} WHERE id = $1`,
       [passId],
     )
   ).rows[0];
+
+/** Marks a pass changed after its last delivery, as a change whose update never ran leaves it. */
+const undeliver = (table: "apple_passes" | "google_passes", passId: string) =>
+  admin.query(`UPDATE app.${table} SET updated_xid = pg_current_xact_id() WHERE id = $1`, [passId]);
 
 const registrationTokens = async (cafeId: string): Promise<string[]> =>
   (await admin.query<{ push_token: string }>("SELECT push_token FROM app.apple_pass_registrations WHERE cafe_id = $1 ORDER BY push_token", [cafeId])).rows.map(
@@ -152,7 +162,12 @@ describe("job queue", () => {
     // Fails if the pg-boss library expects another schema version than migration 0007 installed.
     await task.start();
     try {
-      expect((await boss.getSchedules()).map((schedule) => ({ name: schedule.name, cron: schedule.cron }))).toEqual([{ name: PURGE_QUEUE, cron: "17 * * * *" }]);
+      expect(
+        (await boss.getSchedules()).map((schedule) => ({ name: schedule.name, cron: schedule.cron })).sort((a, b) => a.name.localeCompare(b.name)),
+      ).toEqual([
+        { name: PURGE_QUEUE, cron: "17 * * * *" },
+        { name: RESEND_QUEUE, cron: "4,19,34,49 * * * *" },
+      ]);
       // What the schedule sends every hour, picked up by the worker's own handler.
       const id = (await boss.send(PURGE_QUEUE)) ?? "";
       // Counts in the output; the token itself may have gone in a scheduled run at minute 17.
@@ -206,7 +221,7 @@ describe("job queue", () => {
       expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: "job failed", job: APPLE_PASS_UPDATE_QUEUE, jobId: id, cafeId: pass.cafeId }));
       expect(await registrationTokens(pass.cafeId)).toEqual(pass.tokens);
       // Counted on the pass, for the owner dashboard (AC 13).
-      expect(await deliveryState("apple_passes", pass.passId)).toEqual({ delivery_failures: 1, delivery_error: "apns_503", failed: true });
+      expect(await deliveryState("apple_passes", pass.passId)).toEqual({ delivery_failures: 1, delivery_error: "apns_503", failed: true, delivered: true });
       // The push token never reaches the logs.
       expect(JSON.stringify(lines)).not.toContain(pass.tokens[0]);
     } finally {
@@ -264,6 +279,7 @@ describe("job queue", () => {
   it("writes a Google pass's object as the card now is, creating it if nobody saved it yet, and clears its failures (AC 12, 13)", async () => {
     const pass = await googlePass();
     await admin.query("UPDATE app.google_passes SET delivery_failures = 4, delivery_error = 'timeout', delivery_failed_at = now() WHERE id = $1", [pass.passId]);
+    await undeliver("google_passes", pass.passId);
     const { boss, task, wallet } = jobQueue();
     wallet.answer = "created";
     await task.start();
@@ -277,7 +293,7 @@ describe("job queue", () => {
       // The card's QR, signed as the server signs it.
       const qr = saved?.object.state === "ACTIVE" ? saved.object.barcode.value : "";
       expect(verifyCardQr(GOOGLE, qr)).toEqual({ cardId: pass.cardId, cafeId: pass.cafeId, epoch: 1 });
-      expect(await deliveryState("google_passes", pass.passId)).toEqual({ delivery_failures: 0, delivery_error: null, failed: false });
+      expect(await deliveryState("google_passes", pass.passId)).toEqual({ delivery_failures: 0, delivery_error: null, failed: false, delivered: true });
     } finally {
       await task.stop();
     }
@@ -310,7 +326,7 @@ describe("job queue", () => {
         const id = (await boss.send(GOOGLE_PASS_UPDATE_QUEUE, { cafeId: pass.cafeId, passId: pass.passId }, { retryLimit: 0 })) ?? "";
         await finished(boss, GOOGLE_PASS_UPDATE_QUEUE, id, "failed");
         expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: "job failed", job: GOOGLE_PASS_UPDATE_QUEUE, jobId: id, cafeId: pass.cafeId }));
-        expect(await deliveryState("google_passes", pass.passId)).toEqual({ delivery_failures: attempt, delivery_error: "google_503_UNAVAILABLE", failed: true });
+        expect(await deliveryState("google_passes", pass.passId)).toEqual({ delivery_failures: attempt, delivery_error: "google_503_UNAVAILABLE", failed: true, delivered: true });
       }
       // The QR token never reaches the logs.
       const qr = wallet.saved[0]?.object.state === "ACTIVE" ? wallet.saved[0].object.barcode.value : "missing";
@@ -339,14 +355,48 @@ describe("job queue", () => {
   it("reads only the job's café: a job naming another café's Google pass writes nothing and records nothing (AC 2)", async () => {
     const mine = await googlePass();
     const theirs = await googlePass();
+    // Failing and undelivered, so a write to it under the wrong café (a reset, a delivered change) would show.
+    await admin.query("UPDATE app.google_passes SET delivery_failures = 4, delivery_error = 'timeout', delivery_failed_at = now() WHERE id = $1", [theirs.passId]);
+    await undeliver("google_passes", theirs.passId);
     const { boss, task, wallet } = jobQueue();
-    wallet.answer = new DeliveryError("Google Wallet answered 503.", "google_503");
     await task.start();
     try {
       const id = (await boss.send(GOOGLE_PASS_UPDATE_QUEUE, { cafeId: mine.cafeId, passId: theirs.passId })) ?? "";
       expect(await finished(boss, GOOGLE_PASS_UPDATE_QUEUE, id, "completed")).toMatchObject({ output: { result: "gone" } });
       expect(wallet.saved).toEqual([]);
-      expect(await deliveryState("google_passes", theirs.passId)).toEqual({ delivery_failures: 0, delivery_error: null, failed: false });
+      expect(await deliveryState("google_passes", theirs.passId)).toEqual({ delivery_failures: 4, delivery_error: "timeout", failed: true, delivered: false });
+      // Delivered again, so the sweep in the next test does not take it.
+      await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE id = $1", [theirs.passId]);
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("queues again, once, every pass whose latest change was never delivered, until it is (AC 13)", async () => {
+    const apple = await passWithDevices(1);
+    const google = await googlePass();
+    const settled = await passWithDevices(1);
+    await undeliver("apple_passes", apple.passId);
+    await undeliver("google_passes", google.passId);
+    const { boss, task, pusher, wallet } = jobQueue();
+    await task.start();
+    try {
+      // What the schedule sends every 15 minutes.
+      const id = (await boss.send(RESEND_QUEUE)) ?? "";
+      expect(await finished(boss, RESEND_QUEUE, id, "completed")).toMatchObject({ output: { found: 2, queued: 2 } });
+      await vi.waitFor(
+        async () => {
+          expect(await deliveryState("apple_passes", apple.passId)).toMatchObject({ delivered: true });
+          expect(await deliveryState("google_passes", google.passId)).toMatchObject({ delivered: true });
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      expect(pusher.pushed).toEqual(apple.tokens);
+      expect(pusher.pushed).not.toContain(settled.tokens[0]);
+      expect(wallet.saved.map((save) => save.object.id)).toEqual([`${GOOGLE.issuerId}.card-${google.cardId}-1`]);
+      // Delivered now: the next sweep finds nothing.
+      const again = (await boss.send(RESEND_QUEUE)) ?? "";
+      expect(await finished(boss, RESEND_QUEUE, again, "completed")).toMatchObject({ output: { found: 0, queued: 0 } });
     } finally {
       await task.stop();
     }

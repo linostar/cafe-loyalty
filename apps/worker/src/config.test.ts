@@ -37,11 +37,14 @@ describe("loadWorkerConfig", () => {
       PUBLIC_URL: "https://card.example.com",
     };
     expect(loadWorkerConfig(valid).googlePasses).toBeUndefined();
+    // The server's own variables, shared through one .env, leave Google Wallet off.
+    expect(loadWorkerConfig({ ...valid, CARD_QR_KEYS: google.CARD_QR_KEYS, PUBLIC_URL: google.PUBLIC_URL }).googlePasses).toBeUndefined();
     expect(loadWorkerConfig({ ...valid, ...google }).googlePasses).toEqual({
       serviceAccount: { email: "wallet@example.iam.gserviceaccount.com", privateKey: pem },
       settings: { issuerId: "3388000000012345678", publicUrl: "https://card.example.com", cardQr: { keys: [{ id: "q1", key }] } },
     });
-    expect(() => loadWorkerConfig({ ...valid, ...google, CARD_QR_KEYS: undefined })).toThrow(/CARD_QR_KEYS: Set GOOGLE_WALLET_ISSUER_ID/);
+    expect(() => loadWorkerConfig({ ...valid, ...google, CARD_QR_KEYS: undefined })).toThrow(/CARD_QR_KEYS: Set it as the server has it/);
+    expect(() => loadWorkerConfig({ ...valid, ...google, GOOGLE_WALLET_SERVICE_ACCOUNT: undefined })).toThrow(/GOOGLE_WALLET_SERVICE_ACCOUNT: Set both/);
     expect(() => loadWorkerConfig({ ...valid, ...google, CARD_QR_KEYS: "q1:short" })).toThrow(/CARD_QR_KEYS: Use comma-separated/);
   });
 

@@ -4,6 +4,7 @@ import { syncResponseSchema } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, signCardQr } from "./customer-crypto.js";
+import { GOOGLE_WALLET_BADGES } from "./google-pass.js";
 import { PUBLIC_URL, TEST_GOOGLE, TEST_SECRETS, signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
 import { parseWalletCheckArgs, runWalletCheck } from "./wallet-check.js";
 
@@ -86,7 +87,11 @@ describe("Google pass save links", () => {
     const card = await issueCard(app.owner.cafeId);
     const page = await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: ANDROID });
     expect(page.body).toContain(`href="/c/${card.webSecret}/google-pass?lang=en"`);
-    expect(page.body).toContain("Add to Google Wallet");
+    // Google's own badge (its brand guidelines allow no other), named in the page's language.
+    expect(page.body).toContain(`<img src="${GOOGLE_WALLET_BADGES.en}" alt="Add to Google Wallet" width="199" height="55">`);
+    const arabic = await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=ar`, headers: ANDROID });
+    expect(arabic.body).toContain(`<img src="${GOOGLE_WALLET_BADGES.ar}" alt="إضافة إلى محفظة Google"`);
+    expect(GOOGLE_WALLET_BADGES.ar).not.toBe(GOOGLE_WALLET_BADGES.en);
     // Apple devices get the Apple pass instead.
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: IPHONE })).body).not.toContain("google-pass");
 
@@ -118,6 +123,31 @@ describe("Google pass save links", () => {
     await openSaveLink(app, card.webSecret);
     expect(await googlePassIds(card.cardId)).toEqual([passId]);
     expect(await queuedPassUpdates(app.owner.cafeId, GOOGLE_PASS_UPDATE_QUEUE)).toEqual([{ passId, state: "created" }]);
+  });
+
+  it("records the pass and still sends the browser to Google when the job queue could not start; the sweep writes it later", async () => {
+    const app = await cafeApp({ jobs: null });
+    const card = await issueCard(app.owner.cafeId);
+    await openSaveLink(app, card.webSecret);
+    const [passId] = await googlePassIds(card.cardId);
+    expect(passId).toBeDefined();
+    expect(await queuedPassUpdates(app.owner.cafeId, GOOGLE_PASS_UPDATE_QUEUE)).toEqual([]);
+    // Never delivered, so the worker's sweep (undelivered_passes) queues its write.
+    const { rows } = await context.admin.query<{ delivered: boolean }>("SELECT delivered_xid IS NOT DISTINCT FROM updated_xid AS delivered FROM app.google_passes WHERE id = $1", [
+      passId,
+    ]);
+    expect(rows).toEqual([{ delivered: false }]);
+  });
+
+  it("limits the save links one card opens, since each queues a write to Google", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    for (let link = 0; link < 20; link += 1) {
+      expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}/google-pass?lang=en` })).statusCode).toBe(303);
+    }
+    const refused = await app.app.inject({ method: "GET", url: `/c/${card.webSecret}/google-pass?lang=en` });
+    expect(refused.statusCode).toBe(429);
+    expect(refused.headers["retry-after"]).toBeDefined();
   });
 
   it("offers no Google pass when Google Wallet is not configured", async () => {
@@ -184,11 +214,13 @@ describe("wallet delivery failures (AC 13)", () => {
     const app = await cafeApp();
     const other = await cafeApp();
     const failing = await issueCard(app.owner.cafeId);
+    const alsoFailing = await issueCard(app.owner.cafeId);
     const retrying = await issueCard(app.owner.cafeId);
     const theirs = await issueCard(other.owner.cafeId);
     expect((await app.app.inject({ method: "GET", url: `/c/${failing.webSecret}/apple-pass` })).statusCode).toBe(200);
     for (const [owner, card] of [
       [app, failing],
+      [app, alsoFailing],
       [app, retrying],
       [other, theirs],
     ] as const) {
@@ -203,6 +235,8 @@ describe("wallet delivery failures (AC 13)", () => {
 
     await fail("apple_passes", failing.cardId, 3, "apns_503_ServiceUnavailable", 5);
     await fail("google_passes", failing.cardId, 7, "google_503_UNAVAILABLE", 1);
+    // Older: the newest failure's time and code are the ones shown.
+    await fail("google_passes", alsoFailing.cardId, 12, "timeout", 30);
     // Two failures are routine retries, not yet shown.
     await fail("google_passes", retrying.cardId, 2, "timeout", 0);
     await fail("google_passes", theirs.cardId, 9, "google_auth_401", 0);
@@ -212,9 +246,11 @@ describe("wallet delivery failures (AC 13)", () => {
     const body = response.json<{ failing: { wallet: string; passes: number; lastError: string; lastFailedAt: string }[] }>();
     expect(body.failing).toEqual([
       { wallet: "apple", passes: 1, lastError: "apns_503_ServiceUnavailable", lastFailedAt: expect.any(String) as unknown },
-      { wallet: "google", passes: 1, lastError: "google_503_UNAVAILABLE", lastFailedAt: expect.any(String) as unknown },
+      { wallet: "google", passes: 2, lastError: "google_503_UNAVAILABLE", lastFailedAt: expect.any(String) as unknown },
     ]);
-    expect(Date.now() - Date.parse(body.failing[1]?.lastFailedAt ?? "")).toBeLessThan(2 * 60 * 1000 + 5_000);
+    const age = Date.now() - Date.parse(body.failing[1]?.lastFailedAt ?? "");
+    expect(age).toBeGreaterThan(50_000);
+    expect(age).toBeLessThan(2 * 60 * 1000 + 5_000);
   });
 });
 

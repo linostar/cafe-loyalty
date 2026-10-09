@@ -3,7 +3,9 @@ import { loadEnv } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
 const APPLE_KEYS = ["APPLE_PASS_TYPE_ID", "APPLE_PASS_CERTIFICATE", "APPLE_PASS_KEY"] as const;
-const GOOGLE_KEYS = ["GOOGLE_WALLET_ISSUER_ID", "GOOGLE_WALLET_SERVICE_ACCOUNT", "CARD_QR_KEYS", "PUBLIC_URL"] as const;
+const GOOGLE_KEYS = ["GOOGLE_WALLET_ISSUER_ID", "GOOGLE_WALLET_SERVICE_ACCOUNT"] as const;
+/** What building Google objects also takes; the server always has them, so they alone do not turn Google Wallet on. */
+const GOOGLE_NEEDS = ["CARD_QR_KEYS", "PUBLIC_URL"] as const;
 
 const workerEnvSchema = z
   .object({
@@ -36,7 +38,12 @@ const workerEnvSchema = z
     const missingGoogle = GOOGLE_KEYS.filter((key) => env[key] === undefined);
     if (missingGoogle.length > 0 && missingGoogle.length < GOOGLE_KEYS.length) {
       for (const key of missingGoogle) {
-        context.addIssue({ code: "custom", path: [key], message: "Set GOOGLE_WALLET_ISSUER_ID, GOOGLE_WALLET_SERVICE_ACCOUNT, CARD_QR_KEYS and PUBLIC_URL, or none (Google Wallet off)." });
+        context.addIssue({ code: "custom", path: [key], message: "Set both Google Wallet variables (GOOGLE_WALLET_*), or neither (Google Wallet off)." });
+      }
+    }
+    if (missingGoogle.length === 0) {
+      for (const key of GOOGLE_NEEDS.filter((need) => env[need] === undefined)) {
+        context.addIssue({ code: "custom", path: [key], message: "Set it as the server has it: Google Wallet objects carry the card's QR and the server's logo address." });
       }
     }
     if (
