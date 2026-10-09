@@ -2,11 +2,13 @@ import { withCafe, type Database } from "@cafe-loyalty/db";
 import {
   ApiError,
   REPEATED_DELIVERY_FAILURES,
+  VISIT_HOURS_WEEKS,
   cafeUpdateSchema,
   loyaltyProgramSchema,
   orderTypeCreateSchema,
   orderTypeUpdateSchema,
   type CafeSetup,
+  type VisitHours,
   type WalletDeliveries,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
@@ -60,6 +62,29 @@ async function bumpCatalogVersion(trx: Transaction<Database>, cafeId: string): P
     .execute();
 }
 
+/**
+ * The café's member visits from `from` up to `to`, by ISO weekday (index 0 = Monday) and hour, in the café's time
+ * zone (AC 33). Bucketed by when each visit happened (occurred_at), so a visit synced days late lands in its own hour,
+ * and only by PostgreSQL's time zone data, never Node's as well, so the two can never disagree about a changeover.
+ * Held and discarded visits are left out until the owner accepts them; a visit whose card was deleted since counts.
+ */
+export async function memberVisitHours(trx: Transaction<Database>, cafeId: string, from: Date, to: Date): Promise<Pick<VisitHours, "timeZone" | "visits">> {
+  const { time_zone: timeZone } = await trx.selectFrom("cafes").select("time_zone").where("id", "=", cafeId).executeTakeFirstOrThrow();
+  const { rows } = await sql<{ weekday: number; hour: number; visits: number }>`
+    SELECT extract(isodow FROM local)::int AS weekday, extract(hour FROM local)::int AS hour, count(*)::int AS visits
+      FROM (SELECT occurred_at AT TIME ZONE ${timeZone} AS local FROM visits
+             WHERE cafe_id = ${cafeId} AND occurred_at >= ${from} AND occurred_at < ${to} AND outcome NOT IN ('held', 'discarded')) AS member_visits
+     GROUP BY 1, 2`.execute(trx);
+  const visits = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+  for (const row of rows) {
+    const day = visits[row.weekday - 1];
+    if (day !== undefined) {
+      day[row.hour] = row.visits;
+    }
+  }
+  return { timeZone, visits };
+}
+
 /** The owner's café, loyalty program and order types (AC 1). Every change is audit-logged. */
 export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, done: (error?: Error) => void): void {
   const { db } = options;
@@ -92,6 +117,15 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
           : [],
       ),
     };
+  });
+
+  /** Busy and quiet hours (AC 34): member visits of the last VISIT_HOURS_WEEKS weeks, counted afresh on every request. */
+  app.get("/cafe/visit-hours", { config: { access: "owner" } }, async (request): Promise<VisitHours> => {
+    const { cafeId } = ownerOf(request);
+    const to = new Date();
+    const from = new Date(to.getTime() - VISIT_HOURS_WEEKS * 7 * 24 * 60 * 60 * 1000);
+    const hours = await withCafe(db, cafeId, (trx) => memberVisitHours(trx, cafeId, from, to));
+    return { ...hours, from: from.toISOString(), to: to.toISOString() };
   });
 
   const joinLink = (code: string) => ({ joinUrl: new URL(`/join/${code}`, options.publicUrl).toString() });

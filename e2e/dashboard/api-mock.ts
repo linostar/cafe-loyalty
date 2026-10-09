@@ -21,8 +21,19 @@ export const reply =
   (route) =>
     json === undefined ? route.fulfill({ status }) : route.fulfill({ status, json });
 
-/** What the home page's wallet check gets unless a test says otherwise: every wallet card update going through. */
-const DEFAULTS: Readonly<Record<string, Handler>> = { "GET /api/cafe/wallet-deliveries": reply(200, { failing: [] }) };
+/** Member visits of four weeks, none unless `visits` gives them. */
+export const visitHours = (visits: number[][] = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))) => ({
+  timeZone: "Asia/Beirut",
+  from: "2026-09-11T08:00:00.000Z",
+  to: "2026-10-09T08:00:00.000Z",
+  visits,
+});
+
+/** What the home page's own requests get unless a test says otherwise: every wallet card update going through, no visits. */
+const DEFAULTS: Readonly<Record<string, Handler>> = {
+  "GET /api/cafe/wallet-deliveries": reply(200, { failing: [] }),
+  "GET /api/cafe/visit-hours": reply(200, visitHours()),
+};
 
 /**
  * Answers the dashboard's API calls; anything not listed (or in DEFAULTS) gets a 404 envelope, so a missing mock

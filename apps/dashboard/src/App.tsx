@@ -1,4 +1,4 @@
-import { OWNER_PASSWORD_MIN_LENGTH, ownerSessionSchema, walletDeliveriesSchema, type OwnerSession } from "@cafe-loyalty/shared";
+import { OWNER_PASSWORD_MIN_LENGTH, VISIT_HOURS_WEEKS, ownerSessionSchema, visitHoursSchema, walletDeliveriesSchema, type OwnerSession } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, noContent } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
@@ -6,7 +6,7 @@ import { CafePage } from "./cafe-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
 import { ReviewPage } from "./review-page.js";
-import { SessionEndedContext, useApiData } from "./session.js";
+import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
 type SessionState =
@@ -120,12 +120,91 @@ function WalletDeliveryNotice() {
   );
 }
 
+const WEEKDAYS = [
+  ["Mon", "Monday"],
+  ["Tue", "Tuesday"],
+  ["Wed", "Wednesday"],
+  ["Thu", "Thursday"],
+  ["Fri", "Friday"],
+  ["Sat", "Saturday"],
+  ["Sun", "Sunday"],
+] as const;
+/** The busy and quiet hours load again this often while the page stays open (AC 34). */
+const VISIT_HOURS_REFRESH_MS = 60 * 60 * 1000;
+
+/**
+ * Busy and quiet hours (AC 34): member visits of the last weeks by hour and weekday, in the café's time zone, as a
+ * table shaded from quiet to busy. Hours before the first and after the last hour with any visit are left out.
+ */
+function VisitHours() {
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setReloadKey((key) => key + 1);
+    }, VISIT_HOURS_REFRESH_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+  const [state] = useApiData("/api/cafe/visit-hours", visitHoursSchema, reloadKey);
+  const busiest = state.status === "loaded" ? Math.max(...state.data.visits.flat()) : 0;
+  const hours = state.status === "loaded" ? [...Array(24).keys()].filter((hour) => state.data.visits.some((day) => (day[hour] ?? 0) > 0)) : [];
+  const first = hours[0] ?? 0;
+  const shown = [...Array((hours.at(-1) ?? -1) - first + 1).keys()].map((offset) => first + offset);
+  return (
+    <section aria-labelledby="visit-hours-title">
+      <h3 id="visit-hours-title">Busy and quiet hours</h3>
+      <p>
+        Members only: visits recorded with a loyalty card over the last {VISIT_HOURS_WEEKS} weeks, by the hour they happened in café time
+        {state.status === "loaded" ? ` (${state.data.timeZone})` : ""}. Updated every hour.
+      </p>
+      {state.status !== "loaded" ? (
+        <PageStatus state={state} />
+      ) : shown.length === 0 ? (
+        <p>No member visits in the last {VISIT_HOURS_WEEKS} weeks yet.</p>
+      ) : (
+        <div className="visit-hours">
+          <table>
+            <caption className="visually-hidden">Member visits by hour and weekday</caption>
+            <thead>
+              <tr>
+                <th scope="col">Hour</th>
+                {WEEKDAYS.map(([short, long]) => (
+                  <th scope="col" key={short}>
+                    <abbr title={long}>{short}</abbr>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((hour) => (
+                <tr key={hour}>
+                  <th scope="row">{`${String(hour).padStart(2, "0")}:00`}</th>
+                  {state.data.visits.map((day, weekday) => {
+                    const visits = day[hour] ?? 0;
+                    return (
+                      <td key={WEEKDAYS[weekday]?.[0]} className={`level-${String(Math.ceil((visits / busiest) * 4))}`}>
+                        {visits}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function HomePage({ session }: { session: OwnerSession }) {
   return (
     <section aria-labelledby="cafe-title">
       <h2 id="cafe-title">{session.cafe.name}</h2>
       <p>Signed in as {session.owner.email}</p>
       <WalletDeliveryNotice />
+      <VisitHours />
       <ul className="items">
         <li>
           <a href="/cafe">Café</a>: name, loyalty program and order types

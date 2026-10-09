@@ -217,7 +217,23 @@ export const walletDeliveriesSchema = z.object({
   ),
 });
 
+/** The busy and quiet hours cover this many whole weeks up to now, so every weekday and hour is counted equally often. */
+export const VISIT_HOURS_WEEKS = 4;
+
+/**
+ * Member visits by the weekday and hour they happened in, in the café's time zone (AC 33, 34): visits recorded with
+ * a loyalty card, held or discarded ones excepted. Visits without a card are never recorded, so they are not here.
+ */
+export const visitHoursSchema = z.object({
+  timeZone: z.string(),
+  from: timestamp,
+  to: timestamp,
+  /** visits[weekday][hour]: ISO weekdays, index 0 = Monday, and local hours 0-23. */
+  visits: z.array(z.array(z.int().min(0)).length(24)).length(7),
+});
+
 export type CafeSetup = z.output<typeof cafeSetupSchema>;
+export type VisitHours = z.output<typeof visitHoursSchema>;
 export type WalletDeliveries = z.output<typeof walletDeliveriesSchema>;
 export type OrderType = z.output<typeof orderTypeSchema>;
 export type LoyaltyProgram = z.output<typeof loyaltyProgramSchema>;
