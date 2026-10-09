@@ -54,7 +54,7 @@ describe("passwords", () => {
     expect(await verifyPassword(stored, "wrong horse battery")).toBe(false);
   });
 
-  it("fail without a stored hash, after doing the same work", async () => {
+  it("fail without a stored hash", async () => {
     expect(await verifyPassword(undefined, "anything at all")).toBe(false);
   });
 });

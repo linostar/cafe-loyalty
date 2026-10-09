@@ -1,12 +1,19 @@
 import { STAFF_PIN_MAX_LENGTH, staffListSchema, type StaffMember } from "@cafe-loyalty/shared";
 import { useState } from "react";
-import { apiRequest } from "./api.js";
+import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import { PageStatus, useApiData } from "./session.js";
 
 const PIN_HINT = "6 to 12 digits; not a repeated digit or a run like 123456. Tell it to the barista in person.";
 
 type Change = (method: "POST" | "PATCH", path: string, body?: unknown) => Promise<void>;
+
+/** After a failure that means the list is out of date (the barista was removed elsewhere), reload it. */
+const reloadIfStale = (reload: () => void) => (result: { ok: boolean; error?: unknown }) => {
+  if (!result.ok && isStale(result.error)) {
+    reload();
+  }
+};
 
 function AddStaffForm({ change }: { change: Change }) {
   const [name, setName] = useState("");
@@ -32,7 +39,7 @@ function AddStaffForm({ change }: { change: Change }) {
         label="PIN"
         name="pin"
         type="password"
-        autoComplete="off"
+        autoComplete="new-password"
         inputMode="numeric"
         value={pin}
         onChange={setPin}
@@ -47,7 +54,7 @@ function AddStaffForm({ change }: { change: Change }) {
   );
 }
 
-function StaffItem({ member, change }: { member: StaffMember; change: Change }) {
+function StaffItem({ member, change, reload }: { member: StaffMember; change: Change; reload: () => void }) {
   const [changingPin, setChangingPin] = useState(false);
   const [pin, setPin] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
@@ -68,6 +75,7 @@ function StaffItem({ member, change }: { member: StaffMember; change: Change }) 
                 setChangingPin(false);
                 setPin("");
               }
+              reloadIfStale(reload)(result);
             });
           }}
         >
@@ -75,7 +83,7 @@ function StaffItem({ member, change }: { member: StaffMember; change: Change }) 
             label={`New PIN for ${member.name}`}
             name="pin"
             type="password"
-            autoComplete="off"
+            autoComplete="new-password"
             inputMode="numeric"
             value={pin}
             onChange={setPin}
@@ -90,6 +98,7 @@ function StaffItem({ member, change }: { member: StaffMember; change: Change }) 
             type="button"
             onClick={() => {
               setChangingPin(false);
+              setPin("");
             }}
           >
             Cancel
@@ -111,7 +120,7 @@ function StaffItem({ member, change }: { member: StaffMember; change: Change }) 
             confirmLabel={`Yes, remove ${member.name}`}
             pending={pending}
             onConfirm={() => {
-              void submit(() => change("POST", `/api/staff/${member.id}/revoke`));
+              void submit(() => change("POST", `/api/staff/${member.id}/revoke`)).then(reloadIfStale(reload));
             }}
           />
         </span>
@@ -122,7 +131,11 @@ function StaffItem({ member, change }: { member: StaffMember; change: Change }) 
 
 /** `/staff`: baristas and their PINs (AC 19). */
 export function StaffPage() {
-  const [state, setList] = useApiData("/api/staff", staffListSchema);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [state, setList] = useApiData("/api/staff", staffListSchema, reloadKey);
+  const reload = () => {
+    setReloadKey((value) => value + 1);
+  };
   const [notice, setNotice] = useState<string | null>(null);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
@@ -137,14 +150,16 @@ export function StaffPage() {
 
   return (
     <section aria-labelledby="staff-page-title">
-      <h2 id="staff-page-title">Staff</h2>
+      <h2 id="staff-page-title" tabIndex={-1} data-focus-after-change>
+        Staff
+      </h2>
       {notice === null ? null : <Notice>{notice}</Notice>}
       {staff.length === 0 ? (
         <p>No baristas yet. Each one gets a PIN to use at the counter.</p>
       ) : (
         <ul className="items">
           {staff.map((member) => (
-            <StaffItem key={member.id} member={member} change={change} />
+            <StaffItem key={member.id} member={member} change={change} reload={reload} />
           ))}
         </ul>
       )}

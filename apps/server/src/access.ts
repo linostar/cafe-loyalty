@@ -53,6 +53,9 @@ const renewToken = () => new ApiError("TOKEN_EXPIRED", "This device needs a new 
 
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
 
+/** Methods that never change anything, so they need no JSON body. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 /** The bearer token of an Authorization header, or undefined when absent or not shaped like a token. */
 export const readBearerToken = (header: string | undefined): string | undefined => BEARER.exec(header ?? "")?.[1];
 
@@ -119,7 +122,8 @@ export function deviceOf(request: FastifyRequest): DeviceContext {
 
 /**
  * Enforces each route's declared access within the registering plugin: refuses to register a route that declares
- * none, runs the owner or device check before the body is read, and marks every response no-store. An owner route called with a valid device token
+ * none, refuses writes without a JSON body, runs the owner or device check before the body is read, and marks
+ * every response no-store. An owner route called with a valid device token
  * answers 403 (AC 20); without valid credentials it answers 401.
  */
 export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>): void {
@@ -172,6 +176,12 @@ export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>
   // costs no parsing. Every API response is private, so none may be stored by a browser or proxy.
   app.addHook("onRequest", async (request, reply) => {
     void reply.header("cache-control", "no-store");
+    // Every write carries a JSON body, even an empty one ({}). A cross-site page can send a POST with no body or a
+    // form body without a CORS preflight, and a sibling subdomain is "same-site", so SameSite cookies alone do not
+    // stop it; it can never send application/json without a preflight, which this API never grants.
+    if (!SAFE_METHODS.has(request.method) && (request.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      throw new ApiError("UNSUPPORTED_MEDIA_TYPE", "Send the request as JSON, with an empty object ({}) when there is nothing to send.");
+    }
     const access = request.routeOptions.config.access;
     if (access === "owner") {
       await requireOwner(request, reply);

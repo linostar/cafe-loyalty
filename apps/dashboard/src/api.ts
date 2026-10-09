@@ -35,10 +35,12 @@ function detailsOf(body: string): ErrorDetail[] {
 export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, schema: T, body?: unknown): Promise<z.output<T>> {
   let response: Response;
   try {
+    // Every write sends a JSON body, {} when there is nothing to send: the API refuses writes without one (CSRF).
+    const payload = method === "GET" ? undefined : (body ?? {});
     response = await fetch(path, {
       method,
-      headers: body === undefined ? {} : { "content-type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      headers: payload === undefined ? {} : { "content-type": "application/json" },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
@@ -66,6 +68,10 @@ export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "
   }
   return result.data;
 }
+
+/** True for an answer meaning the thing acted on is gone (removed elsewhere, used or expired), so the list is stale. */
+export const isStale = (error: unknown): boolean =>
+  error instanceof ApiRequestError && (error.failure.code === "NOT_FOUND" || error.failure.code === "CONFLICT");
 
 export const noContent = z.undefined();
 export const messageSchema = z.object({ message: z.string() });

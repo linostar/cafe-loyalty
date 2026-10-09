@@ -34,7 +34,8 @@ export interface OwnerAuthOptions {
 }
 
 const inviteExpired = () => new ApiError("LINK_EXPIRED", "This invite link has expired or was already used. Ask for a new invite.");
-const resetExpired = () => new ApiError("LINK_EXPIRED", "This password reset link has expired or was already used. Request a new one.");
+const resetExpired = () =>
+  new ApiError("LINK_EXPIRED", "This password reset link has expired, was already used, or was replaced by a newer one. Use the newest email's link, or request a new one.");
 /** An audit entry about the owner's own account. */
 const auditOwner = (trx: Transaction<Database>, cafeId: string, ownerId: string, action: string, actorType: AuditActorType = "owner") =>
   audit(trx, { cafeId, actorType, actorId: actorType === "owner" ? ownerId : null, action, entityType: "owner", entityId: ownerId });
@@ -64,6 +65,13 @@ async function loadSession(trx: Transaction<Database>, ownerId: string): Promise
   return { owner: { id: row.ownerId, email: row.email }, cafe: { id: row.cafeId, name: row.name } };
 }
 
+/*
+ * Owner row locks: every path that changes an owner's password or reset tokens first locks the owner row FOR NO KEY
+ * UPDATE, so they run one at a time and always lock in the same order. NO KEY UPDATE, not UPDATE: inserting a row
+ * that references the owner (a session, reset token or pairing code) takes KEY SHARE on it, which UPDATE would block,
+ * deadlocking against a transaction that holds that row's child locks.
+ */
+
 /**
  * Sets a new password and ends everything the old one could reach: every session, every reset link and every
  * open pairing code the owner created (AC 15, 16).
@@ -83,10 +91,12 @@ export function passwordResetEmail(to: string, link: string): EmailMessage {
     text: [
       "Someone asked to reset the password of your Cafe Loyalty account.",
       `To choose a new password, open this link within 30 minutes: ${link}`,
+      "If you asked more than once, only the link in the newest email works.",
       "If you did not ask for this, ignore this email. Your password stays the same.",
       "",
       "طلب أحدهم إعادة تعيين كلمة مرور حسابك في Cafe Loyalty.",
       `لاختيار كلمة مرور جديدة، افتح هذا الرابط خلال 30 دقيقة: ${link}`,
+      "إذا طلبت أكثر من مرة، فالرابط في أحدث رسالة هو الوحيد الذي يعمل.",
       "إذا لم تطلب ذلك، تجاهل هذه الرسالة. كلمة مرورك لن تتغير.",
     ].join("\n"),
   };
@@ -126,7 +136,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     const token = newToken();
     await withCafe(db, owner.cafe_id, async (trx) => {
       // Only the newest link works: the row lock makes overlapping requests replace each other's link in turn.
-      await trx.selectFrom("owners").select("id").where("id", "=", owner.id).forUpdate().execute();
+      await trx.selectFrom("owners").select("id").where("id", "=", owner.id).forNoKeyUpdate().execute();
       await trx.deleteFrom("password_reset_tokens").where("owner_id", "=", owner.id).execute();
       await trx
         .insertInto("password_reset_tokens")
@@ -267,7 +277,15 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
       throw new ApiError("VALIDATION_FAILED", "The current password is wrong.", [{ path: "currentPassword", issue: "The current password is wrong." }]);
     }
     const passwordHash = await hashPassword(body.newPassword);
-    await withCafe(db, owner.cafeId, (trx) => setPassword(trx, owner.cafeId, owner.ownerId, passwordHash, "owner.password_changed"));
+    await withCafe(db, owner.cafeId, async (trx) => {
+      // Compare-and-set: the current password was checked outside this transaction, so a reset that finished in
+      // between must not be overwritten by someone holding the old password.
+      const locked = await trx.selectFrom("owners").select("password_hash").where("id", "=", owner.ownerId).forNoKeyUpdate().executeTakeFirstOrThrow();
+      if (locked.password_hash !== current.password_hash) {
+        throw new ApiError("CONFLICT", "Your password was changed somewhere else just now. Sign in again with the new password.");
+      }
+      await setPassword(trx, owner.cafeId, owner.ownerId, passwordHash, "owner.password_changed");
+    });
     request.log.info({ cafeId: owner.cafeId, ownerId: owner.ownerId }, "owner password changed");
     return reply.code(204).header("set-cookie", clearedSessionCookie).send();
   });
@@ -302,13 +320,20 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
       throw resetExpired();
     }
     const passwordHash = await hashPassword(body.password);
-    await withCafe(db, reset.cafe_id, async (trx) => {
+    const email = await withCafe(db, reset.cafe_id, async (trx) => {
+      // The owner row is locked first, in the same order as every other path that touches owners and their reset
+      // tokens, so two of them can never deadlock.
+      const owner = await trx.selectFrom("owners").select("email").where("id", "=", reset.owner_id).forNoKeyUpdate().executeTakeFirstOrThrow();
       const used = await trx.deleteFrom("password_reset_tokens").where("id", "=", reset.id).where("expires_at", ">", now()).executeTakeFirst();
       if (used.numDeletedRows === 0n) {
         throw resetExpired();
       }
       await setPassword(trx, reset.cafe_id, reset.owner_id, passwordHash, "owner.password_reset");
+      return owner.email;
     });
+    // Whoever reset the password controls the email, so failed sign-ins counted against the account no longer apply.
+    limits.loginFailuresPerAccount.clearWhere((key) => key === email);
+    limits.loginFailuresPerAccountAndIp.clearWhere((key) => key.startsWith(`${email} `));
     request.log.info({ cafeId: reset.cafe_id, ownerId: reset.owner_id }, "owner password reset");
     return reply.code(204).send();
   });

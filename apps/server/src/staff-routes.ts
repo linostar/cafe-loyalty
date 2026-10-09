@@ -63,18 +63,24 @@ export function staffRoutes(app: FastifyInstance, options: StaffRoutesOptions, d
     const owner = ownerOf(request);
     const { id } = parseInput(idParams, request.params);
     const body = parseInput(staffUpdateSchema, request.body);
-    if (body.pin !== undefined) {
-      limitPinHashing(owner.ownerId, reply);
-    }
-    const pin = body.pin === undefined ? undefined : await hashPin(body.pin);
-    const list = await withCafe(db, owner.cafeId, async (trx) => {
-      const current = await trx.selectFrom("staff").select("revoked_at").where("id", "=", id).forUpdate().executeTakeFirst();
+    const editable = async (trx: Transaction<Database>, lock: boolean): Promise<void> => {
+      const query = trx.selectFrom("staff").select("revoked_at").where("id", "=", id);
+      const current = await (lock ? query.forUpdate() : query).executeTakeFirst();
       if (current === undefined) {
         throw notFound();
       }
       if (current.revoked_at !== null) {
         throw new ApiError("CONFLICT", "This staff member was removed. Add them again to give them a PIN.");
       }
+    };
+    // Checked before the PIN is hashed, so an unknown or removed id costs no hashing and no rate-limit slot.
+    await withCafe(db, owner.cafeId, (trx) => editable(trx, false));
+    if (body.pin !== undefined) {
+      limitPinHashing(owner.ownerId, reply);
+    }
+    const pin = body.pin === undefined ? undefined : await hashPin(body.pin);
+    const list = await withCafe(db, owner.cafeId, async (trx) => {
+      await editable(trx, true);
       await trx
         .updateTable("staff")
         .set({

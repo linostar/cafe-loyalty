@@ -22,8 +22,9 @@ const ORDER_TYPE = { nameAr: "إسبريسو", nameEn: "Espresso", priceCents: 2
 async function ownerApp() {
   const h = await harness();
   const owner = await signUp(h.app);
-  const as = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload?: Record<string, unknown>) =>
-    h.app.inject({ method, url, headers: withCookie(owner.session), ...(payload === undefined ? {} : { payload }) });
+  // Writes always carry a JSON body, as the dashboard sends them.
+  const as = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload: Record<string, unknown> = {}) =>
+    h.app.inject({ method, url, headers: withCookie(owner.session), ...(method === "GET" ? {} : { payload }) });
   return { ...h, owner, as };
 }
 
@@ -61,7 +62,9 @@ describe("access control", () => {
     const { app, as } = await ownerApp();
     const unauthenticated = await app.inject({ method: "POST", url: "/api/cafe/order-types", headers: { "content-type": "application/json" }, payload: "{not json" });
     expect(unauthenticated.statusCode).toBe(401);
-    for (const response of [unauthenticated, await as("GET", "/api/cafe"), await as("GET", "/api/staff"), await as("GET", "/api/devices")]) {
+    const missing = await app.inject({ method: "GET", url: "/api/no-such-route" });
+    expect(missing.statusCode).toBe(404);
+    for (const response of [unauthenticated, missing, await as("GET", "/api/cafe"), await as("GET", "/api/staff"), await as("GET", "/api/devices")]) {
       expect(response.headers["cache-control"]).toBe("no-store");
     }
   });
@@ -91,7 +94,11 @@ describe("café setup", () => {
     expect((await as("PUT", "/api/cafe/program", program)).json()).toMatchObject({ program });
     const changed = { ...program, stampsRequired: 8 };
     expect((await as("PUT", "/api/cafe/program", changed)).json()).toMatchObject({ program: changed });
-    expect(await auditActions(owner.cafeId)).toEqual(expect.arrayContaining(["cafe.updated", "loyalty_program.saved"]) as unknown);
+    const created = await as("POST", "/api/cafe/order-types", ORDER_TYPE);
+    const id = created.json<{ orderTypes: { id: string }[] }>().orderTypes[0]?.id ?? "";
+    await as("PATCH", `/api/cafe/order-types/${id}`, { active: false });
+    // One entry per change, in order (AC 1).
+    expect((await auditActions(owner.cafeId)).slice(-5)).toEqual(["cafe.updated", "loyalty_program.saved", "loyalty_program.saved", "order_type.created", "order_type.updated"]);
   });
 
   it("adds and edits order types, bumping the catalog version only when a price or cost changes", async () => {
@@ -182,6 +189,7 @@ describe("staff", () => {
     const id = (await first.as("POST", "/api/staff", { name: "Rami", pin: "482913" })).json<{ staff: { id: string }[] }>().staff[0]?.id ?? "";
     const second = await ownerApp();
     expect((await second.as("POST", `/api/staff/${id}/revoke`)).statusCode).toBe(404);
+    expect((await second.as("PATCH", `/api/staff/${id}`, { pin: "205871" })).statusCode).toBe(404);
     expect((await second.as("GET", "/api/staff")).json()).toEqual({ staff: [] });
   });
 });
@@ -233,6 +241,27 @@ describe("pairing", () => {
     }
     expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).statusCode).toBe(400);
     expect(await auditActions(owner.cafeId)).toContain("pairing_code.burned");
+  });
+
+  it("still pairs with the right code after 4 wrong tries", async () => {
+    const { app, as } = await ownerApp();
+    const code = await newCode(as).then((created) => created.code.replace(/-/g, ""));
+    const wrong = `${code.slice(0, 4)}${code.slice(4) === "00000000" ? "11111111" : "00000000"}`;
+    const { publicJwk } = await deviceKeyPair();
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const response = await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: wrong, publicKey: publicJwk } });
+      expect(response.json()).toMatchObject({ code: "PAIRING_CODE_INVALID" });
+    }
+    expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).statusCode).toBe(201);
+  });
+
+  it("counts only failed pairings against an address", async () => {
+    const { app, as } = await ownerApp();
+    for (let device = 1; device <= 12; device += 1) {
+      const code = await newCode(as);
+      const { publicJwk } = await deviceKeyPair();
+      expect((await app.inject({ method: "POST", url: "/api/device/pair", payload: { code: code.code, publicKey: publicJwk } })).statusCode).toBe(201);
+    }
   });
 
   it("refuses an expired or cancelled code and an invalid key", async () => {
@@ -322,6 +351,16 @@ describe("device tokens", () => {
     expect((await app.inject({ method: "GET", url: "/api/device/me", headers: withBearer(token.accessToken) })).statusCode).toBe(200);
   });
 
+  it("go through when correctly signed, even after the address used up its failures", async () => {
+    const { app, device } = await pairedApp();
+    const junk = { deviceId: device.deviceId, keyId: device.keyId, issuedAt: new Date().toISOString(), signature: "A".repeat(86) };
+    for (let attempt = 1; attempt <= 30; attempt += 1) {
+      expect((await app.inject({ method: "POST", url: "/api/device/token", payload: junk })).json()).toMatchObject({ code: "PAIRING_REQUIRED" });
+    }
+    expect((await app.inject({ method: "POST", url: "/api/device/token", payload: junk })).statusCode).toBe(429);
+    expect((await app.inject({ method: "POST", url: "/api/device/token", payload: await signedRenewal(device) })).statusCode).toBe(200);
+  });
+
   it("refuse a replayed, forged, mismatched or mistimed renewal", async () => {
     const { app, device } = await pairedApp();
     const renewal = await signedRenewal(device);
@@ -336,10 +375,12 @@ describe("device tokens", () => {
     const mismatched = await signedRenewal({ ...device, deviceId: randomUUID() });
     expect((await app.inject({ method: "POST", url: "/api/device/token", payload: mismatched })).json()).toMatchObject({ code: "PAIRING_REQUIRED" });
 
-    const mistimed = await signedRenewal(device, new Date(Date.now() + 10 * 60 * 1000).toISOString());
-    const skewed = await app.inject({ method: "POST", url: "/api/device/token", payload: mistimed });
-    expect(skewed.statusCode).toBe(400);
-    expect(skewed.json()).toMatchObject({ details: [{ path: "issuedAt" }] });
+    for (const offsetMs of [10 * 60 * 1000, -10 * 60 * 1000]) {
+      const mistimed = await signedRenewal(device, new Date(Date.now() + offsetMs).toISOString());
+      const skewed = await app.inject({ method: "POST", url: "/api/device/token", payload: mistimed });
+      expect(skewed.statusCode).toBe(400);
+      expect(skewed.json()).toMatchObject({ details: [{ path: "issuedAt" }] });
+    }
   });
 
   it("renew after almost 7 days offline (AC 18)", async () => {
@@ -372,6 +413,28 @@ describe("device tokens", () => {
     // A revoked device's token is no longer "valid", so owner routes answer 401, not 403.
     expect((await app.inject({ method: "GET", url: "/api/cafe", headers: withBearer(device.accessToken) })).statusCode).toBe(401);
     expect(await auditActions(owner.cafeId)).toContain("device.revoked");
+  });
+
+  it("never put codes, tokens, PINs or staff names in the logs", async () => {
+    const { app, as, owner, logs } = await ownerApp();
+    await as("POST", "/api/staff", { name: "Rami Haddad", pin: "482913" });
+    const created = await as("POST", "/api/devices/pairing-codes", { deviceName: "Counter 1" });
+    const code = created.json<{ code: string }>().code;
+    const { privateKey, publicJwk } = await deviceKeyPair();
+    const paired = (await app.inject({ method: "POST", url: "/api/device/pair", payload: { code, publicKey: publicJwk } })).json<{
+      deviceId: string;
+      keyId: string;
+      accessToken: string;
+    }>();
+    const renewal = await signedRenewal({ ...paired, privateKey });
+    const renewed = (await app.inject({ method: "POST", url: "/api/device/token", payload: renewal })).json<{ accessToken: string }>();
+    await app.inject({ method: "GET", url: "/api/device/staff", headers: withBearer(renewed.accessToken) });
+
+    const output = logs.join("");
+    expect(output).toContain("device paired");
+    for (const secret of [owner.email, "482913", "Rami Haddad", code, code.replace(/-/g, ""), paired.accessToken, renewed.accessToken, renewal.signature]) {
+      expect(output).not.toContain(secret);
+    }
   });
 
   it("stay within their café", async () => {

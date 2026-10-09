@@ -20,6 +20,11 @@ export class BackgroundTasks {
     this.pending.add(running);
   }
 
+  /** Tasks still running, for reporting what a forced shutdown abandons. */
+  get pendingCount(): number {
+    return this.pending.size;
+  }
+
   async drain(): Promise<void> {
     await Promise.all([...this.pending]);
   }

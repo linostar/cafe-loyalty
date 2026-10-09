@@ -18,7 +18,8 @@ const serverEnvSchema = z.object({
   HOST: z.string().min(1),
   PORT: z.coerce.number().int().min(1).max(65535),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]),
-  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  // At least 10 s: an email in flight may take up to 8 s (EMAIL_SEND_TIMEOUT_MS) and shutdown waits for it.
+  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(10_000, "Use at least 10000 (10 seconds).").default(10_000),
   /** The app login role (a member of cl_app) on the application database. */
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   DATABASE_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(100).default(10),
@@ -35,14 +36,23 @@ const serverEnvSchema = z.object({
   SMTP_PORT: z.coerce.number().int().min(1).max(65535),
   /** true for implicit TLS (port 465); false upgrades with STARTTLS, which is then required. */
   SMTP_SECURE: flag,
-  SMTP_USER: z.string().min(1),
-  SMTP_PASSWORD: z.string().min(1),
+  /** SMTP login; leave both unset only for a local mail catcher (not allowed in production). */
+  SMTP_USER: z.string().min(1).optional(),
+  SMTP_PASSWORD: z.string().min(1).optional(),
   /** Sender, for example `Cafe Loyalty <no-reply@example.com>`. */
-  EMAIL_FROM: z.string().min(3),
+  EMAIL_FROM: z
+    .string()
+    .regex(/^(?:[^<>]*<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>|[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+)$/, "Use an address, such as Cafe Loyalty <no-reply@example.com>."),
 })
   .superRefine((env, context) => {
+    if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
+      context.addIssue({ code: "custom", path: ["SMTP_PASSWORD"], message: "Set both SMTP_USER and SMTP_PASSWORD, or neither." });
+    }
     if (env.NODE_ENV !== "production") {
       return;
+    }
+    if (env.SMTP_USER === undefined) {
+      context.addIssue({ code: "custom", path: ["SMTP_USER"], message: "Set an SMTP login in production." });
     }
     if (env.TRUST_PROXY_HOPS === undefined) {
       context.addIssue({ code: "custom", path: ["TRUST_PROXY_HOPS"], message: "Set it in production (1 behind Caddy)." });

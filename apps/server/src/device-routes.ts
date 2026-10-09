@@ -105,9 +105,25 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
   const { db } = options;
   const limits = {
     codesPerOwner: new RateLimiter(20, HOUR * 1000),
-    pairPerIp: new RateLimiter(10, 15 * MINUTE * 1000),
-    renewPerIp: new RateLimiter(60, 15 * MINUTE * 1000),
+    // Failures only: the counters share the café's Wi-Fi (one address) with its customers, so counting every
+    // request would let anyone there use up the budget and block pairing and renewals.
+    pairFailuresPerIp: new RateLimiter(10, 15 * MINUTE * 1000),
+    renewFailuresPerIp: new RateLimiter(30, 15 * MINUTE * 1000),
+    // A paired device renews about once an hour; this only stops a runaway one.
+    renewalsPerDevice: new RateLimiter(30, HOUR * 1000),
   };
+
+  /**
+   * Reserves a failure for `client` before the slow check, refunded when the attempt succeeds, so parallel attempts
+   * cannot all pass a check made before any of them is counted.
+   */
+  function reserveFailure(limiter: RateLimiter, client: string, reply: FastifyReply): void {
+    const wait = limiter.check(client);
+    if (wait > 0) {
+      throw rateLimited(reply, wait);
+    }
+    limiter.hit(client);
+  }
 
   function enforce(limiter: RateLimiter, key: string, reply: FastifyReply): void {
     const wait = limiter.hit(key);
@@ -196,7 +212,8 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
 
   /** Pairs a device: proves the code, registers the device's public key and issues its first access token (AC 17). */
   app.post("/device/pair", { config: { access: "public" } }, async (request, reply) => {
-    enforce(limits.pairPerIp, clientKey(request.ip), reply);
+    const client = clientKey(request.ip);
+    reserveFailure(limits.pairFailuresPerIp, client, reply);
     const body = parseInput(pairRequestSchema, request.body);
     if (importDeviceKey(body.publicKey) === undefined) {
       throw new ApiError("VALIDATION_FAILED", "The device's key is not valid. Reload the counter app and pair again.", [
@@ -262,6 +279,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       throw invalidCode();
     }
     const paired = outcome.paired;
+    limits.pairFailuresPerIp.refund(client);
     request.log.info({ cafeId: found.cafe_id, deviceId: paired.deviceId }, "device paired");
     return reply.code(201).send(paired);
   });
@@ -271,7 +289,13 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
    * accepted one (no replay), within the clock-skew window, and within 7 days of the last renewal.
    */
   app.post("/device/token", { config: { access: "public" } }, async (request, reply) => {
-    enforce(limits.renewPerIp, clientKey(request.ip), reply);
+    const client = clientKey(request.ip);
+    // An address over its failure budget is still checked: a correctly signed renewal always goes through, so junk
+    // from the café's shared Wi-Fi cannot lock the counters out; only further failures are answered 429.
+    const overLimitWait = limits.renewFailuresPerIp.check(client);
+    if (overLimitWait === 0) {
+      limits.renewFailuresPerIp.hit(client);
+    }
     const body = parseInput(tokenRenewalRequestSchema, request.body);
     const issuedAt = new Date(body.issuedAt);
     if (Math.abs(Date.now() - issuedAt.getTime()) > RENEWAL_CLOCK_SKEW_MS) {
@@ -285,8 +309,13 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     const publicKey = key?.device_id === body.deviceId ? importDeviceKey(key.public_key) : undefined;
     if (key === undefined || publicKey === undefined || !verifyDeviceSignature(publicKey, deviceTokenSigningPayload(body), body.signature)) {
       request.log.warn({ cafeId: key?.cafe_id ?? null }, "token renewal refused: unknown key or bad signature");
-      throw pairingRequired();
+      throw overLimitWait > 0 ? rateLimited(reply, overLimitWait) : pairingRequired();
     }
+    // Signed by the device's key: not a failure from this address, and from here on limited per device instead.
+    if (overLimitWait === 0) {
+      limits.renewFailuresPerIp.refund(client);
+    }
+    enforce(limits.renewalsPerDevice, key.device_id, reply);
     const token = await withCafe(db, key.cafe_id, async (trx) => {
       const device = await trx
         .selectFrom("devices")

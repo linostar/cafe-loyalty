@@ -88,12 +88,13 @@ test("adds a barista with a PIN and removes one after confirming", async ({ page
   await expect(page.getByRole("status")).toContainText("Saved.");
 
   await page.getByRole("button", { name: "Remove Rami" }).click();
-  // Focus follows the control that replaced the one pressed.
-  await expect(page.getByRole("button", { name: "Yes, remove Rami" })).toBeFocused();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  // Focus goes to the safe choice, Escape backs out, and after confirming it lands on the section heading.
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Remove Rami" })).toBeFocused();
   await page.getByRole("button", { name: "Remove Rami" }).click();
   await page.getByRole("button", { name: "Yes, remove Rami" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "Staff" })).toBeFocused();
   await expect(page.getByText("Rami · removed")).toBeVisible();
 });
 

@@ -21,6 +21,11 @@ export async function mockApi(page: Page, handlers: Readonly<Record<string, Hand
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const key = `${request.method()} ${new URL(request.url()).pathname}`;
+    // Like the server: every write must carry a JSON body.
+    if (request.method() !== "GET" && request.headers()["content-type"] !== "application/json") {
+      await route.fulfill({ status: 415, json: { code: "UNSUPPORTED_MEDIA_TYPE", message: `${key} was sent without a JSON body.`, retryable: false } });
+      return;
+    }
     const handler = handlers[key];
     if (handler === undefined) {
       await route.fulfill({ status: 404, json: { code: "NOT_FOUND", message: `No mock for ${key}.`, retryable: false } });

@@ -10,6 +10,10 @@ describe("ownerEmailSchema", () => {
     expect(ownerEmailSchema.safeParse(value).success).toBe(false);
   });
 
+  it("asks for Latin letters when given an Arabic address", () => {
+    expect(ownerEmailSchema.safeParse("رنا@example.com").error?.issues[0]?.message).toBe("Enter an email address in Latin letters, such as name@example.com.");
+  });
+
   it("does not echo the input in its error message", () => {
     const result = ownerEmailSchema.safeParse("not-an-email-xyz");
     expect(JSON.stringify(result.error?.issues)).not.toContain("not-an-email-xyz");
@@ -26,6 +30,15 @@ describe("ownerPasswordSchema", () => {
   it("rejects shorter or longer passwords", () => {
     expect(ownerPasswordSchema.safeParse("123456789").success).toBe(false);
     expect(ownerPasswordSchema.safeParse("x".repeat(129)).success).toBe(false);
+  });
+
+  it("normalises to NFKC and counts characters, not UTF-16 units", () => {
+    const composed = "caf\u00e9 au lait";
+    const decomposed = "cafe\u0301 au lait";
+    expect(ownerPasswordSchema.parse(decomposed)).toBe(ownerPasswordSchema.parse(composed));
+    expect(loginRequestSchema.parse({ email: "rana@example.com", password: decomposed }).password).toBe(composed);
+    expect(ownerPasswordSchema.safeParse("\u{1F600}".repeat(5)).success).toBe(false);
+    expect(ownerPasswordSchema.safeParse("\u{1F600}".repeat(10)).success).toBe(true);
   });
 
   it("is not applied at sign-in, so older passwords keep working", () => {

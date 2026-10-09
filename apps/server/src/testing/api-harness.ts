@@ -29,6 +29,10 @@ export class FakeMailer implements Mailer {
     this.sent.push(message);
   }
 
+  verify(): Promise<void> {
+    return Promise.resolve();
+  }
+
   close(): void {
     // Nothing to release.
   }
@@ -103,6 +107,7 @@ export function useApiHarness() {
   let testDb: TestDatabase | undefined;
   let admin: pg.Client | undefined;
   const open: Harness[] = [];
+  const holders: pg.Client[] = [];
 
   beforeAll(async () => {
     testDb = await createTestDatabase();
@@ -116,6 +121,11 @@ export function useApiHarness() {
   });
 
   afterEach(async () => {
+    // A test that failed before releasing its hold must not leave the row locked for the next one.
+    for (const holder of holders.splice(0)) {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      await holder.end().catch(() => undefined);
+    }
     for (const created of open.splice(0)) {
       await created.background.drain();
       await created.app.close();
@@ -174,6 +184,44 @@ export function useApiHarness() {
       expect(paired.statusCode).toBe(201);
       const body = paired.json<{ deviceId: string; keyId: string; accessToken: string }>();
       return { deviceId: body.deviceId, keyId: body.keyId, accessToken: body.accessToken, privateKey };
+    },
+
+    /**
+     * Locks an owner row from a second connection, so a test can let a request reach that lock, change the row,
+     * and release it: a deterministic interleaving instead of a timing guess.
+     */
+    holdOwnerRow: async (ownerId: string, mode: "FOR NO KEY UPDATE" | "FOR UPDATE" = "FOR NO KEY UPDATE") => {
+      const holder = new pg.Client({ connectionString: context.testDb.adminUrl });
+      await holder.connect();
+      holders.push(holder);
+      await holder.query("BEGIN");
+      // The same lock mode the app takes on owner rows unless a test asks otherwise.
+      await holder.query(`SELECT 1 FROM app.owners WHERE id = $1 ${mode}`, [ownerId]);
+      const { rows: pidRows } = await holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      const holderPid = pidRows[0]?.pid ?? -1;
+      return {
+        /** Resolves once a request is waiting on this holder's lock. */
+        untilBlocked: async (): Promise<void> => {
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            const { rows } = await context.admin.query<{ n: number }>(
+              "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> $1 AND pg_blocking_pids(pid) @> ARRAY[$1::int]",
+              [holderPid],
+            );
+            if ((rows[0]?.n ?? 0) > 0) {
+              return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          throw new Error("No request blocked on the held owner row within 5 seconds.");
+        },
+        /** Runs `change` on the holding connection (which bypasses row-level security), then commits. */
+        release: async (change?: (client: pg.Client) => Promise<unknown>): Promise<void> => {
+          await change?.(holder);
+          await holder.query("COMMIT");
+          holders.splice(holders.indexOf(holder), 1);
+          await holder.end();
+        },
+      };
     },
 
     auditActions: async (cafeId: string): Promise<string[]> => {

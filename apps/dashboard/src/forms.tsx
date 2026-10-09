@@ -1,5 +1,5 @@
 import { linkTokenSchema } from "@cafe-loyalty/shared";
-import { useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useContext, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ApiRequestError } from "./api.js";
 import { SessionEndedContext } from "./session.js";
 
@@ -148,7 +148,29 @@ export function useLinkToken(name: string): string | null {
  */
 export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { label: string; confirmLabel: string; pending: boolean; onConfirm: () => void }) {
   const [asking, setAsking] = useState(false);
-  const container = useFocusOnChange<HTMLSpanElement>(asking);
+  const container = useRef<HTMLSpanElement>(null);
+  /** Where focus goes once the step has rendered: Cancel while asking (the safe choice), the button after cancelling. */
+  const focusNext = useRef<"cancel" | "start" | null>(null);
+
+  useEffect(() => {
+    const target = focusNext.current;
+    focusNext.current = null;
+    const selector = target === "cancel" ? "[data-confirm-cancel]" : target === "start" ? "button" : null;
+    if (selector !== null) {
+      container.current?.querySelector<HTMLElement>(selector)?.focus();
+    }
+  }, [asking]);
+
+  const cancel = () => {
+    focusNext.current = "start";
+    setAsking(false);
+  };
+  const cancelOnEscape = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Escape") {
+      cancel();
+    }
+  };
+
   return (
     <span ref={container} className="confirm">
       {asking ? (
@@ -157,20 +179,17 @@ export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { lab
             type="button"
             className="danger"
             disabled={pending}
+            onKeyDown={cancelOnEscape}
             onClick={() => {
+              // The item may change or disappear, so focus moves to its section's heading, which stays.
+              container.current?.closest("section")?.querySelector<HTMLElement>("[data-focus-after-change]")?.focus();
               setAsking(false);
               onConfirm();
             }}
           >
             {confirmLabel}
           </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              setAsking(false);
-            }}
-          >
+          <button type="button" data-confirm-cancel disabled={pending} onKeyDown={cancelOnEscape} onClick={cancel}>
             Cancel
           </button>
         </>
@@ -179,6 +198,7 @@ export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { lab
           type="button"
           disabled={pending}
           onClick={() => {
+            focusNext.current = "cancel";
             setAsking(true);
           }}
         >

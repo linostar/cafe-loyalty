@@ -54,6 +54,16 @@ describe("loadServerConfig", () => {
     expect(loadServerConfig({ ...valid, DASHBOARD_URL: "https://dashboard.example.com/" }).DASHBOARD_URL).toBe("https://dashboard.example.com/");
   });
 
+  it("allows no SMTP login outside production, never half of one, and needs an address in EMAIL_FROM", () => {
+    expect(loadServerConfig({ ...valid, SMTP_USER: undefined, SMTP_PASSWORD: undefined }).SMTP_USER).toBeUndefined();
+    expect(() => loadServerConfig({ ...valid, SMTP_PASSWORD: undefined })).toThrow(/SMTP_PASSWORD/);
+    expect(() => loadServerConfig({ ...valid, NODE_ENV: "production", TRUST_PROXY_HOPS: "1", SMTP_USER: undefined, SMTP_PASSWORD: undefined })).toThrow(
+      /SMTP_USER/,
+    );
+    expect(() => loadServerConfig({ ...valid, EMAIL_FROM: "Cafe Loyalty" })).toThrow(/EMAIL_FROM/);
+    expect(loadServerConfig({ ...valid, EMAIL_FROM: "no-reply@example.com" }).EMAIL_FROM).toBe("no-reply@example.com");
+  });
+
   it("names invalid variables without their values", () => {
     try {
       loadServerConfig({ ...valid, DATABASE_URL: "mysql://app:leaked-password@db/x", SMTP_SECURE: "yes" });

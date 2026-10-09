@@ -31,8 +31,7 @@ const mailer = createSmtpMailer({
   host: config.SMTP_HOST,
   port: config.SMTP_PORT,
   secure: config.SMTP_SECURE,
-  user: config.SMTP_USER,
-  password: config.SMTP_PASSWORD,
+  auth: config.SMTP_USER === undefined || config.SMTP_PASSWORD === undefined ? undefined : { user: config.SMTP_USER, password: config.SMTP_PASSWORD },
   from: config.EMAIL_FROM,
 });
 const background = new BackgroundTasks(app.log);
@@ -61,7 +60,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   shuttingDown = true;
   app.log.info({ signal }, "shutdown requested");
   const timer = setTimeout(() => {
-    app.log.error({ timeoutMs: config.SHUTDOWN_TIMEOUT_MS }, "shutdown timed out, forcing exit");
+    app.log.error({ timeoutMs: config.SHUTDOWN_TIMEOUT_MS, abandonedTasks: background.pendingCount }, "shutdown timed out, forcing exit");
     process.exit(1);
   }, config.SHUTDOWN_TIMEOUT_MS);
   timer.unref();
@@ -84,3 +83,13 @@ try {
   app.log.fatal({ err: error }, "server failed to start");
   process.exit(1);
 }
+
+// A wrong SMTP setting shows at startup, not at the first password reset. The server still runs without email.
+mailer.verify().then(
+  () => {
+    app.log.info("SMTP connection verified");
+  },
+  (error: unknown) => {
+    app.log.error({ err: error }, "SMTP connection check failed: password reset emails will fail until the SMTP settings are fixed");
+  },
+);
