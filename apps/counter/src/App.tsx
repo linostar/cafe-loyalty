@@ -48,8 +48,16 @@ async function readStored(): Promise<Stored> {
     listRejected(),
     getMeta("catalog"),
   ]);
-  // A catalog an older build stored has no campaigns (nor their time zone): none apply until the next refresh.
-  return { device, staff: staff ?? [], baristaId: barista?.staffId, pending, rejected, catalog: catalog && { ...catalog, timeZone: catalog.timeZone ?? "UTC", campaigns: catalog.campaigns ?? [] } };
+  // A catalog an older build stored has no campaigns (nor their time zone) or win-back offers: none apply until the next
+  // refresh.
+  return {
+    device,
+    staff: staff ?? [],
+    baristaId: barista?.staffId,
+    pending,
+    rejected,
+    catalog: catalog && { ...catalog, timeZone: catalog.timeZone ?? "UTC", campaigns: catalog.campaigns ?? [], winBackOffers: catalog.winBackOffers ?? [] },
+  };
 }
 
 const EVENT_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };

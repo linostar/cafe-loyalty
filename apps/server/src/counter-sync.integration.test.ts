@@ -97,7 +97,7 @@ describe("sync", () => {
       await visit(device, staffId),
       await visit(device, staffId, { payload: { card: { kind: "qr", token: lastCafe.qr }, items: [], totalCents: 0 } }),
       await visit(device, staffId, { type: "test.never-supported" }),
-      await visit(device, staffId, { schemaVersion: 3 }),
+      await visit(device, staffId, { schemaVersion: 4 }),
       await visit({ ...device, privateKey: other.privateKey }, staffId),
       await visit({ ...device, deviceId: randomUUID() }, staffId),
       await visit(device, staffId, { occurredAt: new Date(now + 10 * 60 * 1000).toISOString() }),

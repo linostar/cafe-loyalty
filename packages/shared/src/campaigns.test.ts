@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestCampaign, keepsMargin, marginFloorCents, runsAt, unitDiscountCents, type CampaignTerms } from "./campaigns.js";
+import { bestCampaign, keepsMargin, marginFloorCents, runsAt, unitDiscountCents, winBackUnitDiscountCents, type CampaignTerms } from "./campaigns.js";
 
 const quiet: CampaignTerms = {
   weekdays: [1, 2, 3],
@@ -46,5 +46,16 @@ describe("campaign rules (AC 35)", () => {
     expect(bestCampaign([quiet, bigger, belowFloor, otherItem], latte, 2, 16 * 60)).toEqual({ campaign: bigger, unitDiscountCents: 100 });
     expect(bestCampaign([quiet], latte, 2, 18 * 60)).toBeNull();
     expect(bestCampaign([quiet], { ...latte, costCents: 300 }, 2, 16 * 60)).toBeNull();
+  });
+});
+
+describe("win-back discount (AC 36)", () => {
+  it("gives the offer's discount on any order type, and none where it would sell below the margin floor", () => {
+    const terms = { discount: { kind: "percent" as const, value: 20 }, minMarginPercent: 30 };
+    // $3.50 less 20% is $2.80, above $1.20 * 1.3 = $1.56.
+    expect(winBackUnitDiscountCents({ priceCents: 350, costCents: 120 }, terms)).toBe(70);
+    // $2.00 less 20% is $1.60, under $1.50 * 1.3 = $1.95: no discount rather than a smaller one.
+    expect(winBackUnitDiscountCents({ priceCents: 200, costCents: 150 }, terms)).toBe(0);
+    expect(winBackUnitDiscountCents({ priceCents: 350, costCents: 120 }, { discount: { kind: "amount", value: 50 }, minMarginPercent: 0 })).toBe(50);
   });
 });

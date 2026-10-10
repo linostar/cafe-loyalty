@@ -65,3 +65,16 @@ export function bestCampaign<T extends CampaignTerms>(
   }
   return best;
 }
+
+/** How long a win-back offer lasts (AC 36), and so the shortest cool-down a café may set. */
+export const WIN_BACK_OFFER_DAYS = 14;
+/** The longest cool-down, and the default. */
+export const WIN_BACK_MAX_COOLDOWN_DAYS = 365;
+export const WIN_BACK_DEFAULT_COOLDOWN_DAYS = 30;
+
+/**
+ * The win-back discount on one unit (AC 36): the offer's discount, or none when it would sell the unit below its
+ * margin floor. It applies to every order type; the counter gives a line the larger of this and its campaign's.
+ */
+export const winBackUnitDiscountCents = (item: { priceCents: number; costCents: number }, terms: { discount: Discount; minMarginPercent: number }): number =>
+  keepsMargin(item.priceCents, item.costCents, terms.discount, terms.minMarginPercent) ? unitDiscountCents(item.priceCents, terms.discount) : 0;

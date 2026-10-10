@@ -199,13 +199,19 @@ describe("Google pass updates", () => {
     expect(await queuedPassUpdates(app.owner.cafeId, GOOGLE_PASS_UPDATE_QUEUE)).toEqual([{ passId: renewed, state: "created" }]);
   });
 
-  it("deletes a card's Google passes with the card (AC 9)", async () => {
+  it("deletes a card's Google passes and win-back lapses with the card (AC 9)", async () => {
     const app = await cafeApp();
     const card = await issueCard(app.owner.cafeId);
     await openSaveLink(app, card.webSecret);
+    await context.admin.query(
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, offered_at, discount_kind, discount_value, min_margin_percent, expires_at)
+       VALUES ($1, $2, now() - interval '40 days', now(), 'percent', 20, 30, now() + interval '14 days')`,
+      [app.owner.cafeId, card.cardId],
+    );
     const deleted = await app.app.inject({ method: "POST", url: `/c/${card.webSecret}/delete`, ...formBody({ confirm: "yes", lang: "en" }) });
     expect(deleted.statusCode).toBe(200);
     expect(await googlePassIds(card.cardId)).toEqual([]);
+    expect((await context.admin.query("SELECT 1 FROM app.card_lapses WHERE card_id = $1", [card.cardId])).rowCount).toBe(0);
   });
 });
 
@@ -262,6 +268,9 @@ describe("manual wallet check (AC 46)", () => {
     expect(parseWalletCheckArgs(["stamp", `${PUBLIC_URL}/c/${secret}?lang=ar`])).toEqual({ command: "stamp", secret });
     expect(parseWalletCheckArgs(["restore", secret])).toEqual({ command: "restore", secret });
     expect(parseWalletCheckArgs(["offer", secret])).toEqual({ command: "offer", secret });
+    // A secret may start with "-" (base64url), which is not an option.
+    const dashed = `-${secret.slice(1)}`;
+    expect(parseWalletCheckArgs(["restore", dashed])).toEqual({ command: "restore", secret: dashed });
     for (const wrong of [[], ["issue"], ["issue", "--cafe-id", "nope"], ["stamp"], ["stamp", "https://card.example.test/c/short"], ["stamp", secret, "extra"], ["delete", secret], ["stamp", secret, "--cafe-id", cafeId]]) {
       expect(parseWalletCheckArgs(wrong)).toBeNull();
     }

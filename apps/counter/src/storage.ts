@@ -75,8 +75,8 @@ export interface MetaValues {
   /** The issuedAt (ms) of the last renewal sent, shared by every tab: the server refuses one that is not later. */
   lastIssuedAt: number;
   /** The order types on sale and the reward, for recording visits offline. */
-  /** Builds before campaigns (Step 12) stored no campaigns or time zone. */
-  catalog: Omit<DeviceCatalog, "timeZone" | "campaigns"> & Partial<Pick<DeviceCatalog, "timeZone" | "campaigns">>;
+  /** Builds before campaigns (Step 12) stored no campaigns or time zone, and before win-back (Step 13) no win-back offers. */
+  catalog: Omit<DeviceCatalog, "timeZone" | "campaigns" | "winBackOffers"> & Partial<Pick<DeviceCatalog, "timeZone" | "campaigns" | "winBackOffers">>;
   /**
    * A redemption sent without a confirmed answer: kept until it gets one, so trying again (even after a reload or an
    * update) reuses its event id and can never give the reward twice (AC 31).

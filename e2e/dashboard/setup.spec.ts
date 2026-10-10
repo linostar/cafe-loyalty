@@ -1,7 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 import { SESSION, UNAUTHENTICATED, mockApi, reply } from "./api-mock.js";
 
-const CAFE = { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30 };
+const CAFE = { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30, winBack: { discount: null, cooldownDays: 30 } };
 const ESPRESSO = { id: "3d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f41", nameAr: "إسبريسو", nameEn: "Espresso", priceCents: 250, costCents: 70, stampsEarned: 1, active: true };
 const PROGRAM = { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" };
 
@@ -182,6 +182,41 @@ test("returns to sign-in when the session ends on a page", async ({ page }) => {
   await page.goto("/staff");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Your session has ended. Sign in again.");
+});
+
+test("saves the win-back offer, checking the discount and the cool-down first (AC 36)", async ({ page }) => {
+  let setup = { cafe: CAFE, program: PROGRAM, orderTypes: [ESPRESSO] };
+  const saved: unknown[] = [];
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "PUT /api/cafe/win-back": async (route) => {
+      const body = json(route) as typeof CAFE.winBack;
+      saved.push(body);
+      setup = { ...setup, cafe: { ...CAFE, winBack: body } };
+      await route.fulfill({ json: setup });
+    },
+  });
+  await page.goto("/cafe");
+  const form = page.getByRole("form", { name: "Win-back offer" });
+  await expect(form.getByRole("radio", { name: "No offer" })).toBeChecked();
+  await form.getByRole("radio", { name: "Percent off" }).check();
+  await form.getByLabel("Percentage").fill("150");
+  await form.getByLabel("Days before the same card can get it again").fill("7");
+  await form.getByRole("button", { name: "Save win-back offer" }).click();
+  await expect(form.getByText("Enter a whole percentage from 1 to 100.")).toBeVisible();
+  await expect(form.getByText("Enter a whole number of days from 14 to 365.")).toBeVisible();
+  expect(saved).toEqual([]);
+  await form.getByLabel("Percentage").fill("15");
+  await form.getByLabel("Days before the same card can get it again").fill("45");
+  await form.getByRole("button", { name: "Save win-back offer" }).click();
+  await expect.poll(() => saved).toEqual([{ discount: { kind: "percent", value: 15 }, cooldownDays: 45 }]);
+  // Turning it off sends no discount.
+  await form.getByRole("radio", { name: "No offer" }).check();
+  await form.getByRole("button", { name: "Save win-back offer" }).click();
+  await expect.poll(() => saved).toHaveLength(2);
+  expect(saved[1]).toEqual({ discount: null, cooldownDays: 45 });
 });
 
 test("saves the minimum margin campaigns must keep", async ({ page }) => {

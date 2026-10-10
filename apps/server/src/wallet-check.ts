@@ -29,16 +29,18 @@ const secretOf = (value: string): string | undefined => {
 };
 
 export function parseWalletCheckArgs(args: readonly string[]): WalletCheckCommand | null {
+  const [first, link, ...rest] = args;
+  // Read as given, not as options: a card secret may start with "-".
+  if ((first === "stamp" || first === "offer" || first === "restore") && link !== undefined && rest.length === 0) {
+    const secret = secretOf(link);
+    return secret === undefined ? null : { command: first, secret };
+  }
   try {
     const { values, positionals } = parseArgs({ args: [...args], options: { "cafe-id": { type: "string" } }, allowPositionals: true, strict: true });
-    const [command, link, ...rest] = positionals;
-    if (command === "issue" && link === undefined) {
+    const [command, extra] = positionals;
+    if (command === "issue" && extra === undefined) {
       const cafeId = z.uuid().safeParse(values["cafe-id"]);
       return cafeId.success ? { command, cafeId: cafeId.data } : null;
-    }
-    if ((command === "stamp" || command === "offer" || command === "restore") && link !== undefined && rest.length === 0 && values["cafe-id"] === undefined) {
-      const secret = secretOf(link);
-      return secret === undefined ? null : { command, secret };
     }
   } catch {
     // Unknown option: the usage follows.

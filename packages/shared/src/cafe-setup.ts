@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WIN_BACK_MAX_COOLDOWN_DAYS, WIN_BACK_OFFER_DAYS } from "./campaigns.js";
 import { centsSchema } from "./money.js";
 import { syncSignatureSchema } from "./sync.js";
 
@@ -11,6 +12,24 @@ const atLeastOneField = (value: Record<string, unknown>) => Object.values(value)
 
 /** The least a discounted price may be, as a percentage over cost (AC 35). */
 export const minMarginPercentSchema = z.int("Use a whole percentage.").min(0, "Use 0% or more.").max(1000, "Use at most 1000%.");
+
+/** A campaign's or win-back offer's discount: percent off each eligible unit (1-100), or a fixed amount off each, in cents. */
+export const discountSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("percent"), value: z.int("Use a whole percentage.").min(1, "Use 1% to 100%.").max(100, "Use 1% to 100%.") }),
+  z.object({ kind: z.literal("amount"), value: centsSchema.min(1, "Use an amount of $0.01 or more.") }),
+]);
+
+/**
+ * The café's win-back offer (AC 36): the discount a lapsed card gets on its next visit (null: no offer), and the
+ * cool-down in days before a card can get it again, at least the WIN_BACK_OFFER_DAYS an offer lasts.
+ */
+export const winBackSettingsSchema = z.object({
+  discount: discountSchema.nullable(),
+  cooldownDays: z
+    .int("Use a whole number of days.")
+    .min(WIN_BACK_OFFER_DAYS, `Use at least ${String(WIN_BACK_OFFER_DAYS)} days, how long an offer lasts.`)
+    .max(WIN_BACK_MAX_COOLDOWN_DAYS, `Use at most ${String(WIN_BACK_MAX_COOLDOWN_DAYS)} days.`),
+});
 
 export const cafeUpdateSchema = z
   .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional() })
@@ -38,7 +57,7 @@ export const orderTypeSchema = z.object({ id: z.uuid(), ...orderTypeFields });
 
 /** Everything the dashboard's café setup screen shows. */
 export const cafeSetupSchema = z.object({
-  cafe: z.object({ id: z.uuid(), name: z.string(), catalogVersion: z.int(), minMarginPercent: z.int() }),
+  cafe: z.object({ id: z.uuid(), name: z.string(), catalogVersion: z.int(), minMarginPercent: z.int(), winBack: winBackSettingsSchema }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),
 });
@@ -187,12 +206,6 @@ export const deviceTokenSigningPayload = (request: Pick<TokenRenewalRequest, "de
 /** Local minutes of the day: a campaign starts at 0-1439 and ends after it, at 1440 (midnight) at the latest. */
 const minuteOfDay = z.int().min(0).max(1440);
 
-/** A campaign's discount: percent off each eligible unit (1-100), or a fixed amount off each, in cents. */
-export const discountSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("percent"), value: z.int("Use a whole percentage.").min(1, "Use 1% to 100%.").max(100, "Use 1% to 100%.") }),
-  z.object({ kind: z.literal("amount"), value: centsSchema.min(1, "Use an amount of $0.01 or more.") }),
-]);
-
 /** Most campaigns a café may run at once. */
 export const MAX_RUNNING_CAMPAIGNS = 20;
 
@@ -239,15 +252,26 @@ export const campaignSchema = campaignTermsSchema.extend({ createdAt: timestamp,
 /** The café's running campaigns and the most recently ended ones. */
 export const campaignsSchema = z.object({ running: z.array(campaignSchema), ended: z.array(campaignSchema) });
 
+/** A win-back offer's terms as the counter applies them: the discount and the café's minimum margin when it was given. */
+export const winBackTermsSchema = z.object({ discount: discountSchema, minMarginPercent: z.int().min(0) });
+
+/** A card's open win-back offer as the counter applies it (AC 36): the card it is for, by id, and its own terms. */
+export const winBackOfferSchema = winBackTermsSchema.extend({ cardId: z.uuid() });
+
 /**
  * What a counter needs to record visits offline: the order types on sale, priced at a catalog version (AC 32), and the
- * campaigns running now with the time zone they run in (AC 35). Both default for a server from before Step 12 (a
- * rollback): no campaigns.
+ * campaigns running now with the time zone they run in (AC 35), and the open win-back offers (AC 36). They default for
+ * a server from before Steps 12 and 13 (a rollback): no campaigns, no win-back offers.
  */
 export const deviceCatalogSchema = z.object({
   catalogVersion: z.int().min(1),
   timeZone: z.string().default("UTC"),
   campaigns: z.array(campaignTermsSchema).default([]),
+  /**
+   * The open win-back offers (AC 36): a scanned card with one may be given it, with its own terms, which its passes
+   * show. A card typed in by phone number cannot be matched offline, so it gets none.
+   */
+  winBackOffers: z.array(winBackOfferSchema).default([]),
   orderTypes: z.array(z.object({ id: z.uuid(), nameAr: z.string(), nameEn: z.string(), priceCents: centsSchema, costCents: centsSchema, stampsEarned: z.int() })),
   program: loyaltyProgramSchema.nullable(),
 });
@@ -317,3 +341,6 @@ export type CampaignCreate = z.input<typeof campaignCreateSchema>;
 export type Campaign = z.output<typeof campaignSchema>;
 export type Campaigns = z.output<typeof campaignsSchema>;
 export type Redemption = z.output<typeof redemptionSchema>;
+export type WinBackSettings = z.output<typeof winBackSettingsSchema>;
+export type WinBackTerms = z.output<typeof winBackTermsSchema>;
+export type WinBackOffer = z.output<typeof winBackOfferSchema>;

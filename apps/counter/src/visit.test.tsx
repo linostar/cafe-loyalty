@@ -31,6 +31,7 @@ const CATALOG: DeviceCatalog = {
   catalogVersion: 4,
   timeZone: "Asia/Beirut",
   campaigns: [],
+  winBackOffers: [],
   orderTypes: [COFFEE, CAKE],
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
 };
@@ -72,7 +73,7 @@ describe("visits", () => {
     const [queued] = await listQueued(10);
     expect(queued?.event).toMatchObject({
       type: "visit.recorded",
-      schemaVersion: 2,
+      schemaVersion: 3,
       staffId: barista.id,
       payload: {
         card: { kind: "phone", phone: "+96170123456" },
@@ -107,7 +108,7 @@ describe("visits", () => {
       await screen.findByText(/^Visit saved/);
       const [queued] = await listQueued(10);
       expect(queued?.event).toMatchObject({
-        schemaVersion: 2,
+        schemaVersion: 3,
         occurredAt: "2026-10-12T13:59:50.000Z",
         payload: {
           items: [
@@ -115,11 +116,84 @@ describe("visits", () => {
             { orderTypeId: CAKE.id, quantity: 1, unitPriceCents: 450, campaignId: null, unitDiscountCents: 0 },
           ],
           totalCents: 750,
+          winBack: false,
         },
       });
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /** Scans this café's test card, whose id is in cardOf. */
+  const scanCard = () => {
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+  };
+  const SCANNED_CARD = "5e6f7a8b-9c0d-4e5f-8a6b-7c8d9e0f1a2b";
+
+  it("offers a scanned card's win-back offer with its own terms, taking the larger discount and keeping each margin floor (AC 36)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:30:00Z") });
+    try {
+      // 60% off: coffee keeps its floor ($1.20 against $1.17), cake does not ($1.80 against $1.95), so cake stays full price.
+      const offer = { cardId: SCANNED_CARD, discount: { kind: "percent" as const, value: 60 }, minMarginPercent: 30 };
+      await counter({ catalog: { ...CATALOG, campaigns: [QUIET], winBackOffers: [offer] } });
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+      expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
+      scanCard();
+      expect(screen.getByText("Total $6.00 · 1 stamp")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("checkbox", { name: "This card has a win-back offer, 60% off: apply it" }));
+      // Coffee: 60% ($1.80) beats the campaign's 50%; cake: no win-back discount below its floor.
+      expect(screen.getByText("$1.20 (Win-back offer)", { exact: false })).toBeInTheDocument();
+      expect(screen.getByText("Total $5.70 · 1 stamp")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+      await screen.findByText(/^Visit saved/);
+      const [queued] = await listQueued(10);
+      expect(queued?.event).toMatchObject({
+        schemaVersion: 3,
+        payload: {
+          items: [
+            { orderTypeId: COFFEE.id, campaignId: null, unitDiscountCents: 180 },
+            { orderTypeId: CAKE.id, campaignId: null, unitDiscountCents: 0 },
+          ],
+          totalCents: 570,
+          winBack: true,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the campaign's discount where it is larger, and says when the offer takes nothing off the order (AC 36)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:30:00Z") });
+    try {
+      // 10% off coffee ($0.30) loses to the campaign's 50% ($1.50).
+      const offer = { cardId: SCANNED_CARD, discount: { kind: "percent" as const, value: 10 }, minMarginPercent: 30 };
+      await counter({ catalog: { ...CATALOG, campaigns: [QUIET], winBackOffers: [offer] } });
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      scanCard();
+      fireEvent.click(screen.getByRole("checkbox", { name: /This card has a win-back offer, 10% off/ }));
+      expect(screen.getByText("$1.50 (Quiet hours)", { exact: false })).toBeInTheDocument();
+      expect(screen.getByText(/The offer takes nothing off this order/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+      await screen.findByText(/^Visit saved/);
+      const [queued] = await listQueued(10);
+      expect(queued?.event).toMatchObject({ payload: { items: [{ campaignId: QUIET.id, unitDiscountCents: 150 }], totalCents: 150 } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers no win-back offer for a card without one, nor for a card typed in by phone number", async () => {
+    await counter({ catalog: { ...CATALOG, winBackOffers: [{ cardId: "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", discount: { kind: "percent", value: 20 }, minMarginPercent: 0 }] } });
+    fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+    scanCard();
+    expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear card" }));
+    fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+    expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
   });
 
   it("gives a fixed amount off, and says which price was and which is now", async () => {

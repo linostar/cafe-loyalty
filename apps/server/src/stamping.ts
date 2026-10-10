@@ -6,6 +6,7 @@ import {
   runsAt,
   unitDiscountCents,
   visitLines,
+  winBackUnitDiscountCents,
   type DeviceCatalog,
   type Redemption,
   type SyncResultCode,
@@ -79,9 +80,16 @@ export type VisitPlan =
       identifiedBy: "qr" | "phone";
       stampsEach: ReadonlyMap<string, number>;
       stampsEarned: number;
-      /** A discount its campaign did not allow at the visit's time: the visit is held for the owner (AC 35). */
+      /**
+       * A discount its campaign (AC 35) or the card's win-back offer (AC 36) did not allow at the visit's time: the
+       * visit is held for the owner.
+       */
       discountRefused: boolean;
+      /** The card's win-back offer this visit's win-back discounts used (AC 36), or null. */
+      winBackOfferId: string | null;
     };
+
+type PlannedLine = VisitLine & { winBack: boolean };
 
 /**
  * Whether every discounted line of a visit matches a campaign of this café as it stood at the visit's time (AC 35):
@@ -145,19 +153,72 @@ export async function planVisit(trx: Transaction<Database>, secrets: CustomerSec
   if (types.length !== ids.length) {
     return { status: "refused", code: "UNKNOWN_ORDER_TYPE" };
   }
-  const discounts = await campaignsAllow(trx, cafeId, visitLines(payload), occurredAt);
+  const lines = visitLines(payload);
+  const discounts = await campaignsAllow(trx, cafeId, lines, occurredAt);
   if (discounts === "unknown") {
     return { status: "refused", code: "CAMPAIGN_REFUSED" };
   }
+  const winBack = await winBackAllows(trx, card.cardId, lines, occurredAt);
   const stampsEach = new Map(types.map((type) => [type.id, type.stamps_earned]));
   const stampsEarned = payload.items.reduce((sum, item) => sum + item.quantity * (stampsEach.get(item.orderTypeId) ?? 0), 0);
-  return { status: "ready", cardId: card.cardId, identifiedBy: payload.card.kind, stampsEach, stampsEarned, discountRefused: discounts === "refused" };
+  return {
+    status: "ready",
+    cardId: card.cardId,
+    identifiedBy: payload.card.kind,
+    stampsEach,
+    stampsEarned,
+    discountRefused: discounts === "refused" || winBack.status === "refused",
+    winBackOfferId: winBack.status === "allowed" ? winBack.offerId : null,
+  };
 }
 
-/** Stores a visit and its items, held (applied later by the owner) or about to be applied. */
+/**
+ * Whether a visit's win-back lines (discounts without a campaign, AC 36) match the card's offer as it stood at the
+ * visit's time: given by then, neither expired nor closed (used up, or withdrawn by the owner) before it, each within the
+ * campaigns' grace periods, and not used, giving each line exactly the offer's own discount, the one its passes show,
+ * and keeping the margin floor it was given with. The offer row is locked, so two visits cannot both use it. "none"
+ * when the visit has no win-back line.
+ */
+async function winBackAllows(
+  trx: Transaction<Database>,
+  cardId: string,
+  lines: readonly PlannedLine[],
+  occurredAt: Date,
+): Promise<{ status: "none" } | { status: "refused" } | { status: "allowed"; offerId: string }> {
+  const winBackLines = lines.filter((line) => line.winBack);
+  if (winBackLines.length === 0) {
+    return { status: "none" };
+  }
+  const at = occurredAt.getTime();
+  const ended = new Date(at - CAMPAIGN_END_GRACE_MINUTES * MINUTE_MS);
+  const offer = await trx
+    .selectFrom("card_lapses")
+    .select(["id", "discount_kind", "discount_value", "min_margin_percent"])
+    .where("card_id", "=", cardId)
+    .where("offered_at", "<=", new Date(at + CAMPAIGN_START_GRACE_MINUTES * MINUTE_MS))
+    .where("used_visit_id", "is", null)
+    .where("expires_at", ">", ended)
+    .where((eb) => eb.or([eb("closed_at", "is", null), eb("closed_at", ">", ended)]))
+    .orderBy("offered_at", "desc")
+    .forNoKeyUpdate()
+    .executeTakeFirst();
+  if (offer?.discount_kind == null || offer.discount_value === null || offer.min_margin_percent === null) {
+    return { status: "refused" };
+  }
+  const terms = { discount: { kind: offer.discount_kind, value: offer.discount_value }, minMarginPercent: offer.min_margin_percent };
+  const allowed = winBackLines.every((line) => winBackUnitDiscountCents({ priceCents: line.unitPriceCents, costCents: line.unitCostCents }, terms) === line.unitDiscountCents);
+  return allowed ? { status: "allowed", offerId: offer.id } : { status: "refused" };
+}
+
+/**
+ * Stores a visit and its items, held (applied later by the owner) or about to be applied. A visit that gave the card's
+ * win-back discount uses the offer up whether or not it is held, since the customer had the discount (AC 36); the
+ * offer then leaves the card's passes (a trigger marks them, migration 0014).
+ */
 export async function insertVisit(
   trx: Transaction<Database>,
-  visit: { cafeId: string; syncEventId: string; deviceId: string; staffId: string; occurredAt: Date; totalCents: number; items: readonly VisitLine[] },
+  jobs: PgBoss | undefined,
+  visit: { cafeId: string; syncEventId: string; deviceId: string; staffId: string; occurredAt: Date; totalCents: number; items: readonly PlannedLine[] },
   plan: Extract<VisitPlan, { status: "ready" }>,
 ): Promise<string> {
   const { id } = await trx
@@ -192,9 +253,18 @@ export async function insertVisit(
         stamps_each: plan.stampsEach.get(item.orderTypeId) ?? 0,
         campaign_id: item.campaignId,
         unit_discount_cents: item.unitDiscountCents,
+        win_back: item.winBack,
       })),
     )
     .execute();
+  if (plan.winBackOfferId !== null) {
+    await trx
+      .updateTable("card_lapses")
+      .set({ used_visit_id: id, closed_at: sql<Date>`coalesce(closed_at, now())` })
+      .where("id", "=", plan.winBackOfferId)
+      .execute();
+    await queuePassUpdate(trx, jobs, visit.cafeId, plan.cardId);
+  }
   return id;
 }
 
@@ -293,6 +363,15 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
     const device = deviceOf(request);
     return withCafe(db, device.cafeId, async (trx) => {
       const cafe = await trx.selectFrom("cafes").select(["catalog_version", "time_zone"]).where("id", "=", device.cafeId).executeTakeFirstOrThrow();
+      // ponytail: every open offer, a few hundred at most for a café (each lasts WIN_BACK_OFFER_DAYS); paged if that grows.
+      const offers = await trx
+        .selectFrom("card_lapses")
+        .select(["card_id", "discount_kind", "discount_value", "min_margin_percent"])
+        .where("offered_at", "is not", null)
+        .where("used_visit_id", "is", null)
+        .where("closed_at", "is", null)
+        .where("expires_at", ">", sql<Date>`now()`)
+        .execute();
       const types = await trx
         .selectFrom("order_types")
         .select(["id", "name_ar", "name_en", "price_cents", "cost_cents", "stamps_earned"])
@@ -304,6 +383,11 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
         catalogVersion: cafe.catalog_version,
         timeZone: cafe.time_zone,
         campaigns: await loadCampaigns(trx, { runningNow: true }),
+        winBackOffers: offers.flatMap((offer) =>
+          offer.discount_kind === null || offer.discount_value === null || offer.min_margin_percent === null
+            ? []
+            : [{ cardId: offer.card_id, discount: { kind: offer.discount_kind, value: offer.discount_value }, minMarginPercent: offer.min_margin_percent }],
+        ),
         orderTypes: types.map((type) => ({
           id: type.id,
           nameAr: type.name_ar,

@@ -114,6 +114,32 @@ export const visitRecordedV2PayloadSchema = z
   })
   .superRefine(checkTotal);
 
+/** A version 3 line: as version 2, and a discount without a campaign is the card's win-back offer's (AC 36). */
+const visitLineV3Schema = visitItemSchema
+  .extend({ campaignId: idSchema.nullable(), unitDiscountCents: centsSchema })
+  .refine((line) => line.unitDiscountCents <= line.unitPriceCents, { path: ["unitDiscountCents"], message: "The discount is more than the price." });
+
+/**
+ * Payload of `visit.recorded`, schema version 3 (AC 36): as version 2, and `winBack` says the barista applied the
+ * card's win-back offer, so a line may carry a discount without a campaign, the offer's. Without it, a discount needs
+ * its campaign, as in version 2.
+ */
+export const visitRecordedV3PayloadSchema = z
+  .object({
+    card: cardReferenceSchema,
+    items: z.array(visitLineV3Schema).min(1).max(30),
+    totalCents: centsSchema,
+    winBack: z.boolean(),
+  })
+  .superRefine((visit, context) => {
+    checkTotal(visit, context);
+    visit.items.forEach((line, index) => {
+      if (!visit.winBack && line.campaignId === null && line.unitDiscountCents > 0) {
+        context.addIssue({ code: "custom", path: ["items", index, "campaignId"], message: "A discount needs its campaign or the win-back offer." });
+      }
+    });
+  });
+
 export const visitRecordedV1EventSchema = z.object({
   ...v1EnvelopeFields,
   type: z.literal("visit.recorded"),
@@ -131,12 +157,27 @@ export const visitRecordedV2EventSchema = z.object({
 });
 
 export type VisitRecordedV2Event = z.output<typeof visitRecordedV2EventSchema>;
-export type VisitRecordedEvent = VisitRecordedV1Event | VisitRecordedV2Event;
+
+export const visitRecordedV3EventSchema = z.object({
+  ...v1EnvelopeFields,
+  type: z.literal("visit.recorded"),
+  schemaVersion: z.literal(3),
+  payload: visitRecordedV3PayloadSchema,
+});
+
+export type VisitRecordedV3Event = z.output<typeof visitRecordedV3EventSchema>;
+export type VisitRecordedEvent = VisitRecordedV1Event | VisitRecordedV2Event | VisitRecordedV3Event;
 export type VisitRecordedPayload = VisitRecordedEvent["payload"];
 
-/** A visit's lines in the version 2 shape: a version 1 visit's lines have no campaign and no discount. */
-export const visitLines = (payload: VisitRecordedPayload): VisitLine[] =>
-  payload.items.map((item) => ({ campaignId: null, unitDiscountCents: 0, ...item }));
+/**
+ * A visit's lines in one shape: a version 1 visit's lines have no campaign and no discount, and `winBack` marks a
+ * version 3 line discounted by the card's win-back offer (a discount without a campaign).
+ */
+export const visitLines = (payload: VisitRecordedPayload): (VisitLine & { winBack: boolean })[] =>
+  payload.items.map((item) => {
+    const line = { campaignId: null, unitDiscountCents: 0, ...item };
+    return { ...line, winBack: line.campaignId === null && line.unitDiscountCents > 0 };
+  });
 
 /**
  * `staff.pin_lockout`, schema version 1: the device locked out the envelope's staff member after repeated wrong PINs
@@ -156,7 +197,7 @@ export type StaffPinLockoutV1Event = z.output<typeof staffPinLockoutV1EventSchem
 
 /** Full event schemas by type and version. A pair missing here is unsupported, not invalid. */
 const EVENT_SCHEMAS = {
-  "visit.recorded": { 1: visitRecordedV1EventSchema, 2: visitRecordedV2EventSchema },
+  "visit.recorded": { 1: visitRecordedV1EventSchema, 2: visitRecordedV2EventSchema, 3: visitRecordedV3EventSchema },
   "staff.pin_lockout": { 1: staffPinLockoutV1EventSchema },
 } as const;
 

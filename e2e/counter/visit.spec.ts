@@ -29,6 +29,7 @@ const CATALOG = {
   catalogVersion: 4,
   timeZone: "Asia/Beirut",
   campaigns: [] as unknown[],
+  winBackOffers: [] as unknown[],
   orderTypes: [COFFEE],
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
 };
@@ -85,7 +86,7 @@ test("records a visit for a phone number and sends it, priced as the menu showed
         type: "visit.recorded",
         staffId: RAMI.id,
         deviceId: PAIRED.deviceId,
-        schemaVersion: 2,
+        schemaVersion: 3,
         payload: {
           card: { kind: "phone", phone: "+96170123456" },
           items: [{ orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, catalogVersion: 4, campaignId: null, unitDiscountCents: 0 }],
@@ -106,7 +107,7 @@ test("gives a running campaign's discount and sends it with the visit (AC 35)", 
     .poll(() => synced)
     .toMatchObject([
       {
-        schemaVersion: 2,
+        schemaVersion: 3,
         payload: { items: [{ orderTypeId: COFFEE.id, quantity: 1, unitPriceCents: 300, campaignId: ALL_DAY.id, unitDiscountCents: 150 }], totalCents: 150 },
       },
     ]);

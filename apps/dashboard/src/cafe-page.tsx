@@ -1,4 +1,13 @@
-import { cafeSetupSchema, formatUsd, joinLinkSchema, type CafeSetup, type OrderType } from "@cafe-loyalty/shared";
+import {
+  WIN_BACK_MAX_COOLDOWN_DAYS,
+  WIN_BACK_OFFER_DAYS,
+  cafeSetupSchema,
+  formatUsd,
+  joinLinkSchema,
+  type CafeSetup,
+  type OrderType,
+  type WinBackSettings,
+} from "@cafe-loyalty/shared";
 import { useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
@@ -101,6 +110,98 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
       />
       <button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save margin"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * The café's win-back offer (AC 36): what a regular who stopped coming gets off their next visit, if anything, and how
+ * long before the same card can get it again.
+ */
+function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }) {
+  const [kind, setKind] = useState<"none" | "percent" | "amount">(winBack.discount?.kind ?? "none");
+  const [value, setValue] = useState(winBack.discount === null ? "" : winBack.discount.kind === "percent" ? String(winBack.discount.value) : centsToInput(winBack.discount.value));
+  const [cooldown, setCooldown] = useState(String(winBack.cooldownDays));
+  const [problems, setProblems] = useState<Record<string, string>>({});
+  const { pending, error, fieldErrors, submit } = useSubmit();
+  return (
+    <form
+      aria-labelledby="win-back-title"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const amount = kind === "percent" ? parseWholeNumberInput(value) : kind === "amount" ? parseUsdInput(value) : null;
+        const days = parseWholeNumberInput(cooldown);
+        const invalid: Record<string, string> = {
+          ...(kind !== "none" && (amount === null || amount < 1 || (kind === "percent" && amount > 100))
+            ? { discount: kind === "percent" ? "Enter a whole percentage from 1 to 100." : "Enter an amount in dollars, such as 0.50." }
+            : {}),
+          ...(days === null || days < WIN_BACK_OFFER_DAYS || days > WIN_BACK_MAX_COOLDOWN_DAYS
+            ? { cooldownDays: `Enter a whole number of days from ${String(WIN_BACK_OFFER_DAYS)} to ${String(WIN_BACK_MAX_COOLDOWN_DAYS)}.` }
+            : {}),
+        };
+        setProblems(invalid);
+        if (Object.keys(invalid).length > 0 || days === null) {
+          return;
+        }
+        const body: WinBackSettings = { discount: kind === "none" || amount === null ? null : { kind, value: amount }, cooldownDays: days };
+        void submit(() => save("PUT", "/api/cafe/win-back", body));
+      }}
+    >
+      <h3 id="win-back-title">Win-back offer</h3>
+      <p>
+        When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for{" "}
+        {WIN_BACK_OFFER_DAYS} days, if they agreed to receive offers. It never takes an item below its minimum margin.
+      </p>
+      <FormError message={error} />
+      <fieldset>
+        <legend>Discount</legend>
+        <div className="choices">
+          {(
+            [
+              ["none", "No offer"],
+              ["percent", "Percent off"],
+              ["amount", "Amount off each item"],
+            ] as const
+          ).map(([option, label]) => (
+            <label key={option}>
+              <input
+                type="radio"
+                name="win-back-kind"
+                checked={kind === option}
+                onChange={() => {
+                  setKind(option);
+                }}
+              />{" "}
+              {label}
+            </label>
+          ))}
+        </div>
+        {kind === "none" ? null : (
+          <Field
+            label={kind === "percent" ? "Percentage" : "Amount (USD)"}
+            name="winBackDiscount"
+            type="text"
+            inputMode={kind === "percent" ? "numeric" : "decimal"}
+            value={value}
+            onChange={setValue}
+            hint={kind === "percent" ? "A whole number, such as 15." : "Such as 0.50."}
+            error={problems.discount ?? fieldErrors["discount.value"]}
+          />
+        )}
+      </fieldset>
+      <Field
+        label="Days before the same card can get it again"
+        name="cooldownDays"
+        type="text"
+        inputMode="numeric"
+        value={cooldown}
+        onChange={setCooldown}
+        hint={`At least ${String(WIN_BACK_OFFER_DAYS)}, how long an offer lasts. Offers already given keep their terms.`}
+        error={problems.cooldownDays ?? fieldErrors.cooldownDays}
+      />
+      <button type="submit" disabled={pending}>
+        {pending ? "Saving…" : "Save win-back offer"}
       </button>
     </form>
   );
@@ -303,6 +404,7 @@ export function CafePage() {
       <SignupQr />
       <ProgramForm program={setup.program} save={save} />
       <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
+      <WinBackForm winBack={setup.cafe.winBack} save={save} />
       <section aria-labelledby="order-types-title">
         <h3 id="order-types-title">Order types</h3>
         {setup.orderTypes.length === 0 ? (

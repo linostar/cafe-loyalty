@@ -46,15 +46,23 @@ async function event(type: string, schemaVersion: number, payload: Record<string
   return { ...fields, signature: Buffer.from(signature).toString("base64url") };
 }
 
-// The counter records visits as version 2 since Step 12 (lines say whether a campaign discounted them).
+// The counter records visits as version 3 since Step 13: lines say whether a campaign discounted them, and the visit
+// whether the card's win-back offer was applied.
 const item = { orderTypeId, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 1, campaignId: null, unitDiscountCents: 0 };
-const byQr = await event("visit.recorded", 2, { card: { kind: "qr", token: cardQr }, items: [item], totalCents: 700 });
+const byQr = await event("visit.recorded", 3, { card: { kind: "qr", token: cardQr }, items: [item], totalCents: 700, winBack: false });
 // A fake test number (Lebanese mobile format).
-const byPhone = await event("visit.recorded", 2, { card: { kind: "phone", phone: cards.phone.phone }, items: [item], totalCents: 700 });
+const byPhone = await event("visit.recorded", 3, { card: { kind: "phone", phone: cards.phone.phone }, items: [item], totalCents: 700, winBack: false });
+// A win-back discount for a card with no offer: held for the owner's review (AC 36).
+const winBack = await event("visit.recorded", 3, {
+  card: { kind: "qr", token: cardQr },
+  items: [{ ...item, quantity: 1, unitDiscountCents: 70 }],
+  totalCents: 280,
+  winBack: true,
+});
 const lockout = await event("staff.pin_lockout", 1, { failedAttempts: 5, lockedUntil: new Date(Date.parse(recordedAt) + 30_000).toISOString() });
 // A type no release will ever define, standing in for one a newer counter build sends: it must stay unsupported.
 const fromTheFuture = await event("test.never-supported", 1, { note: "from a newer build" });
-const malformed = await event("visit.recorded", 2, { card: { kind: "qr", token: "v1.x" }, items: [], totalCents: 0 });
+const malformed = await event("visit.recorded", 3, { card: { kind: "qr", token: "v1.x" }, items: [], totalCents: 0, winBack: false });
 
 const fixture: SyncFixture = {
   build: process.env.BUILD_ID ?? "dev",
@@ -68,10 +76,11 @@ const fixture: SyncFixture = {
   secrets,
   requests: [
     {
-      events: [byQr, byPhone, lockout, fromTheFuture, malformed],
+      events: [byQr, byPhone, winBack, lockout, fromTheFuture, malformed],
       results: [
         { status: "applied", code: "OK" },
         { status: "applied", code: "OK" },
+        { status: "applied", code: "HELD_FOR_REVIEW" },
         { status: "applied", code: "OK" },
         { status: "retry_later", code: "UNSUPPORTED_EVENT" },
         { status: "rejected", code: "INVALID_EVENT" },

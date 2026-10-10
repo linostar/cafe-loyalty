@@ -28,7 +28,7 @@ export {
 export type { Job, PgBoss } from "pg-boss";
 export { MigrationStateError, migrate, type MigrationLog, type MigrationOutcome } from "./migrate.js";
 export { MIGRATIONS_DIR, MigrationFileError, loadMigrations, parseMigration, type MigrationFile, type MigrationKind } from "./migrations.js";
-export { loadCardOffer, type CardOffer } from "./offers.js";
+export { loadCardOffer, offerKey, type CardOffer } from "./offers.js";
 export { base64PemSchema, keyFitsCertificate } from "./pem.js";
 export { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 export {

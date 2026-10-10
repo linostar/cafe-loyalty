@@ -7,6 +7,7 @@ import { trackDelivery } from "./delivery.js";
 import { writeGooglePass, type GooglePassSettings } from "./google-passes.js";
 import type { GoogleWallet } from "./google-wallet.js";
 import { ANNOUNCE_CRON, ANNOUNCE_QUEUE, announceCampaigns } from "./offers.js";
+import { WIN_BACK_CRON, WIN_BACK_QUEUE, runWinBack } from "./win-back.js";
 import type { WorkerTask } from "./worker.js";
 
 /** Removes expired owner sessions, reset links, invites, device tokens, pairing codes and card recovery links. */
@@ -86,7 +87,7 @@ function logged(queue: string, logger: Logger, run: (job: Job, log: Logger) => P
 
 /**
  * Runs the job queue: the hourly purge, the sweep of undelivered passes every 15 minutes, the campaign announcements
- * every 5 minutes and, with APNs and Google
+ * every 5 minutes, the hourly win-back run and, with APNs and Google
  * Wallet, each one's pass updates (without them, those wait, queued, for a worker that has them), recording each
  * update's outcome on its pass (trackDelivery). Stopping waits for running jobs at most what is left of `shutdownTimeoutMs` after the longest
  * statement on each of the two pools (pg-boss's and the app's, both closed after it), so the worker stops in time.
@@ -114,6 +115,12 @@ export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: nu
       await boss.work(
         ANNOUNCE_QUEUE,
         logged(ANNOUNCE_QUEUE, logger, (_job, log) => announceCampaigns(boss, db, log)),
+      );
+      await boss.createQueue(WIN_BACK_QUEUE);
+      await boss.schedule(WIN_BACK_QUEUE, WIN_BACK_CRON);
+      await boss.work(
+        WIN_BACK_QUEUE,
+        logged(WIN_BACK_QUEUE, logger, (_job, log) => runWinBack(boss, db, log)),
       );
       if (pusher !== undefined) {
         await boss.work(

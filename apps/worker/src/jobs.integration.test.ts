@@ -21,6 +21,7 @@ import { writeGooglePass, type GooglePassSettings } from "./google-passes.js";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
 import { PURGE_QUEUE, RESEND_QUEUE, jobQueueTask } from "./jobs.js";
 import { ANNOUNCE_QUEUE, announceCampaigns } from "./offers.js";
+import { WIN_BACK_QUEUE, runWinBack } from "./win-back.js";
 
 let db: TestDatabase;
 let admin: pg.Client;
@@ -224,6 +225,50 @@ async function offerCard(cafeId: string, { optedIn = true, passes = false, onDev
   return { cardId, applePassId, googlePassId, token };
 }
 
+/** A café whose clock reads `hour` o'clock now (a fixed-offset zone picked from the UTC hour), with a win-back offer. */
+async function cafeAtHour(hour: number, winBack: { percent: number; cooldownDays: number } | null = { percent: 20, cooldownDays: 30 }): Promise<string> {
+  let offset = hour - new Date().getUTCHours();
+  offset = offset > 14 ? offset - 24 : offset < -12 ? offset + 24 : offset;
+  // Etc/GMT-3 is UTC+3 (POSIX signs).
+  const timeZone = offset === 0 ? "UTC" : offset > 0 ? `Etc/GMT-${String(offset)}` : `Etc/GMT+${String(-offset)}`;
+  const cafeId = randomUUID();
+  await admin.query(
+    "INSERT INTO app.cafes (id, name, time_zone, min_margin_percent, win_back_discount_kind, win_back_discount_value, win_back_cooldown_days) VALUES ($1, 'Café Najjar', $2, 30, $3, $4, $5)",
+    [cafeId, timeZone, winBack === null ? null : "percent", winBack?.percent ?? null, winBack?.cooldownDays ?? 30],
+  );
+  return cafeId;
+}
+
+/**
+ * Member visits of a card, `daysAgo` each. Bare rows: the admin connection skips the foreign keys for them (no
+ * device, staff or signed event behind), and they add no stamps.
+ */
+async function visited(cafeId: string, cardId: string, daysAgo: readonly number[], outcome = "no_stamps"): Promise<void> {
+  await admin.query("SET session_replication_role = replica");
+  try {
+    for (const days of daysAgo) {
+      await admin.query(
+        `INSERT INTO app.visits (cafe_id, sync_event_id, card_id, identified_by, device_id, staff_id, occurred_at, total_cents, stamps_earned, stamps_added, outcome)
+         VALUES ($1, gen_random_uuid(), $2, 'qr', gen_random_uuid(), gen_random_uuid(), now() - $3 * interval '1 day', 300, 0, 0, $4)`,
+        [cafeId, cardId, days, outcome],
+      );
+    }
+  } finally {
+    await admin.query("SET session_replication_role = DEFAULT");
+  }
+}
+
+/** The café's lapses as "card offered|none", sorted. */
+const lapses = async (cafeId: string): Promise<string[]> =>
+  (
+    await admin.query<{ entry: string }>(
+      "SELECT card_id || CASE WHEN discount_kind IS NULL THEN ' none' ELSE ' offered' END AS entry FROM app.card_lapses WHERE cafe_id = $1",
+      [cafeId],
+    )
+  ).rows
+    .map((row) => row.entry)
+    .sort();
+
 /** The café's announcements as "card campaign" pairs, sorted. */
 const announcements = async (cafeId: string): Promise<string[]> =>
   (await admin.query<{ pair: string }>("SELECT card_id || ' ' || campaign_id AS pair FROM app.campaign_announcements WHERE cafe_id = $1", [cafeId])).rows.map((row) => row.pair).sort();
@@ -245,6 +290,7 @@ describe("job queue", () => {
         { name: ANNOUNCE_QUEUE, cron: "*/5 * * * *" },
         { name: PURGE_QUEUE, cron: "17 * * * *" },
         { name: RESEND_QUEUE, cron: "4,19,34,49 * * * *" },
+        { name: WIN_BACK_QUEUE, cron: "41 * * * *" },
       ]);
       // What the schedule sends every hour, picked up by the worker's own handler.
       const id = (await boss.send(PURGE_QUEUE)) ?? "";
@@ -706,12 +752,226 @@ describe("job queue", () => {
     const job = { cafeId, passId: card.googlePassId };
     await expect(writeGooglePass(db.app.db, wallet, GOOGLE, logger, job)).rejects.toBeInstanceOf(DeliveryError);
     expect(wallet.saved[0]?.message).toMatchObject({ id: `offer-${running}` });
-    expect(lines).toContainEqual(expect.objectContaining({ level: 40, msg: "google offer notification may not have been sent: the write failed", campaignId: running }));
+    expect(lines).toContainEqual(expect.objectContaining({ level: 40, msg: "google offer notification may not have been sent: the write failed", offer: `offer-${running}` }));
     // The retry: recorded as told already, so it writes the offer without the message.
     wallet.answer = "updated";
     expect(await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job)).toEqual({ result: "updated" });
     expect(wallet.saved[1]?.object.textModulesData[0]).toMatchObject({ id: "offer" });
     expect(wallet.saved[1]?.message).toBeUndefined();
+  });
+
+  it("records each lapsed card once and gives the opted-in ones the win-back offer, under the cool-down and the daily cap (AC 14, 36)", async () => {
+    const cafeId = await cafeAtHour(15);
+    // Lapsed: 3 visits 10 days apart, the last 40 days ago (more than twice the median gap, and 14 days).
+    const regular = await offerCard(cafeId, { passes: true, onDevice: false });
+    const notOptedIn = await offerCard(cafeId, { optedIn: false });
+    const toldToday = await offerCard(cafeId);
+    const cooledDown = await offerCard(cafeId);
+    // Not lapsed: two visits only; the last within twice the median gap; a slow regular within its own rhythm.
+    const twoVisits = await offerCard(cafeId);
+    const recent = await offerCard(cafeId);
+    const slow = await offerCard(cafeId);
+    const daily = await offerCard(cafeId);
+    for (const card of [regular, notOptedIn, toldToday, cooledDown]) {
+      await visited(cafeId, card.cardId, [60, 50, 40]);
+    }
+    await visited(cafeId, twoVisits.cardId, [90, 80]);
+    // Gaps of 10 and 8 days: lapsed only after 18 days, and it has been 12.
+    await visited(cafeId, recent.cardId, [30, 20, 12]);
+    await visited(cafeId, slow.cardId, [120, 60, 30]);
+    // A day apart, the last 10 days ago: twice the gap has passed, but not the 14 days.
+    await visited(cafeId, daily.cardId, [12, 11, 10]);
+    // Told of a campaign today; given an offer 10 days ago, at an earlier lapse.
+    const campaignId = await campaign(cafeId, "Morning", 0, 1440);
+    await admin.query("INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id) VALUES ($1, $2, $3)", [cafeId, campaignId, toldToday.cardId]);
+    await admin.query(
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, offered_at, discount_kind, discount_value, min_margin_percent, expires_at, closed_at)
+       VALUES ($1, $2, now() - interval '70 days', now() - interval '10 days', 'percent', 20, 30, now() + interval '4 days', now() - interval '5 days')`,
+      [cafeId, cooledDown.cardId],
+    );
+    // A café whose clock reads 03:00: its lapsed regular waits for its delivery hours.
+    const asleep = await cafeAtHour(3);
+    const sleeper = await offerCard(asleep);
+    await visited(asleep, sleeper.cardId, [60, 50, 40]);
+    const { boss, task, wallet } = jobQueue();
+    const run = async () => {
+      const id = (await boss.send(WIN_BACK_QUEUE)) ?? "";
+      return (await finished(boss, WIN_BACK_QUEUE, id, "completed"))?.output;
+    };
+    await task.start();
+    try {
+      await run();
+      // Each lapse is recorded; the card told of a campaign today gets its offer on a later run.
+      expect(await lapses(cafeId)).toEqual(
+        [`${regular.cardId} offered`, `${notOptedIn.cardId} none`, `${toldToday.cardId} none`, `${cooledDown.cardId} none`, `${cooledDown.cardId} offered`].sort(),
+      );
+      expect(await lapses(asleep)).toEqual([]);
+      // The regular's Google pass shows the offer and is told of it once.
+      await vi.waitFor(
+        async () => {
+          expect(await deliveryState("google_passes", regular.googlePassId)).toMatchObject({ delivered: true });
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      const [write] = wallet.saved.filter((save) => save.object.id.includes(regular.cardId));
+      expect(write?.object.textModulesData[0]).toMatchObject({ id: "offer", header: "Welcome back · 20% off" });
+      expect(write?.message).toMatchObject({ id: expect.stringMatching(/^winback-/) as unknown, messageType: "TEXT_AND_NOTIFY" });
+
+      // Once per lapse: a second run records nothing new, and the campaign announcer leaves the regular alone today.
+      await run();
+      expect(await lapses(cafeId)).toHaveLength(5);
+      await announceCampaigns(boss, db.app.db, pino({ level: "silent" }));
+      expect((await announcements(cafeId)).join()).not.toContain(regular.cardId);
+      // On a later day too, while the offer is open: a campaign announced over it would hide it.
+      // Moved back as time would (the database keeps a given offer's terms, so its trigger is skipped for this).
+      await admin.query("SET session_replication_role = replica");
+      try {
+        await admin.query("UPDATE app.card_lapses SET offered_at = offered_at - interval '2 days' WHERE card_id = $1", [regular.cardId]);
+      } finally {
+        await admin.query("SET session_replication_role = DEFAULT");
+      }
+      await announceCampaigns(boss, db.app.db, pino({ level: "silent" }));
+      expect((await announcements(cafeId)).join()).not.toContain(regular.cardId);
+      // The next day the card told of a campaign is given the offer.
+      await admin.query("UPDATE app.campaign_announcements SET announced_at = announced_at - interval '2 days' WHERE cafe_id = $1", [cafeId]);
+      await run();
+      expect(await lapses(cafeId)).toContain(`${toldToday.cardId} offered`);
+      expect(await lapses(cafeId)).toHaveLength(5);
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("counts visit days, leaves held and discarded visits out, and takes the median of the gaps (AC 36)", async () => {
+    const cafeId = await cafeAtHour(15);
+    const card = () => offerCard(cafeId);
+    // Three visits on one day are one visit day; with a third day they make a regular.
+    const oneDay = await card();
+    await visited(cafeId, oneDay.cardId, [40, 40, 40]);
+    const threeDays = await card();
+    await visited(cafeId, threeDays.cardId, [60, 60, 50, 40]);
+    // A held visit is not a visit: two member days only. A discarded one does not count as coming back.
+    const heldThird = await card();
+    await visited(cafeId, heldThird.cardId, [60, 50]);
+    await visited(cafeId, heldThird.cardId, [45], "held");
+    const discardedReturn = await card();
+    await visited(cafeId, discardedReturn.cardId, [60, 50, 40]);
+    await visited(cafeId, discardedReturn.cardId, [5], "discarded");
+    // Nor does a held one, and a discarded visit is no visit day either.
+    const heldReturn = await card();
+    await visited(cafeId, heldReturn.cardId, [60, 50, 40]);
+    await visited(cafeId, heldReturn.cardId, [5], "held");
+    const discardedThird = await card();
+    await visited(cafeId, discardedThird.cardId, [60, 50]);
+    await visited(cafeId, discardedThird.cardId, [45], "discarded");
+    // Gaps of 10, 10 and 55 days: the median (10) says lapsed after 20 days; the mean (25) would wait 50.
+    const medianNotMean = await card();
+    await visited(cafeId, medianNotMean.cardId, [100, 90, 80, 25]);
+    // Gaps of 5, 10, 15 and 20: the median is 12.5, so 25 days; the lower middle value (10) would say 20.
+    const interpolated = await card();
+    await visited(cafeId, interpolated.cardId, [73, 68, 58, 43, 23]);
+    const { boss, task } = jobQueue();
+    await task.start();
+    try {
+      await runWinBack(boss, db.app.db, pino({ level: "silent" }));
+      expect((await lapses(cafeId)).map((entry) => entry.split(" ")[0])).toEqual([threeDays.cardId, discardedReturn.cardId, heldReturn.cardId, medianNotMean.cardId].sort());
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("gives a recorded lapse the offer once the card becomes eligible, under the café's own cool-down, while it stays lapsed (AC 36)", async () => {
+    const cafeId = await cafeAtHour(15, null);
+    await admin.query("UPDATE app.cafes SET win_back_cooldown_days = 45 WHERE id = $1", [cafeId]);
+    const early = await offerCard(cafeId);
+    const optsInLater = await offerCard(cafeId, { optedIn: false });
+    const offeredBefore = await offerCard(cafeId);
+    const cameBack = await offerCard(cafeId);
+    for (const card of [early, optsInLater, offeredBefore, cameBack]) {
+      await visited(cafeId, card.cardId, [60, 50, 40]);
+    }
+    // Given an offer 35 days ago, at an earlier lapse: inside a 45-day cool-down, outside a 30-day one.
+    await admin.query(
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, offered_at, discount_kind, discount_value, min_margin_percent, expires_at, closed_at)
+       VALUES ($1, $2, now() - interval '80 days', now() - interval '35 days', 'percent', 20, 30, now() - interval '21 days', now() - interval '21 days')`,
+      [cafeId, offeredBefore.cardId],
+    );
+    const { boss, task } = jobQueue();
+    const silent = pino({ level: "silent" });
+    await task.start();
+    try {
+      // The café has no offer yet: the lapses are recorded without one.
+      await runWinBack(boss, db.app.db, silent);
+      expect(await lapses(cafeId)).toEqual(
+        [`${early.cardId} none`, `${optsInLater.cardId} none`, `${offeredBefore.cardId} none`, `${offeredBefore.cardId} offered`, `${cameBack.cardId} none`].sort(),
+      );
+      // The owner sets one; one card comes back meanwhile and needs no winning back.
+      await admin.query("UPDATE app.cafes SET win_back_discount_kind = 'percent', win_back_discount_value = 15 WHERE id = $1", [cafeId]);
+      await visited(cafeId, cameBack.cardId, [0]);
+      await runWinBack(boss, db.app.db, silent);
+      expect(await lapses(cafeId)).toEqual(
+        [`${early.cardId} offered`, `${optsInLater.cardId} none`, `${offeredBefore.cardId} none`, `${offeredBefore.cardId} offered`, `${cameBack.cardId} none`].sort(),
+      );
+      // The card opts in, and the café shortens its cool-down to 30 days.
+      await admin.query("UPDATE app.cards SET offers_opt_in_at = now() WHERE id = $1", [optsInLater.cardId]);
+      await admin.query("UPDATE app.cafes SET win_back_cooldown_days = 30 WHERE id = $1", [cafeId]);
+      await runWinBack(boss, db.app.db, silent);
+      expect(await lapses(cafeId)).toEqual(
+        [`${early.cardId} offered`, `${optsInLater.cardId} offered`, `${offeredBefore.cardId} offered`, `${offeredBefore.cardId} offered`, `${cameBack.cardId} none`].sort(),
+      );
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("counts a win-back offer given today against the campaign announcer's daily cap, even once it is closed (AC 14)", async () => {
+    const { cafeId } = await cafeAtDaytime();
+    await campaign(cafeId, "Morning", 0, 1440);
+    const toldToday = await offerCard(cafeId);
+    const other = await offerCard(cafeId);
+    // Given this morning and already used up.
+    await admin.query(
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, offered_at, discount_kind, discount_value, min_margin_percent, expires_at, closed_at)
+       VALUES ($1, $2, now() - interval '40 days', now() - interval '1 minute', 'percent', 20, 30, now() + interval '14 days', now())`,
+      [cafeId, toldToday.cardId],
+    );
+    const { boss, task } = jobQueue();
+    await task.start();
+    try {
+      await announceCampaigns(boss, db.app.db, pino({ level: "silent" }));
+      const told = await announcements(cafeId);
+      expect(told.join()).toContain(other.cardId);
+      expect(told.join()).not.toContain(toldToday.cardId);
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("closes expired win-back offers at any hour, which leave the cards' passes (AC 36)", async () => {
+    // 03:00 at the café: outside the delivery hours, but an expired offer still leaves the passes.
+    const cafeId = await cafeAtHour(3);
+    const card = await offerCard(cafeId, { passes: true, onDevice: false });
+    const { rows } = await admin.query<{ id: string }>(
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, offered_at, discount_kind, discount_value, min_margin_percent, expires_at)
+       VALUES ($1, $2, now() - interval '60 days', now() - interval '15 days', 'percent', 20, 30, now() - interval '1 day') RETURNING id`,
+      [cafeId, card.cardId],
+    );
+    const { boss, task } = jobQueue();
+    await task.start();
+    try {
+      await runWinBack(boss, db.app.db, pino({ level: "silent" }));
+      const closed = await admin.query<{ closed: boolean }>("SELECT closed_at IS NOT NULL AS closed FROM app.card_lapses WHERE id = $1", [rows[0]?.id]);
+      expect(closed.rows).toEqual([{ closed: true }]);
+      await vi.waitFor(
+        async () => {
+          expect(await deliveryState("google_passes", card.googlePassId)).toMatchObject({ delivered: true });
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      expect((await withCafe(db.app.db, cafeId, (trx) => loadCardOffer(trx, card.cardId))).offer).toBeUndefined();
+    } finally {
+      await task.stop();
+    }
   });
 
   it("marks a card's current passes changed when it opts in or out of offers, and not on other card changes", async () => {

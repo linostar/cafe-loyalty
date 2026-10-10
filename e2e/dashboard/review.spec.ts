@@ -67,9 +67,9 @@ test("says when a late visit's discount also failed its campaign check (AC 35)",
   await page.goto("/review");
   const late = page.getByRole("listitem").filter({ hasText: "01:15" });
   await expect(late).toContainText("that reached the server more than two days later");
-  await expect(late).toContainText("It also has a discount its campaign did not allow");
+  await expect(late).toContainText("It also has a discount its campaign or the card's win-back offer did not allow");
   // A campaign hold says so once, in its reason.
   const held2 = page.getByRole("listitem").filter({ hasText: "02:15" });
-  await expect(held2).toContainText("with a discount its campaign did not allow at that time");
+  await expect(held2).toContainText("with a discount its campaign or the card's win-back offer did not allow at that time");
   await expect(held2).not.toContainText("It also has");
 });
