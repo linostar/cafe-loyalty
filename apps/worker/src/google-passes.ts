@@ -4,6 +4,7 @@ import {
   googleLoyaltyObject,
   googleOfferMessage,
   loadCardOffer,
+  offerKey,
   signCardQr,
   withCafe,
   type Database,
@@ -98,7 +99,7 @@ export async function writeGooglePass(
     if (notify) {
       // Recorded as told already, so the retry writes the offer silently: unless Google applied the write and only its
       // answer was lost, this notification is not sent (AC 14 over AC 42).
-      logger.warn({ campaignId: offer.campaignId }, "google offer notification may not have been sent: the write failed");
+      logger.warn({ offer: offerKey(offer) }, "google offer notification may not have been sent: the write failed");
     }
     throw error;
   }

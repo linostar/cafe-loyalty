@@ -31,6 +31,7 @@ const CATALOG: DeviceCatalog = {
   catalogVersion: 4,
   timeZone: "Asia/Beirut",
   campaigns: [],
+  winBack: null,
   orderTypes: [COFFEE, CAKE],
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
 };
@@ -72,7 +73,7 @@ describe("visits", () => {
     const [queued] = await listQueued(10);
     expect(queued?.event).toMatchObject({
       type: "visit.recorded",
-      schemaVersion: 2,
+      schemaVersion: 3,
       staffId: barista.id,
       payload: {
         card: { kind: "phone", phone: "+96170123456" },
@@ -107,7 +108,7 @@ describe("visits", () => {
       await screen.findByText(/^Visit saved/);
       const [queued] = await listQueued(10);
       expect(queued?.event).toMatchObject({
-        schemaVersion: 2,
+        schemaVersion: 3,
         occurredAt: "2026-10-12T13:59:50.000Z",
         payload: {
           items: [
@@ -115,11 +116,52 @@ describe("visits", () => {
             { orderTypeId: CAKE.id, quantity: 1, unitPriceCents: 450, campaignId: null, unitDiscountCents: 0 },
           ],
           totalCents: 750,
+          winBack: false,
         },
       });
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("applies the win-back offer when the barista ticks it, taking the larger discount and keeping each margin floor (AC 36)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:30:00Z") });
+    try {
+      // 60% off: coffee keeps its floor ($1.20 against $1.17), cake does not ($1.80 against $1.95), so cake stays full price.
+      const winBack = { discount: { kind: "percent" as const, value: 60 }, minMarginPercent: 30 };
+      await counter({ catalog: { ...CATALOG, campaigns: [QUIET], winBack } });
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+      expect(screen.getByText("Total $6.00 · 1 stamp")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("checkbox", { name: /Win-back offer, 60% off/ }));
+      // Coffee: 60% ($1.80) beats the campaign's 50%; cake: no win-back discount below its floor.
+      expect(screen.getByText("$1.20 (Win-back offer)", { exact: false })).toBeInTheDocument();
+      expect(screen.getByText("Total $5.70 · 1 stamp")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+      fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+      await screen.findByText(/^Visit saved/);
+      const [queued] = await listQueued(10);
+      expect(queued?.event).toMatchObject({
+        schemaVersion: 3,
+        payload: {
+          items: [
+            { orderTypeId: COFFEE.id, campaignId: null, unitDiscountCents: 180 },
+            { orderTypeId: CAKE.id, campaignId: null, unitDiscountCents: 0 },
+          ],
+          totalCents: 570,
+          winBack: true,
+        },
+      });
+      // Off again for the next customer.
+      expect(screen.getByRole("checkbox", { name: /Win-back offer/ })).not.toBeChecked();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers no win-back checkbox when the café has no win-back offer", async () => {
+    await counter();
+    expect(screen.queryByRole("checkbox", { name: /Win-back offer/ })).toBeNull();
   });
 
   it("gives a fixed amount off, and says which price was and which is now", async () => {

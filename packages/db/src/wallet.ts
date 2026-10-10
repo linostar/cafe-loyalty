@@ -1,7 +1,7 @@
 import { createPrivateKey, createSign } from "node:crypto";
 import { formatUsd } from "@cafe-loyalty/shared";
 import { z } from "zod";
-import type { CardOffer } from "./offers.js";
+import { offerKey, type CardOffer } from "./offers.js";
 
 /**
  * Text on wallet passes in both languages (AC 10), shared by the server (the customer pages' messages, Apple passes
@@ -27,6 +27,8 @@ export const PASS_TEXT = {
     passOfferDetails: "{days}, {hours}, on {items}.",
     passOfferEveryDay: "Every day",
     passOfferAllDay: "all day",
+    passWinBackHeadline: "Welcome back · {discount} off",
+    passWinBackDetails: "On your next visit, until {date}.",
   },
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
@@ -47,6 +49,8 @@ export const PASS_TEXT = {
     passOfferDetails: "{days}، {hours}، على {items}.",
     passOfferEveryDay: "كل يوم",
     passOfferAllDay: "طوال اليوم",
+    passWinBackHeadline: "أهلاً بعودتك · خصم {discount}",
+    passWinBackDetails: "في زيارتك القادمة، حتى {date}.",
   },
 } as const satisfies Record<"ar" | "en", Record<string, string>>;
 
@@ -59,15 +63,21 @@ const clock = (minute: number): string => `${String(Math.floor(minute / 60) % 24
 
 /**
  * An offer's text in one language (AC 14), the same on Apple and Google passes: the headline ("Afternoon espresso · 20%
- * off"), which is what notifies, and its details (days, hours and the order types it discounts).
+ * off", "Welcome back · 15% off"), which is what notifies, and its details (a campaign's days, hours and order types,
+ * or a win-back offer's last day, AC 36).
  */
 export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: string; details: string } {
   const text = PASS_TEXT[lang];
   const locale = LOCALES[lang];
-  const list = (items: readonly string[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(items);
-  const weekday = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
   // In Latin digits in both languages, like the pass's stamps ("4/9") and hours.
   const discount = offer.discount.kind === "percent" ? `${String(offer.discount.value)}%` : formatUsd(offer.discount.value, "en");
+  if (offer.kind === "win_back") {
+    // The day as stored, read as a UTC date: the café's time zone already chose it.
+    const date = new Intl.DateTimeFormat(`${locale}-u-nu-latn`, { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${offer.lastDay}T00:00:00Z`));
+    return { headline: text.passWinBackHeadline.replace("{discount}", discount), details: text.passWinBackDetails.replace("{date}", date) };
+  }
+  const list = (items: readonly string[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(items);
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
   const days =
     offer.weekdays.length === 7
       ? text.passOfferEveryDay
@@ -184,14 +194,14 @@ const offerTexts = (offer: CardOffer) => {
 
 /**
  * The message that announces an offer on a Google pass (AC 14): added once per pass with TEXT_AND_NOTIFY, Google's
- * one way to notify (field updates notify only for fields Google allows). Its id is the campaign's, which a card is
- * announced once.
+ * one way to notify (field updates notify only for fields Google allows). Its id is the offer's (offerKey): a card is
+ * given each campaign, and each win-back offer, once.
  */
 export function googleOfferMessage(offer: CardOffer) {
   const { headline } = offerTexts(offer);
   const header = passText("passOfferNew");
   return {
-    id: `offer-${offer.campaignId}`,
+    id: offerKey(offer),
     header: header.defaultValue.value,
     body: headline.defaultValue.value,
     localizedHeader: header,

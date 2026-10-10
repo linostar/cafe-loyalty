@@ -73,7 +73,7 @@ describe("parseSyncEvent", () => {
       type: "visit.voided",
       schemaVersion: 1,
     });
-    expect(parseSyncEvent(visitEvent({ schemaVersion: 3 }))).toMatchObject({ status: "unsupported", schemaVersion: 3 });
+    expect(parseSyncEvent(visitEvent({ schemaVersion: 4 }))).toMatchObject({ status: "unsupported", schemaVersion: 4 });
   });
 
   it("accepts a version 2 visit whose lines carry a campaign's discount, totalled after it (AC 35)", () => {
@@ -83,7 +83,26 @@ describe("parseSyncEvent", () => {
     const result = parseSyncEvent(visitEvent({ schemaVersion: 2 }, { items: [discounted, full], totalCents: 2 * 280 + 350 }));
     expect(result.status).toBe("valid");
     if (result.status !== "valid" || result.event.type !== "visit.recorded") return;
-    expect(visitLines(result.event.payload)).toEqual([discounted, full]);
+    expect(visitLines(result.event.payload)).toEqual([
+      { ...discounted, winBack: false },
+      { ...full, winBack: false },
+    ]);
+  });
+
+  it("accepts a version 3 visit with the win-back offer, whose discount needs no campaign, and refuses one without it (AC 36)", () => {
+    const campaignId = "5e6f7a8b-9c0d-4e5f-8a6b-7c8d9e0f1a2b";
+    const winBack = { orderTypeId: ids.orderType, quantity: 1, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 3, campaignId: null, unitDiscountCents: 70 };
+    const campaign = { ...winBack, campaignId, unitDiscountCents: 50 };
+    const parse = (fields: Record<string, unknown>) => parseSyncEvent(visitEvent({ schemaVersion: 3 }, { items: [winBack, campaign], totalCents: 280 + 300, ...fields }));
+    const result = parse({ winBack: true });
+    if (result.status !== "valid" || result.event.type !== "visit.recorded") throw new Error("expected a valid visit");
+    expect(visitLines(result.event.payload)).toEqual([
+      { ...winBack, winBack: true },
+      { ...campaign, winBack: false },
+    ]);
+    expect(parse({ winBack: false }).status).toBe("invalid");
+    // Version 3 always says whether the offer was applied.
+    expect(parse({}).status).toBe("invalid");
   });
 
   it("refuses a version 2 line discounted beyond its price, discounted without a campaign, or totalled before its discount", () => {
@@ -101,7 +120,7 @@ describe("parseSyncEvent", () => {
     const result = parseSyncEvent(visitEvent());
     if (result.status !== "valid" || result.event.type !== "visit.recorded") throw new Error("expected a valid visit");
     expect(visitLines(result.event.payload)).toEqual([
-      { orderTypeId: ids.orderType, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 3, campaignId: null, unitDiscountCents: 0 },
+      { orderTypeId: ids.orderType, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 3, campaignId: null, unitDiscountCents: 0, winBack: false },
     ]);
   });
 

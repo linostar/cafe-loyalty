@@ -13,7 +13,7 @@ const REASONS: Readonly<Record<SyncHoldReason, string>> = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
   late_sync: "that reached the server more than two days later",
-  campaign_check: "with a discount its campaign did not allow at that time (ended, outside its hours, or below your margin)",
+  campaign_check: "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)",
 };
 
 /** Why an accepted visit still added no stamps, by its result code. */
@@ -43,7 +43,7 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
       <strong>{TYPE_LABELS[item.type] ?? item.type}</strong> at {timeFormat.format(new Date(item.occurredAt))} {REASONS[item.reason]}: {item.staffName} on{" "}
       {item.deviceName}.
       {item.discountRefused && item.reason !== "campaign_check" ? (
-        <> It also has a discount its campaign did not allow at that time (ended, outside its hours, or below your margin).</>
+        <> It also has a discount its campaign or the card&apos;s win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).</>
       ) : null}
       <div className="actions">
         <ConfirmButton
@@ -103,7 +103,7 @@ export function ReviewPage() {
       </h2>
       <p>
         When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two
-        days after they happened and visits with a discount their campaign did not allow (a phone that had not heard the campaign ended, for example).
+        days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example).
         Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for
         nothing.
       </p>

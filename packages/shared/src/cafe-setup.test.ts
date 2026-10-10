@@ -9,6 +9,7 @@ import {
   orderTypeUpdateSchema,
   pairRequestSchema,
   staffPinSchema,
+  winBackSettingsSchema,
 } from "./cafe-setup.js";
 
 describe("staffPinSchema", () => {
@@ -92,13 +93,31 @@ describe("orderTypeUpdateSchema", () => {
 });
 
 describe("device catalog", () => {
-  it("reads a catalog from a server before campaigns as one with none (a rollback)", () => {
+  it("reads a catalog from a server before campaigns and win-back as one with neither (a rollback)", () => {
     expect(deviceCatalogSchema.parse({ catalogVersion: 3, orderTypes: [], program: null })).toEqual({
       catalogVersion: 3,
       timeZone: "UTC",
       campaigns: [],
+      winBack: null,
       orderTypes: [],
       program: null,
     });
+  });
+});
+
+describe("win-back settings (AC 36)", () => {
+  it("takes a discount or none, and a cool-down from the 14 days an offer lasts to a year", () => {
+    expect(winBackSettingsSchema.safeParse({ discount: { kind: "percent", value: 15 }, cooldownDays: 30 }).success).toBe(true);
+    expect(winBackSettingsSchema.safeParse({ discount: null, cooldownDays: 14 }).success).toBe(true);
+    expect(winBackSettingsSchema.safeParse({ discount: { kind: "amount", value: 50 }, cooldownDays: 365 }).success).toBe(true);
+    for (const wrong of [
+      { discount: null, cooldownDays: 13 },
+      { discount: null, cooldownDays: 366 },
+      { discount: { kind: "percent", value: 101 }, cooldownDays: 30 },
+      { discount: { kind: "amount", value: 0 }, cooldownDays: 30 },
+      { cooldownDays: 30 },
+    ]) {
+      expect(winBackSettingsSchema.safeParse(wrong).success).toBe(false);
+    }
   });
 });

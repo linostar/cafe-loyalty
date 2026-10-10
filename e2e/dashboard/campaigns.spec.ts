@@ -1,7 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 import { SESSION, mockApi, reply } from "./api-mock.js";
 
-const CAFE = { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30 };
+const CAFE = { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30, winBack: { discount: null, cooldownDays: 30 } };
 // Floors at 30% over cost: espresso $0.91, latte $2.60.
 const ESPRESSO = { id: "3d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f41", nameAr: "إسبريسو", nameEn: "Espresso", priceCents: 250, costCents: 70, stampsEarned: 1, active: true };
 const LATTE = { id: "4e2d2b63-8d66-4b1f-8b6f-1e5d2c3b4a52", nameAr: "لاتيه", nameEn: "Latte", priceCents: 300, costCents: 200, stampsEarned: 1, active: true };

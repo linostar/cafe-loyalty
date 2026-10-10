@@ -58,6 +58,25 @@ export async function announceCampaigns(boss: PgBoss, db: Kysely<Database>, logg
                   ),
                 ),
               )
+              // A win-back offer given today counts against the same daily cap (AC 14, 36), and one still open keeps the
+              // card's passes until used or expired: a campaign announced over it would hide it.
+              .where((outer) =>
+                outer.not(
+                  outer.exists(
+                    outer
+                      .selectFrom("card_lapses")
+                      .select("card_lapses.card_id")
+                      .whereRef("card_lapses.card_id", "=", "cards.id")
+                      .where("card_lapses.discount_kind", "is not", null)
+                      .where((inner) =>
+                        inner.or([
+                          inner("card_lapses.created_at", ">=", sql<Date>`date_trunc('day', now() AT TIME ZONE cafes.time_zone) AT TIME ZONE cafes.time_zone`),
+                          inner.and([inner("card_lapses.closed_at", "is", null), inner("card_lapses.expires_at", ">", sql<Date>`now()`)]),
+                        ]),
+                      ),
+                  ),
+                ),
+              )
               .orderBy("cards.id")
               .limit(ANNOUNCE_BATCH),
           )

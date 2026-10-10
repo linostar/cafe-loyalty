@@ -5,7 +5,8 @@ import {
   parseCardQr,
   redemptionSchema,
   visitItemsTotalCents,
-  visitRecordedV2PayloadSchema,
+  visitRecordedV3PayloadSchema,
+  winBackUnitDiscountCents,
   type DeviceCatalog,
 } from "@cafe-loyalty/shared";
 import { useEffect, useId, useRef, useState } from "react";
@@ -56,6 +57,23 @@ export function campaignFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTy
   return clock === null ? null : bestCampaign(catalog.campaigns, { orderTypeId: type.id, priceCents: type.priceCents, costCents: type.costCents }, clock.weekday, clock.minute);
 }
 
+/**
+ * One order type's discount at `at`: its best running campaign's (AC 35), or the café's win-back offer's when the
+ * barista applied it (`winBack`) and it gives more (AC 36). Null without a discount.
+ */
+export function discountFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTypes"][number], at: Date, winBack: boolean) {
+  const campaign = campaignFor(catalog, type, at);
+  const offer = winBack && catalog.winBack !== null ? winBackUnitDiscountCents(type, catalog.winBack) : 0;
+  if (offer > 0 && offer > (campaign?.unitDiscountCents ?? 0)) {
+    return { campaignId: null, unitDiscountCents: offer, label: "Win-back offer" };
+  }
+  return campaign === null ? null : { campaignId: campaign.campaign.id, unitDiscountCents: campaign.unitDiscountCents, label: campaign.campaign.nameEn };
+}
+
+/** A discount as the counter says it: "20% off" or "$0.50 off". */
+const discountText = (discount: { kind: "percent" | "amount"; value: number }) =>
+  discount.kind === "percent" ? `${String(discount.value)}% off` : `${formatUsd(discount.value, "en")} off`;
+
 interface VisitFormProps {
   device: DeviceRecord;
   barista: StaffEntry;
@@ -71,6 +89,8 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   /** The name of everything put in the order, to name it if the owner takes it off sale meanwhile. */
   const [names, setNames] = useState<Record<string, string>>({});
   const [scanned, setScanned] = useState<string | null>(null);
+  /** The barista applied the card's win-back offer, which the customer's card shows (AC 36). */
+  const [winBack, setWinBack] = useState(false);
   const [phone, setPhone] = useState("");
   /** What is wrong, and whether it is the phone number (then tied to that field). */
   const [problem, setProblem] = useState<{ text: string; phone: boolean } | null>(null);
@@ -87,18 +107,18 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     .filter(([id, quantity]) => quantity > 0 && !catalog.orderTypes.some((type) => type.id === id))
     .map(([id]) => names[id] ?? "An item");
   const stamps = items.reduce((sum, item) => sum + item.quantity * item.type.stampsEarned, 0);
-  /** The order priced at `at`, with any campaign's discount per line (AC 35). */
+  /** The order priced at `at`, with any campaign's or the win-back offer's discount per line (AC 35, 36). */
   const linesAt = (at: Date) =>
     items.map(({ type, quantity }) => {
-      const offer = campaignFor(catalog, type, at);
+      const discount = discountFor(catalog, type, at, winBack);
       return {
         orderTypeId: type.id,
         quantity,
         unitPriceCents: type.priceCents,
         unitCostCents: type.costCents,
         catalogVersion: catalog.catalogVersion,
-        campaignId: offer?.campaign.id ?? null,
-        unitDiscountCents: offer?.unitDiscountCents ?? 0,
+        campaignId: discount?.campaignId ?? null,
+        unitDiscountCents: discount?.unitDiscountCents ?? 0,
       };
     });
   // Discounts start and stop with the clock: the open menu is priced again every 30 seconds, and a visit is recorded
@@ -116,7 +136,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   const shownAt = new Date();
   const total = visitItemsTotalCents(linesAt(shownAt));
   // An order in progress: the app must not update under it (AC 29).
-  const open = items.length > 0 || scanned !== null || phone !== "" || scanner === "visit";
+  const open = items.length > 0 || scanned !== null || phone !== "" || winBack || scanner === "visit";
   useEffect(() => {
     onBusy(open || saving);
   }, [open, saving, onBusy]);
@@ -150,18 +170,19 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     // As shown: the lines and the time they were priced at, so the recorded total is the one on screen.
     const at = shownAt;
     const lines = linesAt(at);
-    const payload = visitRecordedV2PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1 });
+    const payload = visitRecordedV3PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1, winBack });
     if (!payload.success) {
       setProblem({ text: items.length === 0 ? "Add what the customer ordered first." : "This order is too large to record. Split it into two visits.", phone: false });
       return;
     }
     setSaving(true);
-    recordEvent("visit.recorded", 2, barista.id, payload.data, at).then(
+    recordEvent("visit.recorded", 3, barista.id, payload.data, at).then(
       () => {
         setSaving(false);
         setQuantities({});
         setScanned(null);
         setPhone("");
+        setWinBack(false);
         // The server decides the stamps (cooldown, daily cap), so the counter promises no more than the order earns.
         setNotice(`Visit saved${stamps > 0 ? `, earning up to ${plural(stamps, "stamp", "stamps")}` : ""}. It is sent as soon as the phone is online.`);
       },
@@ -209,7 +230,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       <ul className="menu">
         {catalog.orderTypes.map((type) => {
           const quantity = quantities[type.id] ?? 0;
-          const offer = campaignFor(catalog, type, shownAt);
+          const offer = discountFor(catalog, type, shownAt, winBack);
           return (
             <li key={type.id}>
               <span>
@@ -223,7 +244,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                       {formatUsd(type.priceCents, "en")}
                     </s>{" "}
                     <span className="visually-hidden">now </span>
-                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign.nameEn})
+                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.label})
                   </>
                 )}
                 {type.stampsEarned > 0 ? ` · ${plural(type.stampsEarned, "stamp", "stamps")}` : ""}
@@ -259,6 +280,19 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         <p role="alert" className="warning">
           No longer on sale, so left out of this order: {dropped.join(", ")}. The total does not include {dropped.length === 1 ? "it" : "them"}.
         </p>
+      )}
+      {catalog.winBack === null ? null : (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={winBack}
+            onChange={(event) => {
+              setWinBack(event.target.checked);
+              setNotice("");
+            }}
+          />{" "}
+          Win-back offer, {discountText(catalog.winBack.discount)}: only when the customer&apos;s card shows it
+        </label>
       )}
       <p aria-live="polite">
         Total {formatUsd(total ?? 0, "en")} · {plural(stamps, "stamp", "stamps")}

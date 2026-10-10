@@ -15,6 +15,7 @@ const CONTENT = {
 };
 
 const OFFER: CardOffer = {
+  kind: "campaign",
   campaignId: "2d7e0c1b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",
   nameAr: "عصرية",
   nameEn: "Afternoon",
@@ -48,6 +49,23 @@ describe("offer text", () => {
     // Midnight to midnight reads as all day, not as an empty 00:00–00:00.
     expect(offerText("en", { ...OFFER, startsMinute: 0, endsMinute: 1440 }).details).toBe("Monday, Wednesday, and Friday, all day, on Espresso and Latte.");
     expect(offerText("ar", { ...OFFER, startsMinute: 0, endsMinute: 1440 }).details).toContain("طوال اليوم");
+  });
+});
+
+describe("win-back offer text", () => {
+  const WIN_BACK: CardOffer = {
+    kind: "win_back",
+    offerId: "8b9c0d1e-2f3a-4b4c-9d5e-6f7a8b9c0d1e",
+    discount: { kind: "percent", value: 15 },
+    lastDay: "2026-10-24",
+    announcedAt: new Date("2026-10-10T09:00:00Z"),
+    mayNotify: true,
+  };
+
+  it("welcomes the customer back with the discount and its last day, in English and Arabic (AC 36)", () => {
+    expect(offerText("en", WIN_BACK)).toEqual({ headline: "Welcome back · 15% off", details: "On your next visit, until October 24." });
+    expect(offerText("ar", WIN_BACK)).toEqual({ headline: "أهلاً بعودتك · خصم 15%", details: "في زيارتك القادمة، حتى 24 تشرين الأول." });
+    expect(googleOfferMessage(WIN_BACK)).toMatchObject({ id: `winback-${WIN_BACK.offerId}`, body: "Welcome back · 15% off", messageType: "TEXT_AND_NOTIFY" });
   });
 });
 

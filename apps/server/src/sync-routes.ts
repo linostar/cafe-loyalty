@@ -215,6 +215,7 @@ async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secre
       event.type === "visit.recorded" && plan?.status === "ready"
         ? await insertVisit(
             trx,
+            jobs,
             {
               cafeId: device.cafeId,
               syncEventId: inserted.id,

@@ -47,7 +47,7 @@ let sequence = 0;
 function visit(
   app: App,
   card: { kind: "qr"; token: string } | { kind: "phone"; phone: string },
-  options: { at?: Date; items?: unknown[]; device?: PairedDevice; version?: 1 | 2 } = {},
+  options: { at?: Date; items?: unknown[]; device?: PairedDevice; version?: 1 | 2 | 3; winBack?: boolean } = {},
 ) {
   sequence += 1;
   const items = options.items ?? [
@@ -65,7 +65,7 @@ function visit(
     schemaVersion: options.version ?? 1,
     type: "visit.recorded",
     occurredAt: (options.at ?? new Date()).toISOString(),
-    payload: { card, items, totalCents },
+    payload: { card, items, totalCents, ...(options.version === 3 ? { winBack: options.winBack ?? false } : {}) },
   });
 }
 
@@ -599,6 +599,110 @@ describe("quiet-hour campaigns", () => {
       expect((await campaign(app)).statusCode).toBe(201);
     }
     expect((await campaign(app)).json()).toMatchObject({ code: "CONFLICT" });
+  });
+});
+
+describe("win-back offers", () => {
+  /** A coffee line as the counter prices it: 300 cents, cost 90. */
+  const coffee = (app: App, line: Record<string, unknown>) => ({ orderTypeId: app.coffee, quantity: 2, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1, ...line });
+  const catalogOf = async (app: App) =>
+    deviceCatalogSchema.parse((await app.app.inject({ method: "GET", url: "/api/device/catalog", headers: withBearer(app.device.accessToken) })).json());
+  /** An offer the worker gave the card (runWinBack), an hour ago by default: 20% off, the café's margin then 30%. */
+  async function offer(app: App, cardId: string, fields: { expiresInDays?: number; givenHoursAgo?: number } = {}): Promise<string> {
+    const { rows } = await context.admin.query<{ id: string }>(
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, created_at, discount_kind, discount_value, min_margin_percent, expires_at)
+       VALUES ($1, $2, now() - interval '40 days', now() - $3 * interval '1 hour', 'percent', 20, 30, now() + $4 * interval '1 day') RETURNING id`,
+      [app.owner.cafeId, cardId, fields.givenHoursAgo ?? 1, fields.expiresInDays ?? 13],
+    );
+    return rows[0]?.id ?? "missing";
+  }
+  const offerState = async (id: string) =>
+    (await context.admin.query<{ used: boolean; closed: boolean }>("SELECT used_visit_id IS NOT NULL AS used, closed_at IS NOT NULL AS closed FROM app.card_lapses WHERE id = $1", [id]))
+      .rows[0];
+
+  it("sets the café's win-back offer and cool-down, refusing a cool-down shorter than an offer lasts, and gives counters its terms (AC 36)", async () => {
+    const app = await cafeApp();
+    await app.as("PATCH", "/api/cafe", { minMarginPercent: 30 });
+    expect((await catalogOf(app)).winBack).toBeNull();
+    const saved = await app.as("PUT", "/api/cafe/win-back", { discount: { kind: "percent", value: 20 }, cooldownDays: 45 });
+    expect(saved.statusCode).toBe(200);
+    expect(cafeSetupSchema.parse(saved.json()).cafe.winBack).toEqual({ discount: { kind: "percent", value: 20 }, cooldownDays: 45 });
+    expect((await catalogOf(app)).winBack).toEqual({ discount: { kind: "percent", value: 20 }, minMarginPercent: 30 });
+    for (const wrong of [
+      { discount: { kind: "percent", value: 20 }, cooldownDays: 13 },
+      { discount: { kind: "percent", value: 0 }, cooldownDays: 30 },
+      { discount: { kind: "percent", value: 20 } },
+    ]) {
+      expect((await app.as("PUT", "/api/cafe/win-back", wrong)).json()).toMatchObject({ code: "VALIDATION_FAILED" });
+    }
+    // Turning the offer off closes the open ones, which the counter could no longer apply.
+    const card = await issueCard(app.owner.cafeId);
+    const open = await offer(app, card.cardId);
+    const off = await app.as("PUT", "/api/cafe/win-back", { discount: null, cooldownDays: 30 });
+    expect(await offerState(open)).toEqual({ used: false, closed: true });
+    expect(cafeSetupSchema.parse(off.json()).cafe.winBack).toEqual({ discount: null, cooldownDays: 30 });
+    expect((await catalogOf(app)).winBack).toBeNull();
+    expect(await auditActions(app.owner.cafeId)).toEqual(expect.arrayContaining(["cafe.win_back_set"]));
+  });
+
+  it("records a version 3 visit's win-back discount against the card's open offer, which it uses up, and holds one without (AC 36)", async () => {
+    const app = await cafeApp();
+    await app.as("PATCH", "/api/cafe", { minMarginPercent: 30 });
+    await app.as("PUT", "/api/cafe/win-back", { discount: { kind: "percent", value: 20 }, cooldownDays: 30 });
+    const send = async (card: { qr: string }, items: unknown[], winBack = true, at?: Date) =>
+      (await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { items, version: 3, winBack, ...(at === undefined ? {} : { at }) })]))[0];
+    const held = { status: "applied", code: "HELD_FOR_REVIEW" };
+    // 20% of $3.00 is $0.60 off; the floor is $0.90 * 1.3 = $1.17.
+    const line = coffee(app, { campaignId: null, unitDiscountCents: 60 });
+
+    const regular = await issueCard(app.owner.cafeId);
+    const given = await offer(app, regular.cardId);
+    expect(await send(regular, [line])).toEqual({ status: "applied", code: "OK" });
+    expect(await offerState(given)).toEqual({ used: true, closed: true });
+    const { rows } = await context.admin.query<{ win_back: boolean; campaign_id: string | null; unit_discount_cents: number }>(
+      "SELECT win_back, campaign_id, unit_discount_cents FROM app.visit_items WHERE cafe_id = $1",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([{ win_back: true, campaign_id: null, unit_discount_cents: 60 }]);
+    // Used once: the next visit with it is held.
+    expect(await send(regular, [line])).toEqual(held);
+
+    // No offer, an expired one (beyond the grace), a discount that is not the offer's, and one below the floor on the
+    // cost the counter sent ($2.40 is under $2.00 * 1.3): held, and a wrong discount leaves the offer unused.
+    expect(await send(await issueCard(app.owner.cafeId), [line])).toEqual(held);
+    const expired = await issueCard(app.owner.cafeId);
+    await offer(app, expired.cardId, { givenHoursAgo: 15 * 24, expiresInDays: -1 });
+    expect(await send(expired, [line])).toEqual(held);
+    const wrong = await issueCard(app.owner.cafeId);
+    const kept = await offer(app, wrong.cardId);
+    expect(await send(wrong, [coffee(app, { campaignId: null, unitDiscountCents: 100 })])).toEqual(held);
+    expect(await offerState(kept)).toEqual({ used: false, closed: false });
+    expect(await send(wrong, [coffee(app, { unitCostCents: 200, campaignId: null, unitDiscountCents: 60 })])).toEqual(held);
+
+    // The café's current terms count too (a counter's catalog may be newer than the offer): 25% now, $0.75 off.
+    await app.as("PUT", "/api/cafe/win-back", { discount: { kind: "percent", value: 25 }, cooldownDays: 30 });
+    expect(await send(wrong, [coffee(app, { campaignId: null, unitDiscountCents: 75 })])).toEqual({ status: "applied", code: "OK" });
+    expect(await offerState(kept)).toEqual({ used: true, closed: true });
+
+    // Without winBack, a discount needs its campaign.
+    expect(await send(regular, [line], false)).toEqual({ status: "rejected", code: "INVALID_EVENT" });
+  });
+
+  it("uses the offer up with a held visit too, since the customer had the discount (AC 36)", async () => {
+    const app = await cafeApp();
+    await app.as("PUT", "/api/cafe/win-back", { discount: { kind: "percent", value: 20 }, cooldownDays: 30 });
+    const card = await issueCard(app.owner.cafeId);
+    const given = await offer(app, card.cardId, { givenHoursAgo: 4 * 24 });
+    // Synced three days late, so held for the owner, but the offer was open when the customer used it.
+    const at = new Date(Date.now() - 3 * 24 * 60 * MINUTE);
+    const late = await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { items: [coffee(app, { campaignId: null, unitDiscountCents: 60 })], version: 3, winBack: true, at })]);
+    expect(late).toEqual([{ status: "applied", code: "HELD_FOR_REVIEW" }]);
+    const { rows } = await context.admin.query<{ hold_reason: string; discount_refused: boolean }>(
+      "SELECT sync_events.hold_reason, visits.discount_refused FROM app.visits JOIN app.sync_events ON sync_events.id = visits.sync_event_id WHERE visits.card_id = $1",
+      [card.cardId],
+    );
+    expect(rows).toEqual([{ hold_reason: "late_sync", discount_refused: false }]);
+    expect(await offerState(given)).toEqual({ used: true, closed: true });
   });
 });
 

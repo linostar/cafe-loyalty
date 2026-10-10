@@ -1,4 +1,4 @@
-import { withCafe, type Database } from "@cafe-loyalty/db";
+import { queueChangedPasses, withCafe, type Database, type PgBoss } from "@cafe-loyalty/db";
 import {
   ApiError,
   REPEATED_DELIVERY_FAILURES,
@@ -7,7 +7,9 @@ import {
   loyaltyProgramSchema,
   orderTypeCreateSchema,
   orderTypeUpdateSchema,
+  winBackSettingsSchema,
   type CafeSetup,
+  type Discount,
   type VisitHours,
   type WalletDeliveries,
 } from "@cafe-loyalty/shared";
@@ -22,12 +24,22 @@ export interface CafeRoutesOptions {
   db: Kysely<Database>;
   /** This server's public address; the café's signup QR opens its /join page. */
   publicUrl: string;
+  /** The job queue, or undefined when it could not start (passes are still marked changed, for the sweep). */
+  jobs: PgBoss | undefined;
 }
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
 
+/** The café's win-back discount from its columns (AC 36), or null without one. */
+export const winBackDiscountOf = (cafe: { win_back_discount_kind: "percent" | "amount" | null; win_back_discount_value: number | null }): Discount | null =>
+  cafe.win_back_discount_kind === null || cafe.win_back_discount_value === null ? null : { kind: cafe.win_back_discount_kind, value: cafe.win_back_discount_value };
+
 async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<CafeSetup> {
-  const cafe = await trx.selectFrom("cafes").select(["id", "name", "catalog_version", "min_margin_percent"]).where("id", "=", cafeId).executeTakeFirstOrThrow();
+  const cafe = await trx
+    .selectFrom("cafes")
+    .select(["id", "name", "catalog_version", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value", "win_back_cooldown_days"])
+    .where("id", "=", cafeId)
+    .executeTakeFirstOrThrow();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
   const orderTypes = await trx
     .selectFrom("order_types")
@@ -36,7 +48,13 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
     .orderBy("name_en")
     .execute();
   return {
-    cafe: { id: cafe.id, name: cafe.name, catalogVersion: cafe.catalog_version, minMarginPercent: cafe.min_margin_percent },
+    cafe: {
+      id: cafe.id,
+      name: cafe.name,
+      catalogVersion: cafe.catalog_version,
+      minMarginPercent: cafe.min_margin_percent,
+      winBack: { discount: winBackDiscountOf(cafe), cooldownDays: cafe.win_back_cooldown_days },
+    },
     program:
       program === undefined
         ? null
@@ -87,7 +105,7 @@ export async function memberVisitHours(trx: Transaction<Database>, cafeId: strin
 
 /** The owner's café, loyalty program and order types (AC 1). Every change is audit-logged. */
 export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, done: (error?: Error) => void): void {
-  const { db } = options;
+  const { db, jobs } = options;
 
   app.get("/cafe", { config: { access: "owner" } }, async (request) => {
     const { cafeId } = ownerOf(request);
@@ -170,6 +188,48 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         changes: { name: body.name, minMarginPercent: body.minMarginPercent },
       });
       request.log.info({ cafeId: owner.cafeId }, "cafe updated");
+      return loadSetup(trx, owner.cafeId);
+    });
+  });
+
+  /**
+   * Sets the café's win-back offer (AC 36): the discount a lapsed card gets on its next visit, or none, and the
+   * cool-down before a card can get it again. Offers already given keep their terms; turning the offer off closes them.
+   */
+  app.put("/cafe/win-back", { config: { access: "owner" } }, async (request) => {
+    const owner = ownerOf(request);
+    const body = parseInput(winBackSettingsSchema, request.body);
+    return withCafe(db, owner.cafeId, async (trx) => {
+      await trx
+        .updateTable("cafes")
+        .set({
+          win_back_discount_kind: body.discount?.kind ?? null,
+          win_back_discount_value: body.discount?.value ?? null,
+          win_back_cooldown_days: body.cooldownDays,
+        })
+        .where("id", "=", owner.cafeId)
+        .execute();
+      if (body.discount === null) {
+        // No offer any more: the open ones leave the cards' passes (a trigger marks them, migration 0014), since the
+        // counter can no longer apply them.
+        const closed = await trx
+          .updateTable("card_lapses")
+          .set({ closed_at: sql<Date>`now()` })
+          .where("discount_kind", "is not", null)
+          .where("closed_at", "is", null)
+          .returning("card_id")
+          .execute();
+        if (jobs !== undefined) {
+          await queueChangedPasses(
+            jobs,
+            trx,
+            owner.cafeId,
+            closed.map((row) => row.card_id),
+          );
+        }
+      }
+      await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "cafe.win_back_set", entityType: "cafe", entityId: owner.cafeId, changes: body });
+      request.log.info({ cafeId: owner.cafeId }, "win-back offer set");
       return loadSetup(trx, owner.cafeId);
     });
   });

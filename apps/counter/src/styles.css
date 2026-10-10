@@ -30,6 +30,20 @@ input {
   font: inherit;
 }
 
+/* A checkbox with its label beside it, not a full-width input. */
+.check {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  min-height: 3rem;
+}
+
+.check input {
+  width: auto;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+}
+
 /* Large targets for a busy counter. */
 button {
   min-height: 3rem;

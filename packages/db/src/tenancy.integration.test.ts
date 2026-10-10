@@ -223,6 +223,19 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .values({ cafe_id: cafeId, pass_id: idOf("applePass", cafeId), device_library_hash: randomBytes(32), push_token: "ab".repeat(32) })
       .execute(),
   google_passes: (trx, cafeId) => trx.insertInto("google_passes").values({ cafe_id: cafeId, card_id: idOf("card", cafeId), epoch: 1 }).execute(),
+  card_lapses: (trx, cafeId) =>
+    trx
+      .insertInto("card_lapses")
+      .values({
+        cafe_id: cafeId,
+        card_id: idOf("card", cafeId),
+        last_visit_at: new Date("2026-09-01T10:00:00Z"),
+        discount_kind: "percent",
+        discount_value: 15,
+        min_margin_percent: 30,
+        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      })
+      .execute(),
   campaign_announcements: (trx, cafeId) =>
     trx.insertInto("campaign_announcements").values({ cafe_id: cafeId, campaign_id: idOf("campaign", cafeId), card_id: idOf("card", cafeId) }).execute(),
 };

@@ -18,6 +18,7 @@ const content: ApplePassContent = {
 };
 
 const offer = {
+  kind: "campaign" as const,
   campaignId: "2d7e0c1b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",
   nameAr: "عصرية",
   nameEn: "Afternoon",
