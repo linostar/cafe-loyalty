@@ -9,7 +9,12 @@ const timestamp = z.iso.datetime({ offset: false });
 /** Changes to a request object must name at least one field. */
 const atLeastOneField = (value: Record<string, unknown>) => Object.values(value).some((entry) => entry !== undefined);
 
-export const cafeUpdateSchema = z.object({ name: text(120) });
+/** The least a discounted price may be, as a percentage over cost (AC 35). */
+export const minMarginPercentSchema = z.int("Use a whole percentage.").min(0, "Use 0% or more.").max(1000, "Use at most 1000%.");
+
+export const cafeUpdateSchema = z
+  .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional() })
+  .refine(atLeastOneField, "Change at least one field.");
 
 export const loyaltyProgramSchema = z.object({
   stampsRequired: z.int().min(1, "Use at least 1 stamp.").max(50, "Use at most 50 stamps."),
@@ -33,7 +38,7 @@ export const orderTypeSchema = z.object({ id: z.uuid(), ...orderTypeFields });
 
 /** Everything the dashboard's café setup screen shows. */
 export const cafeSetupSchema = z.object({
-  cafe: z.object({ id: z.uuid(), name: z.string(), catalogVersion: z.int() }),
+  cafe: z.object({ id: z.uuid(), name: z.string(), catalogVersion: z.int(), minMarginPercent: z.int() }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),
 });
@@ -179,9 +184,70 @@ export type TokenRenewalRequest = z.output<typeof tokenRenewalRequestSchema>;
 export const deviceTokenSigningPayload = (request: Pick<TokenRenewalRequest, "deviceId" | "keyId" | "issuedAt">): string =>
   `${DEVICE_TOKEN_SIGNING_PREFIX}${request.deviceId.toLowerCase()}\n${request.keyId.toLowerCase()}\n${request.issuedAt}`;
 
-/** What a counter needs to record visits offline: the order types on sale, priced at a catalog version (AC 32). */
+/** Local minutes of the day: a campaign starts at 0-1439 and ends after it, at 1440 (midnight) at the latest. */
+const minuteOfDay = z.int().min(0).max(1440);
+
+/** A campaign's discount: percent off each eligible unit (1-100), or a fixed amount off each, in cents. */
+export const discountSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("percent"), value: z.int("Use a whole percentage.").min(1, "Use 1% to 100%.").max(100, "Use 1% to 100%.") }),
+  z.object({ kind: z.literal("amount"), value: centsSchema.min(1, "Use an amount of $0.01 or more.") }),
+]);
+
+/** Most campaigns a café may run at once. */
+export const MAX_RUNNING_CAMPAIGNS = 20;
+
+/**
+ * A new quiet-hour campaign (AC 35): weekdays (ISO, 1 = Monday) and local times of day in the café's time zone, the
+ * discount and the order types it applies to. Refused if an order type's discounted price falls below its margin floor.
+ */
+export const campaignCreateSchema = z
+  .object({
+    nameAr: text(60),
+    nameEn: text(60),
+    weekdays: z
+      .array(z.int().min(1).max(7))
+      .min(1, "Pick at least one day.")
+      .max(7)
+      .refine((days) => new Set(days).size === days.length, "Pick each day once."),
+    startsMinute: minuteOfDay.max(1439),
+    endsMinute: minuteOfDay.min(1),
+    discount: discountSchema,
+    orderTypeIds: z
+      .array(id)
+      .min(1, "Pick at least one order type.")
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length, "Pick each order type once."),
+  })
+  .refine((campaign) => campaign.startsMinute < campaign.endsMinute, { path: ["endsMinute"], message: "End after the start, on the same day." });
+
+/** A campaign as the counter applies it (AC 35). */
+export const campaignTermsSchema = z.object({
+  id: z.uuid(),
+  nameAr: z.string(),
+  nameEn: z.string(),
+  weekdays: z.array(z.int().min(1).max(7)),
+  startsMinute: minuteOfDay,
+  endsMinute: minuteOfDay,
+  discount: discountSchema,
+  minMarginPercent: z.int().min(0),
+  orderTypeIds: z.array(z.uuid()),
+});
+
+/** A campaign as the dashboard lists it. */
+export const campaignSchema = campaignTermsSchema.extend({ createdAt: timestamp, endedAt: timestamp.nullable() });
+
+/** The café's running campaigns and the most recently ended ones. */
+export const campaignsSchema = z.object({ running: z.array(campaignSchema), ended: z.array(campaignSchema) });
+
+/**
+ * What a counter needs to record visits offline: the order types on sale, priced at a catalog version (AC 32), and the
+ * campaigns running now with the time zone they run in (AC 35). Both default for a server from before Step 12 (a
+ * rollback): no campaigns.
+ */
 export const deviceCatalogSchema = z.object({
   catalogVersion: z.int().min(1),
+  timeZone: z.string().default("UTC"),
+  campaigns: z.array(campaignTermsSchema).default([]),
   orderTypes: z.array(z.object({ id: z.uuid(), nameAr: z.string(), nameEn: z.string(), priceCents: centsSchema, costCents: centsSchema, stampsEarned: z.int() })),
   program: loyaltyProgramSchema.nullable(),
 });
@@ -247,4 +313,7 @@ export type PairingCode = z.output<typeof pairingCodeSchema>;
 export type DevicePublicKeyJwk = z.output<typeof devicePublicKeySchema>;
 export type PairRequest = z.input<typeof pairRequestSchema>;
 export type DeviceCatalog = z.output<typeof deviceCatalogSchema>;
+export type CampaignCreate = z.input<typeof campaignCreateSchema>;
+export type Campaign = z.output<typeof campaignSchema>;
+export type Campaigns = z.output<typeof campaignsSchema>;
 export type Redemption = z.output<typeof redemptionSchema>;

@@ -27,7 +27,7 @@ export interface CafeRoutesOptions {
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
 
 async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<CafeSetup> {
-  const cafe = await trx.selectFrom("cafes").select(["id", "name", "catalog_version"]).where("id", "=", cafeId).executeTakeFirstOrThrow();
+  const cafe = await trx.selectFrom("cafes").select(["id", "name", "catalog_version", "min_margin_percent"]).where("id", "=", cafeId).executeTakeFirstOrThrow();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
   const orderTypes = await trx
     .selectFrom("order_types")
@@ -36,7 +36,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
     .orderBy("name_en")
     .execute();
   return {
-    cafe: { id: cafe.id, name: cafe.name, catalogVersion: cafe.catalog_version },
+    cafe: { id: cafe.id, name: cafe.name, catalogVersion: cafe.catalog_version, minMarginPercent: cafe.min_margin_percent },
     program:
       program === undefined
         ? null
@@ -158,8 +158,17 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     const owner = ownerOf(request);
     const body = parseInput(cafeUpdateSchema, request.body);
     return withCafe(db, owner.cafeId, async (trx) => {
-      await trx.updateTable("cafes").set({ name: body.name }).where("id", "=", owner.cafeId).execute();
-      await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "cafe.updated", entityType: "cafe", entityId: owner.cafeId, changes: { name: body.name } });
+      const changes = { name: body.name, min_margin_percent: body.minMarginPercent };
+      await trx.updateTable("cafes").set(changes).where("id", "=", owner.cafeId).execute();
+      await audit(trx, {
+        cafeId: owner.cafeId,
+        actorType: "owner",
+        actorId: owner.ownerId,
+        action: "cafe.updated",
+        entityType: "cafe",
+        entityId: owner.cafeId,
+        changes: { name: body.name, minMarginPercent: body.minMarginPercent },
+      });
       request.log.info({ cafeId: owner.cafeId }, "cafe updated");
       return loadSetup(trx, owner.cafeId);
     });

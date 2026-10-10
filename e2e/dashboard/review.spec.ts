@@ -10,6 +10,7 @@ const held = (index: number) => ({
   deviceName: "Front counter",
   staffName: "Rami",
   reason: "device_revoked",
+  discountRefused: false,
   occurredAt: `2026-10-08T0${String(index % 10)}:15:00.000Z`,
   receivedAt: "2026-10-08T12:00:00.000Z",
 });
@@ -56,4 +57,19 @@ test("says when there is nothing to review", async ({ page }) => {
   await mockApi(page, { "GET /api/auth/session": reply(200, SESSION), "GET /api/review-queue": reply(200, { items: [], nextCursor: null }) });
   await page.goto("/review");
   await expect(page.getByText("Nothing to review.")).toBeVisible();
+});
+
+test("says when a late visit's discount also failed its campaign check (AC 35)", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/review-queue": reply(200, { items: [{ ...held(1), reason: "late_sync", discountRefused: true }, { ...held(2), reason: "campaign_check", discountRefused: true }], nextCursor: null }),
+  });
+  await page.goto("/review");
+  const late = page.getByRole("listitem").filter({ hasText: "01:15" });
+  await expect(late).toContainText("that reached the server more than two days later");
+  await expect(late).toContainText("It also has a discount its campaign did not allow");
+  // A campaign hold says so once, in its reason.
+  const held2 = page.getByRole("listitem").filter({ hasText: "02:15" });
+  await expect(held2).toContainText("with a discount its campaign did not allow at that time");
+  await expect(held2).not.toContainText("It also has");
 });

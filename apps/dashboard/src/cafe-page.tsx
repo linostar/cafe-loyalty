@@ -70,6 +70,42 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
   );
 }
 
+/** The café's minimum margin over cost, below which no campaign may discount (AC 35). */
+function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save: Save }) {
+  const [value, setValue] = useState(String(minMarginPercent));
+  const [invalid, setInvalid] = useState<string | undefined>(undefined);
+  const { pending, error, fieldErrors, submit } = useSubmit();
+  return (
+    <form
+      aria-labelledby="margin-title"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const percent = parseWholeNumberInput(value);
+        setInvalid(percent === null || percent > 1000 ? "Enter a whole percentage from 0 to 1000, such as 30." : undefined);
+        if (percent !== null && percent <= 1000) {
+          void submit(() => save("PATCH", "/api/cafe", { minMarginPercent: percent }));
+        }
+      }}
+    >
+      <h3 id="margin-title">Minimum margin</h3>
+      <FormError message={error} />
+      <Field
+        label="Minimum margin over cost (%)"
+        name="minMarginPercent"
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={setValue}
+        hint="Campaigns never sell an item for less than its cost plus this much: 30% keeps a drink that costs $1.00 at $1.30 or more. Running campaigns keep the margin they started with."
+        error={invalid ?? fieldErrors.minMarginPercent}
+      />
+      <button type="submit" disabled={pending}>
+        {pending ? "Saving…" : "Save margin"}
+      </button>
+    </form>
+  );
+}
+
 /** Adds an order type, or edits one when `orderType` is given. */
 function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: () => void }) {
   const [nameEn, setNameEn] = useState(orderType?.nameEn ?? "");
@@ -266,6 +302,7 @@ export function CafePage() {
       <CafeNameForm name={setup.cafe.name} save={save} />
       <SignupQr />
       <ProgramForm program={setup.program} save={save} />
+      <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
       <section aria-labelledby="order-types-title">
         <h3 id="order-types-title">Order types</h3>
         {setup.orderTypes.length === 0 ? (

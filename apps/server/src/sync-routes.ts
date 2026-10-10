@@ -7,6 +7,7 @@ import {
   syncEventSigningPayload,
   syncRequestSchema,
   syncResult,
+  visitLines,
   type ReviewDecision,
   type ReviewQueue,
   type SyncHoldReason,
@@ -178,9 +179,10 @@ async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secre
     // A lockout report changes nothing; it is security information for the owner, so it is audited at once, saying
     // when it came from a removed phone or barista, and never held. Actions are held (AC 21).
     const late = event.type === "visit.recorded" && occurredAt < serverNow - SYNC_LATE_VISIT_MS;
-    const holdReason = event.type === "staff.pin_lockout" ? null : (revokedBy ?? (late ? "late_sync" : null));
     // A visit's card and items are checked before it is recorded; a refusal is kept, held or not.
-    const plan = event.type === "visit.recorded" ? await planVisit(trx, secrets, device.cafeId, event.payload) : undefined;
+    const plan = event.type === "visit.recorded" ? await planVisit(trx, secrets, device.cafeId, event.payload, new Date(occurredAt)) : undefined;
+    const discountRefused = plan?.status === "ready" && plan.discountRefused;
+    const holdReason = event.type === "staff.pin_lockout" ? null : (revokedBy ?? (late ? "late_sync" : discountRefused ? "campaign_check" : null));
     const refusal = plan?.status === "refused" ? plan.code : null;
     const inserted = await trx
       .insertInto("sync_events")
@@ -220,7 +222,7 @@ async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secre
               staffId: event.staffId,
               occurredAt: new Date(occurredAt),
               totalCents: event.payload.totalCents,
-              items: event.payload.items,
+              items: visitLines(event.payload),
             },
             plan,
           )
@@ -313,6 +315,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         .selectFrom("sync_events")
         .innerJoin("devices", "devices.id", "sync_events.device_id")
         .innerJoin("staff", "staff.id", "sync_events.staff_id")
+        .leftJoin("visits", "visits.sync_event_id", "sync_events.id")
         .select([
           "sync_events.id",
           "sync_events.type",
@@ -322,6 +325,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
           sql<string>`to_char(sync_events.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("position"),
           "devices.name as deviceName",
           "staff.name as staffName",
+          "visits.discount_refused",
         ])
         .where("sync_events.status", "=", "held");
       if (cursor !== undefined) {
@@ -338,6 +342,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         deviceName: row.deviceName,
         staffName: row.staffName,
         reason: holdReasonOf(row.hold_reason),
+        discountRefused: row.discount_refused === true,
         occurredAt: row.occurred_at.toISOString(),
         receivedAt: row.received_at.toISOString(),
       })),

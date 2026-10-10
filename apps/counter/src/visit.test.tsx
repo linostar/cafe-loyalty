@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import { getMeta, listQueued, setMeta } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice } from "./test-helpers.js";
-import { CounterScreen } from "./visit.js";
+import { CounterScreen, cafeClock } from "./visit.js";
 
 /** What the camera "sees" next; the real scanner needs a camera, which tests do not have. */
 let nextScan = "";
@@ -27,14 +27,32 @@ vi.mock("./scanner.js", () => ({
 
 const COFFEE = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
 const CAKE = { id: "4d5e6f7a-8b9c-4d4e-9f5a-6b7c8d9e0f1a", nameAr: "كيك", nameEn: "Cake", priceCents: 450, costCents: 150, stampsEarned: 0 };
-const CATALOG: DeviceCatalog = { catalogVersion: 4, orderTypes: [COFFEE, CAKE], program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } };
+const CATALOG: DeviceCatalog = {
+  catalogVersion: 4,
+  timeZone: "Asia/Beirut",
+  campaigns: [],
+  orderTypes: [COFFEE, CAKE],
+  program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
+};
+/** Half off coffee on Mondays 15:00-17:00 in Beirut, keeping 30% over cost. */
+const QUIET = {
+  id: "6f7a8b9c-0d1e-4f2a-9b3c-4d5e6f7a8b9c",
+  nameAr: "ساعات هادئة",
+  nameEn: "Quiet hours",
+  weekdays: [1],
+  startsMinute: 15 * 60,
+  endsMinute: 17 * 60,
+  discount: { kind: "percent" as const, value: 50 },
+  minMarginPercent: 30,
+  orderTypeIds: [COFFEE.id],
+};
 const cardOf = (cafeId: string) => formatCardQr({ cardId: "5e6f7a8b-9c0d-4e5f-8a6b-7c8d9e0f1a2b", cafeId, epoch: 1, keyId: "q1" }, "M".repeat(43));
 
-async function counter(options: { online?: boolean } = {}) {
+async function counter(options: { online?: boolean; catalog?: DeviceCatalog } = {}) {
   const { device } = await storePairedDevice();
   const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
   const onBusy = vi.fn();
-  render(<CounterScreen device={device} barista={barista} catalog={CATALOG} online={options.online ?? true} onBusy={onBusy} />);
+  render(<CounterScreen device={device} barista={barista} catalog={options.catalog ?? CATALOG} online={options.online ?? true} onBusy={onBusy} />);
   return { device, barista, onBusy };
 }
 
@@ -54,13 +72,13 @@ describe("visits", () => {
     const [queued] = await listQueued(10);
     expect(queued?.event).toMatchObject({
       type: "visit.recorded",
-      schemaVersion: 1,
+      schemaVersion: 2,
       staffId: barista.id,
       payload: {
         card: { kind: "phone", phone: "+96170123456" },
         items: [
-          { orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 4 },
-          { orderTypeId: CAKE.id, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 4 },
+          { orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 4, campaignId: null, unitDiscountCents: 0 },
+          { orderTypeId: CAKE.id, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 4, campaignId: null, unitDiscountCents: 0 },
         ],
         totalCents: 1050,
       },
@@ -70,6 +88,70 @@ describe("visits", () => {
     await waitFor(() => {
       expect(onBusy).toHaveBeenLastCalledWith(false);
     });
+  });
+
+  it("gives a running campaign's discount, and records the visit as priced on screen even if the campaign ends before the tap (AC 35)", async () => {
+    // Monday 12 October 2026, 16:59:50 in Beirut (UTC+3): ten seconds before the campaign ends.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:59:50Z") });
+    try {
+      await counter({ catalog: { ...CATALOG, campaigns: [QUIET] } });
+      expect(screen.getByText("$1.50 (Quiet hours)", { exact: false })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+      expect(screen.getByText("Total $7.50 · 2 stamps")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+      // The campaign ends before the barista taps Record: the total read out and charged stands.
+      vi.setSystemTime(new Date("2026-10-12T14:00:10Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+      await screen.findByText(/^Visit saved/);
+      const [queued] = await listQueued(10);
+      expect(queued?.event).toMatchObject({
+        schemaVersion: 2,
+        occurredAt: "2026-10-12T13:59:50.000Z",
+        payload: {
+          items: [
+            { orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, campaignId: QUIET.id, unitDiscountCents: 150 },
+            { orderTypeId: CAKE.id, quantity: 1, unitPriceCents: 450, campaignId: null, unitDiscountCents: 0 },
+          ],
+          totalCents: 750,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a fixed amount off, and says which price was and which is now", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:30:00Z") });
+    try {
+      await counter({ catalog: { ...CATALOG, campaigns: [{ ...QUIET, discount: { kind: "amount", value: 50 } }] } });
+      expect(screen.getByText("was", { exact: false, selector: ".visually-hidden" })).toBeInTheDocument();
+      expect(screen.getByText("now", { exact: false, selector: ".visually-hidden" })).toBeInTheDocument();
+      expect(screen.getByText("$2.50 (Quiet hours)", { exact: false })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      expect(screen.getByText("Total $2.50 · 1 stamp")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives no discount outside the campaign's hours, or one that would sell below its margin floor", async () => {
+    // Monday 18:00 in Beirut: after the campaign's hours.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T15:00:00Z") });
+    try {
+      await counter({ catalog: { ...CATALOG, campaigns: [QUIET, { ...QUIET, id: "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d", startsMinute: 0, endsMinute: 1440, minMarginPercent: 300 }] } });
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the café's clock across Beirut's spring changeover, and gives up on a time zone it cannot read", () => {
+    expect(cafeClock(new Date("2026-03-28T21:59:00Z"), "Asia/Beirut")).toEqual({ weekday: 6, minute: 23 * 60 + 59 });
+    expect(cafeClock(new Date("2026-03-28T22:00:00Z"), "Asia/Beirut")).toEqual({ weekday: 7, minute: 60 });
+    expect(cafeClock(new Date(), "Not/A_Zone")).toBeNull();
   });
 
   it("asks for a card and a valid number before saving, tying a bad number to its field", async () => {

@@ -7,6 +7,7 @@ import {
   isFinalSyncStatus,
   parseSyncEvent,
   readSyncResponse,
+  visitLines,
   syncRequestSchema,
   syncResponseSchema,
   syncEventSigningPayload,
@@ -72,7 +73,36 @@ describe("parseSyncEvent", () => {
       type: "visit.voided",
       schemaVersion: 1,
     });
-    expect(parseSyncEvent(visitEvent({ schemaVersion: 2 }))).toMatchObject({ status: "unsupported", schemaVersion: 2 });
+    expect(parseSyncEvent(visitEvent({ schemaVersion: 3 }))).toMatchObject({ status: "unsupported", schemaVersion: 3 });
+  });
+
+  it("accepts a version 2 visit whose lines carry a campaign's discount, totalled after it (AC 35)", () => {
+    const campaignId = "5e6f7a8b-9c0d-4e5f-8a6b-7c8d9e0f1a2b";
+    const discounted = { orderTypeId: ids.orderType, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 3, campaignId, unitDiscountCents: 70 };
+    const full = { ...discounted, quantity: 1, campaignId: null, unitDiscountCents: 0 };
+    const result = parseSyncEvent(visitEvent({ schemaVersion: 2 }, { items: [discounted, full], totalCents: 2 * 280 + 350 }));
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid" || result.event.type !== "visit.recorded") return;
+    expect(visitLines(result.event.payload)).toEqual([discounted, full]);
+  });
+
+  it("refuses a version 2 line discounted beyond its price, discounted without a campaign, or totalled before its discount", () => {
+    const line = { orderTypeId: ids.orderType, quantity: 1, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 3 };
+    const campaignId = "5e6f7a8b-9c0d-4e5f-8a6b-7c8d9e0f1a2b";
+    const invalid = (items: unknown[], totalCents: number) => parseSyncEvent(visitEvent({ schemaVersion: 2 }, { items, totalCents })).status;
+    expect(invalid([{ ...line, campaignId, unitDiscountCents: 351 }], 0)).toBe("invalid");
+    expect(invalid([{ ...line, campaignId: null, unitDiscountCents: 50 }], 300)).toBe("invalid");
+    expect(invalid([{ ...line, campaignId, unitDiscountCents: 50 }], 350)).toBe("invalid");
+    // Version 2 lines must say whether they were discounted.
+    expect(invalid([line], 350)).toBe("invalid");
+  });
+
+  it("reads a version 1 visit's lines as undiscounted", () => {
+    const result = parseSyncEvent(visitEvent());
+    if (result.status !== "valid" || result.event.type !== "visit.recorded") throw new Error("expected a valid visit");
+    expect(visitLines(result.event.payload)).toEqual([
+      { orderTypeId: ids.orderType, quantity: 2, unitPriceCents: 350, unitCostCents: 120, catalogVersion: 3, campaignId: null, unitDiscountCents: 0 },
+    ]);
   });
 
   it("reports an unknown type as unsupported even when its other fields break the v1 rules", () => {

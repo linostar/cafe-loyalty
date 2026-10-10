@@ -42,7 +42,7 @@ describe("access control", () => {
     const { app, routes, owner } = await ownerApp();
     const device = await pairDevice(app, owner);
     const ownerRoutes = routes.filter((route) => route.access === "owner" && route.method !== "HEAD");
-    expect(ownerRoutes.length).toBeGreaterThanOrEqual(12);
+    expect(ownerRoutes.length).toBeGreaterThanOrEqual(24);
     for (const route of ownerRoutes) {
       const response = await app.inject({
         method: route.method as "GET",
@@ -85,7 +85,7 @@ describe("café setup", () => {
     const { as, owner } = await ownerApp();
     const setup = await as("GET", "/api/cafe");
     expect(setup.statusCode).toBe(200);
-    expect(setup.json()).toEqual({ cafe: { id: owner.cafeId, name: "Café Test", catalogVersion: 1 }, program: null, orderTypes: [] });
+    expect(setup.json()).toEqual({ cafe: { id: owner.cafeId, name: "Café Test", catalogVersion: 1, minMarginPercent: 0 }, program: null, orderTypes: [] });
   });
 
   it("renames the café and saves the loyalty program, audit-logged", async () => {

@@ -1,4 +1,13 @@
-import { formatUsd, normalizePhoneInput, parseCardQr, redemptionSchema, visitItemsTotalCents, visitRecordedV1PayloadSchema, type DeviceCatalog } from "@cafe-loyalty/shared";
+import {
+  bestCampaign,
+  formatUsd,
+  normalizePhoneInput,
+  parseCardQr,
+  redemptionSchema,
+  visitItemsTotalCents,
+  visitRecordedV2PayloadSchema,
+  type DeviceCatalog,
+} from "@cafe-loyalty/shared";
 import { useEffect, useId, useRef, useState } from "react";
 import { DeviceUnpairedError, RequestError, deviceRequest } from "./device.js";
 import { QrScanner } from "./scanner.js";
@@ -23,6 +32,29 @@ function readCardQr(text: string, cafeId: string): { token: string } | { problem
 }
 
 const plural = (count: number, one: string, many: string) => `${String(count)} ${count === 1 ? one : many}`;
+
+const ISO_WEEKDAYS: Readonly<Record<string, number>> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+
+/**
+ * The café's local weekday (ISO) and minute of the day at `at`, from the browser's time zone data: the counter decides
+ * discounts offline, and the server checks them again by its own clock (AC 35). Null when the zone cannot be read.
+ */
+export function cafeClock(at: Date, timeZone: string): { weekday: number; minute: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
+    const part = (type: string) => parts.find((entry) => entry.type === type)?.value;
+    const weekday = ISO_WEEKDAYS[part("weekday") ?? ""];
+    return weekday === undefined ? null : { weekday, minute: Number(part("hour")) * 60 + Number(part("minute")) };
+  } catch {
+    return null;
+  }
+}
+
+/** The best running campaign for one order type at `at`, if any (the largest discount that keeps its margin floor). */
+export function campaignFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTypes"][number], at: Date) {
+  const clock = cafeClock(at, catalog.timeZone);
+  return clock === null ? null : bestCampaign(catalog.campaigns, { orderTypeId: type.id, priceCents: type.priceCents, costCents: type.costCents }, clock.weekday, clock.minute);
+}
 
 interface VisitFormProps {
   device: DeviceRecord;
@@ -55,14 +87,34 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     .filter(([id, quantity]) => quantity > 0 && !catalog.orderTypes.some((type) => type.id === id))
     .map(([id]) => names[id] ?? "An item");
   const stamps = items.reduce((sum, item) => sum + item.quantity * item.type.stampsEarned, 0);
-  const lines = items.map(({ type, quantity }) => ({
-    orderTypeId: type.id,
-    quantity,
-    unitPriceCents: type.priceCents,
-    unitCostCents: type.costCents,
-    catalogVersion: catalog.catalogVersion,
-  }));
-  const total = visitItemsTotalCents(lines);
+  /** The order priced at `at`, with any campaign's discount per line (AC 35). */
+  const linesAt = (at: Date) =>
+    items.map(({ type, quantity }) => {
+      const offer = campaignFor(catalog, type, at);
+      return {
+        orderTypeId: type.id,
+        quantity,
+        unitPriceCents: type.priceCents,
+        unitCostCents: type.costCents,
+        catalogVersion: catalog.catalogVersion,
+        campaignId: offer?.campaign.id ?? null,
+        unitDiscountCents: offer?.unitDiscountCents ?? 0,
+      };
+    });
+  // Discounts start and stop with the clock: the open menu is priced again every 30 seconds, and a visit is recorded
+  // as priced on screen, at that moment (at most 30 seconds before it is recorded), so it keeps the total the
+  // barista read out and charged.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTick((tick) => tick + 1);
+    }, 30_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+  const shownAt = new Date();
+  const total = visitItemsTotalCents(linesAt(shownAt));
   // An order in progress: the app must not update under it (AC 29).
   const open = items.length > 0 || scanned !== null || phone !== "" || scanner === "visit";
   useEffect(() => {
@@ -95,13 +147,16 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       }
       card = { kind: "phone", phone: e164 };
     }
-    const payload = visitRecordedV1PayloadSchema.safeParse({ card, items: lines, totalCents: total ?? -1 });
+    // As shown: the lines and the time they were priced at, so the recorded total is the one on screen.
+    const at = shownAt;
+    const lines = linesAt(at);
+    const payload = visitRecordedV2PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1 });
     if (!payload.success) {
       setProblem({ text: items.length === 0 ? "Add what the customer ordered first." : "This order is too large to record. Split it into two visits.", phone: false });
       return;
     }
     setSaving(true);
-    recordEvent("visit.recorded", 1, barista.id, payload.data).then(
+    recordEvent("visit.recorded", 2, barista.id, payload.data, at).then(
       () => {
         setSaving(false);
         setQuantities({});
@@ -154,10 +209,23 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       <ul className="menu">
         {catalog.orderTypes.map((type) => {
           const quantity = quantities[type.id] ?? 0;
+          const offer = campaignFor(catalog, type, shownAt);
           return (
             <li key={type.id}>
               <span>
-                <strong>{type.nameEn}</strong> · {formatUsd(type.priceCents, "en")}
+                <strong>{type.nameEn}</strong> ·{" "}
+                {offer === null ? (
+                  formatUsd(type.priceCents, "en")
+                ) : (
+                  <>
+                    <s>
+                      <span className="visually-hidden">was </span>
+                      {formatUsd(type.priceCents, "en")}
+                    </s>{" "}
+                    <span className="visually-hidden">now </span>
+                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign.nameEn})
+                  </>
+                )}
                 {type.stampsEarned > 0 ? ` · ${plural(type.stampsEarned, "stamp", "stamps")}` : ""}
               </span>
               <span className="stepper">

@@ -13,6 +13,7 @@ const REASONS: Readonly<Record<SyncHoldReason, string>> = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
   late_sync: "that reached the server more than two days later",
+  campaign_check: "with a discount its campaign did not allow at that time (ended, outside its hours, or below your margin)",
 };
 
 /** Why an accepted visit still added no stamps, by its result code. */
@@ -40,7 +41,10 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
   return (
     <li tabIndex={-1} data-review-id={item.id}>
       <strong>{TYPE_LABELS[item.type] ?? item.type}</strong> at {timeFormat.format(new Date(item.occurredAt))} {REASONS[item.reason]}: {item.staffName} on{" "}
-      {item.deviceName}
+      {item.deviceName}.
+      {item.discountRefused && item.reason !== "campaign_check" ? (
+        <> It also has a discount its campaign did not allow at that time (ended, outside its hours, or below your margin).</>
+      ) : null}
       <div className="actions">
         <ConfirmButton
           label={`Accept ${describe(item)}`}
@@ -99,7 +103,9 @@ export function ReviewPage() {
       </h2>
       <p>
         When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two
-        days after they happened. Accept what you trust and discard the rest.
+        days after they happened and visits with a discount their campaign did not allow (a phone that had not heard the campaign ended, for example).
+        Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for
+        nothing.
       </p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />

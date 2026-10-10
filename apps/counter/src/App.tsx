@@ -48,7 +48,8 @@ async function readStored(): Promise<Stored> {
     listRejected(),
     getMeta("catalog"),
   ]);
-  return { device, staff: staff ?? [], baristaId: barista?.staffId, pending, rejected, catalog };
+  // A catalog an older build stored has no campaigns (nor their time zone): none apply until the next refresh.
+  return { device, staff: staff ?? [], baristaId: barista?.staffId, pending, rejected, catalog: catalog && { ...catalog, timeZone: catalog.timeZone ?? "UTC", campaigns: catalog.campaigns ?? [] } };
 }
 
 const EVENT_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };
@@ -59,6 +60,7 @@ const REJECTION_REASONS: Readonly<Record<string, string>> = {
   PHONE_NOT_CONFIRMED: "this number is not confirmed yet; scan the customer's card once, then their number works too",
   PHONE_DISPUTED: "another card at this café signed up with this number, so it cannot be stamped by number; scan the customer's card",
   UNKNOWN_ORDER_TYPE: "something ordered is no longer on the café's menu",
+  CAMPAIGN_REFUSED: "its discount named a campaign this café does not have; record the visit again",
   INVALID_EVENT: "the server could not accept it as recorded",
   SIGNATURE_INVALID: "this phone's signature did not check out",
   CLOCK_SKEW: "the phone's clock was wrong; set its date and time to automatic",

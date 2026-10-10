@@ -146,3 +146,13 @@ button.danger {
   /* A 40-character commit hash in CI and production: let it wrap on a phone. */
   overflow-wrap: anywhere;
 }
+
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

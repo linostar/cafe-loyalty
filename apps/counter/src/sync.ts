@@ -5,9 +5,10 @@ import { addQueued, countQueued, getMeta, listQueued, nextSequence, settleQueued
 
 /**
  * Records an event in the queue, signed with the device key, so it is kept on the phone until the server has
- * answered it for good (AC 22). Works offline, and while the phone waits to be paired again.
+ * answered it for good (AC 22). Works offline, and while the phone waits to be paired again. `at` is when it
+ * happened: now, unless given (a visit passes the moment its discounts were priced).
  */
-export async function recordEvent(type: string, schemaVersion: number, staffId: string, payload: Record<string, unknown>): Promise<void> {
+export async function recordEvent(type: string, schemaVersion: number, staffId: string, payload: Record<string, unknown>, at: Date = new Date()): Promise<void> {
   const device = await getMeta("device");
   if (device === undefined) {
     throw new Error("This phone is not paired yet, so it cannot record anything. Pair it first.");
@@ -21,7 +22,7 @@ export async function recordEvent(type: string, schemaVersion: number, staffId: 
     sequence,
     schemaVersion,
     type,
-    occurredAt: new Date().toISOString(),
+    occurredAt: at.toISOString(),
     payload,
   };
   const signature = await signText(device.privateKey, syncEventSigningPayload(fields));
