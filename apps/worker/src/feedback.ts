@@ -18,10 +18,10 @@ export const FEEDBACK_BATCH = 500;
 /**
  * The feedback job (AC 37), for each café (from a function that runs as the owner role and returns ids only, migration
  * 0015), each in its own withCafe transaction, so one failing leaves the others done: each card's latest member visit
- * (held, discarded and card-gone ones aside) that happened FEEDBACK_DELAY_HOURS to FEEDBACK_MAX_AGE_HOURS ago gets a
- * feedback request, unless the card got one in the last FEEDBACK_CARD_INTERVAL_HOURS. A request puts its link on the
- * card's passes (the insert trigger marks them; their updates are queued in the same transaction), silently: AC 14's
- * one notifying update a day is kept for offers.
+ * (held, discarded and card-gone ones aside) gets a feedback request once it is FEEDBACK_DELAY_HOURS old, until it is
+ * FEEDBACK_MAX_AGE_HOURS old, unless the card got one in the last FEEDBACK_CARD_INTERVAL_HOURS. A request puts its
+ * link on the card's passes (the insert trigger marks them; their updates are queued in the same transaction),
+ * silently: AC 14's one notifying update a day is kept for offers.
  */
 export async function requestFeedback(boss: PgBoss, db: Kysely<Database>, logger: Logger): Promise<{ cafes: number; requested: number }> {
   const { rows } = await boss.getDb().executeSql("SELECT cafe_id FROM app.cafes_for_feedback()");
@@ -38,15 +38,16 @@ export async function requestFeedback(boss: PgBoss, db: Kysely<Database>, logger
                 FROM visits
                WHERE visits.card_id IS NOT NULL
                  AND visits.outcome NOT IN ('held', 'discarded', 'card_gone')
-                 AND visits.occurred_at <= now() - ${FEEDBACK_DELAY_HOURS}::int * interval '1 hour'
                  AND visits.occurred_at > now() - ${FEEDBACK_MAX_AGE_HOURS}::int * interval '1 hour'
                ORDER BY visits.card_id, visits.occurred_at DESC, visits.id DESC
             ) AS latest
-           WHERE NOT EXISTS (
-             SELECT 1 FROM feedback_requests
-              WHERE feedback_requests.card_id = latest.card_id
-                AND feedback_requests.created_at > now() - ${FEEDBACK_CARD_INTERVAL_HOURS}::int * interval '1 hour'
-           )
+           -- The card's latest visit, not its latest one old enough: a newer visit waits its turn instead.
+           WHERE latest.occurred_at <= now() - ${FEEDBACK_DELAY_HOURS}::int * interval '1 hour'
+             AND NOT EXISTS (
+               SELECT 1 FROM feedback_requests
+                WHERE feedback_requests.card_id = latest.card_id
+                  AND feedback_requests.created_at > now() - ${FEEDBACK_CARD_INTERVAL_HOURS}::int * interval '1 hour'
+             )
            ORDER BY latest.occurred_at, latest.id
            LIMIT ${FEEDBACK_BATCH}::int
           ON CONFLICT (visit_id) DO NOTHING

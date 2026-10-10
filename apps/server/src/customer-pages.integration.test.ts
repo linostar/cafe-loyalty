@@ -589,6 +589,19 @@ describe("feedback", () => {
     expect((await as("POST", `/api/feedback/${randomUUID()}/read`)).statusCode).toBe(404);
   });
 
+  it("is rate-limited per address", async () => {
+    const { app, path } = await askedCard();
+    for (let attempt = 1; attempt <= 20; attempt += 1) {
+      expect((await app.inject({ method: "POST", url: path, ...formBody({ message: "", lang: "en" }) })).statusCode).toBe(400);
+    }
+    const blocked = await app.inject({ method: "POST", url: path, ...formBody({ message: "Fake feedback", lang: "en" }) });
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.headers["retry-after"]).toBeDefined();
+    expect(blocked.body).toContain("Too many attempts.");
+    // Other addresses are not blocked by this one.
+    expect((await app.inject({ method: "POST", url: path, remoteAddress: "198.51.100.77", ...formBody({ message: "Fake feedback", lang: "en" }) })).statusCode).toBe(303);
+  });
+
   it("takes a message of the longest length in Arabic", async () => {
     const { app, path, as } = await askedCard();
     const sent = await app.inject({ method: "POST", url: path, ...formBody({ message: "ق".repeat(2000), lang: "ar" }) });
@@ -605,9 +618,11 @@ describe("feedback", () => {
       const response = await first.app.inject({ method: "GET", url: `/f/${token}?lang=en` });
       expect(response.statusCode).toBe(404);
     }
-    // The second café's owner sees none of the first café's messages.
-    await first.app.inject({ method: "POST", url: first.path, ...formBody({ message: "Fake feedback", lang: "en" }) });
+    // The second café's owner sees none of the first café's messages, which its own owner sees.
+    expect((await first.app.inject({ method: "POST", url: first.path, ...formBody({ message: "Fake feedback", lang: "en" }) })).statusCode).toBe(303);
+    expect((await first.as("GET", "/api/feedback")).json<{ items: unknown[] }>().items).toMatchObject([{ message: "Fake feedback" }]);
     expect((await second.as("GET", "/api/feedback")).json<{ items: unknown[] }>().items).toEqual([]);
+    expect((await context.admin.query("SELECT 1 FROM app.feedback WHERE cafe_id = $1", [first.owner.cafeId])).rowCount).toBe(1);
     // Deleting the card deletes its request and message; the link then finds nothing.
     await first.app.inject({ method: "POST", url: `/c/${first.secret}/delete`, ...formBody({ confirm: "yes", lang: "en" }) });
     const left = await context.admin.query("SELECT 1 FROM app.feedback_requests WHERE card_id = $1 UNION ALL SELECT 1 FROM app.feedback WHERE cafe_id = $2", [first.card?.id, first.owner.cafeId]);

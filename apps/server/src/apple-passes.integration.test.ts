@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { withCafe } from "@cafe-loyalty/db";
+import { verifyFeedbackToken, withCafe } from "@cafe-loyalty/db";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
 import pg from "pg";
@@ -318,6 +318,35 @@ describe("PassKit web service (AC 11)", () => {
     expect((await optIn(false)).statusCode).toBe(303);
     expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
     expect(readPass(await latest(app, pass)).json).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "about" }] } });
+  });
+
+  it("puts a feedback request's link on the pass silently, and leaves it off a pass of an earlier epoch (AC 37)", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const pass = await download(app, card.webSecret);
+    expect(pass.json).toMatchObject({ storeCard: { backFields: [{ key: "about" }] } });
+    expect(await stamp(app, card.qr)).toBe("OK");
+    const lastModified = String((await latest(app, pass)).headers["last-modified"]);
+    // As the worker asks about the visit (requestFeedback): the insert marks the pass changed.
+    const { rows } = await context.admin.query<{ id: string }>(
+      "INSERT INTO app.feedback_requests (cafe_id, card_id, visit_id) SELECT cafe_id, card_id, id FROM app.visits WHERE card_id = $1 RETURNING id",
+      [card.cardId],
+    );
+    const asked = await latest(app, pass, { "if-modified-since": lastModified });
+    expect(asked.statusCode).toBe(200);
+    const withLink = readPass(asked);
+    expect(withLink.json).toMatchObject({ storeCard: { backFields: [{ key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
+    expect(JSON.stringify(withLink.json)).not.toContain("changeMessage");
+    const token = /"feedback_value" = "[^"]*\\n[^"]*\/f\/([^"]+)";/.exec(withLink.strings("en"))?.[1] ?? "";
+    expect(verifyFeedbackToken(TEST_SECRETS, token)).toEqual({ cafeId: app.owner.cafeId, requestId: rows[0]?.id });
+    expect(withLink.strings("ar")).toContain('"feedback_label" = "كيف كانت زيارتك؟";');
+
+    // The card moved on to a new epoch (a recovery): its old pass is voided and carries no link.
+    await context.admin.query("UPDATE app.cards SET epoch = epoch + 1 WHERE id = $1", [card.cardId]);
+    const voided = readPass(await latest(app, pass));
+    expect(voided.json).toMatchObject({ voided: true });
+    expect(JSON.stringify(voided.json)).not.toContain("feedback");
+    expect(voided.strings("en")).not.toContain("feedback_value");
   });
 
   it("unregisters a device, and keeps only a pass's newest registrations", async () => {

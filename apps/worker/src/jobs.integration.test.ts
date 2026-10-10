@@ -1011,6 +1011,7 @@ describe("feedback requests", () => {
     const recent = await offerCard(cafeId, { passes: true });
     const twice = await offerCard(cafeId);
     const tooSoon = await offerCard(cafeId);
+    const waiting = await offerCard(cafeId);
     const tooOld = await offerCard(cafeId);
     const held = await offerCard(cafeId);
     const askedToday = await offerCard(cafeId);
@@ -1018,6 +1019,8 @@ describe("feedback requests", () => {
     // Two visits: the latest is asked about.
     await visited(cafeId, twice.cardId, [5 * HOUR, 3 * HOUR]);
     await visited(cafeId, tooSoon.cardId, [1 * HOUR]);
+    // Back an hour ago: its newer visit is asked about once that is 2 hours old, not the earlier one now.
+    await visited(cafeId, waiting.cardId, [3 * HOUR, 1 * HOUR]);
     await visited(cafeId, tooOld.cardId, [30 * HOUR]);
     await visited(cafeId, held.cardId, [3 * HOUR], "held");
     await visited(cafeId, held.cardId, [4 * HOUR], "discarded");

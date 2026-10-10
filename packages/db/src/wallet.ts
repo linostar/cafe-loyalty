@@ -31,7 +31,8 @@ export const PASS_TEXT = {
     passWinBackDetails: "On your next visit, until {date}.",
     passFeedbackLabel: "How was your visit?",
     passFeedbackLink: "Tell us",
-    passFeedbackText: "Send the café a private message, or review it on Google.",
+    // Not a promise of a Google review: the café may have no review link.
+    passFeedbackText: "Tell the café privately how your visit went.",
   },
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
@@ -56,7 +57,7 @@ export const PASS_TEXT = {
     passWinBackDetails: "في زيارتك القادمة، حتى {date}.",
     passFeedbackLabel: "كيف كانت زيارتك؟",
     passFeedbackLink: "أخبرنا",
-    passFeedbackText: "أرسل إلى المقهى رسالة خاصة، أو قيّمه على Google.",
+    passFeedbackText: "أخبر المقهى بشكل خاص كيف كانت زيارتك.",
   },
 } as const satisfies Record<"ar" | "en", Record<string, string>>;
 

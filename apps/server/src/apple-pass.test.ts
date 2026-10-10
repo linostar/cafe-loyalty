@@ -96,7 +96,7 @@ describe("buildApplePass", () => {
     const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, feedbackUrl: url }));
     expect(json).toMatchObject({ storeCard: { backFields: [{ key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
     expect(JSON.stringify(json)).not.toContain("changeMessage");
-    expect(text("en.lproj/pass.strings")).toContain(`"feedback_value" = "Send the café a private message, or review it on Google.\\n${url}";`);
+    expect(text("en.lproj/pass.strings")).toContain(`"feedback_value" = "Tell the café privately how your visit went.\\n${url}";`);
     expect(text("ar.lproj/pass.strings")).toContain('"feedback_label" = "كيف كانت زيارتك؟";');
     // A voided pass has no link.
     const voided = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null, feedbackUrl: url })).json;
