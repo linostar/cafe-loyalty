@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  OPERATOR_SESSION_COOKIE,
   SESSION_COOKIE,
+  clearedOperatorCookie,
   clearedSessionCookie,
   hashPassword,
   hashToken,
   newToken,
+  operatorSessionCookie,
+  readOperatorCookie,
   readSessionCookie,
   sessionCookie,
   verifyPassword,
@@ -42,6 +46,17 @@ describe("session cookie", () => {
     expect(readSessionCookie("theme=dark")).toBeUndefined();
     expect(readSessionCookie(`${SESSION_COOKIE}=short`)).toBeUndefined();
     expect(readSessionCookie(`${SESSION_COOKIE}=${"a".repeat(42)};`)).toBeUndefined();
+  });
+
+  it("keeps the operator's session apart from the owner's (AC 39)", () => {
+    const owner = newToken();
+    const operator = newToken();
+    const header = `${SESSION_COOKIE}=${owner}; ${OPERATOR_SESSION_COOKIE}=${operator}`;
+    expect(readSessionCookie(header)).toBe(owner);
+    expect(readOperatorCookie(header)).toBe(operator);
+    expect(readOperatorCookie(`${SESSION_COOKIE}=${owner}`)).toBeUndefined();
+    expect(operatorSessionCookie(operator, 60)).toBe(`__Host-cl_operator=${operator}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=60`);
+    expect(clearedOperatorCookie).toBe("__Host-cl_operator=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
   });
 });
 

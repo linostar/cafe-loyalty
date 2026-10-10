@@ -37,7 +37,7 @@ export const winBackDiscountOf = (cafe: { win_back_discount_kind: "percent" | "a
 async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<CafeSetup> {
   const cafe = await trx
     .selectFrom("cafes")
-    .select(["id", "name", "catalog_version", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value", "win_back_cooldown_days", "google_review_url"])
+    .select(["id", "name", "catalog_version", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value", "win_back_cooldown_days", "google_review_url", "plan"])
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
@@ -55,6 +55,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       minMarginPercent: cafe.min_margin_percent,
       winBack: { discount: winBackDiscountOf(cafe), cooldownDays: cafe.win_back_cooldown_days },
       googleReviewUrl: cafe.google_review_url,
+      plan: cafe.plan,
     },
     program:
       program === undefined

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cafePlanSchema } from "./admin.js";
 import { WIN_BACK_MAX_COOLDOWN_DAYS, WIN_BACK_OFFER_DAYS } from "./campaigns.js";
 import { centsSchema } from "./money.js";
 import { syncSignatureSchema } from "./sync.js";
@@ -111,6 +112,8 @@ export const cafeSetupSchema = z.object({
     winBack: winBackSettingsSchema,
     // Defaults for a server from before Step 14 (a rollback), which sends none.
     googleReviewUrl: z.string().nullable().default(null),
+    // Set by the operator (AC 39); defaults for a server from before Step 15.
+    plan: cafePlanSchema.default("pilot"),
   }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),

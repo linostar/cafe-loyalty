@@ -181,12 +181,19 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
   }
 
+  /** The café of a signup code; a suspended café's page enrols no one (AC 39), though its counter still syncs. */
   async function cafeByJoinCode(code: string): Promise<{ id: string; name: string } | undefined> {
     if (!joinCodeSchema.safeParse(code).success) {
       return undefined;
     }
     const codeHash = hashToken(code);
-    return withLookup(db, { secretHash: codeHash }, (trx) => trx.selectFrom("cafes").select(["id", "name"]).where("join_code_hash", "=", codeHash).executeTakeFirst());
+    const cafe = await withLookup(db, { secretHash: codeHash }, (trx) =>
+      trx.selectFrom("cafes").select(["id", "name", "plan"]).where("join_code_hash", "=", codeHash).executeTakeFirst(),
+    );
+    if (cafe?.plan === "suspended") {
+      throw new PageError(403, "joinPaused");
+    }
+    return cafe === undefined ? undefined : { id: cafe.id, name: cafe.name };
   }
 
   async function programOf(cafeId: string) {
