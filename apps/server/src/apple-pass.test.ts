@@ -14,6 +14,20 @@ const content: ApplePassContent = {
   stamps: 4,
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "CL1.card-qr-token",
+  offers: { optedIn: false, offer: undefined },
+};
+
+const offer = {
+  campaignId: "2d7e0c1b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",
+  nameAr: "عصرية",
+  nameEn: "Afternoon",
+  discount: { kind: "percent" as const, value: 20 },
+  weekdays: [1, 2, 3, 4, 5, 6, 7],
+  startsMinute: 14 * 60,
+  endsMinute: 16 * 60,
+  orderTypes: [{ nameAr: "إسبريسو", nameEn: "Espresso" }],
+  announcedAt: new Date("2026-10-05T11:00:00Z"),
+  mayNotify: true,
 };
 
 function open(pass: Buffer) {
@@ -38,12 +52,41 @@ describe("buildApplePass", () => {
       storeCard: {
         primaryFields: [{ key: "stamps", label: "stamps_label", value: "stamps_value" }],
         secondaryFields: [{ key: "reward", label: "reward_label", value: "reward_value" }],
+        auxiliaryFields: [],
         backFields: [{ key: "about", label: "about_label", value: "about_value" }],
       },
     });
     expect(json).not.toHaveProperty("voided");
     // Silent updates: Wallet notifies only of fields with a changeMessage (AC 14).
     expect(JSON.stringify(json)).not.toContain("changeMessage");
+  });
+
+  it("shows an opted-in card's offer on its front and details on its back, notifying only on the day it was announced (AC 14)", () => {
+    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer } }));
+    expect(json).toMatchObject({
+      storeCard: {
+        auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", changeMessage: "offer_change" }],
+        backFields: [{ key: "offer_details" }, { key: "about" }],
+      },
+    });
+    const english = text("en.lproj/pass.strings");
+    expect(english).toContain('"offer_value" = "Afternoon · 20% off";');
+    expect(english).toContain('"offer_change" = "New offer: %@";');
+    expect(english).toContain('"offer_details_value" = "Every day, 14:00–16:00, on Espresso.";');
+    expect(text("ar.lproj/pass.strings")).toContain('"offer_value" = "عصرية · خصم');
+    // Fetched on a later day: the same offer, silently.
+    const later = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: { ...offer, mayNotify: false } } })).json;
+    expect(JSON.stringify(later)).not.toContain("changeMessage");
+  });
+
+  it("keeps an opted-in card's offer field without an offer, silent, so an ended offer goes away without a notification", () => {
+    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: undefined } }));
+    expect(json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", value: "offer_value" }], backFields: [{ key: "about" }] } });
+    expect(JSON.stringify(json)).not.toContain("changeMessage");
+    expect(text("en.lproj/pass.strings")).toContain('"offer_value" = "None right now";');
+    // A voided pass shows no offer.
+    const voided = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null, offers: { optedIn: true, offer } })).json;
+    expect(voided).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "about" }] } });
   });
 
   it("has every text in Arabic and English (AC 10)", () => {

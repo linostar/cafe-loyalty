@@ -4,7 +4,7 @@ import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
 import pg from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { applePassToken } from "./apple-pass.js";
+import { APPLE_PASS_LAYOUT_VERSION, applePassToken } from "./apple-pass.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, signCardQr } from "./customer-crypto.js";
 import { queuePassUpdate } from "./pass-updates.js";
@@ -126,7 +126,7 @@ describe("Apple pass downloads", () => {
     expect(first.json).toMatchObject({ barcodes: [{ message: card.qr }], webServiceURL: "https://card.example.test/passkit" });
     // The token is stored only as its hash, with the layout the pass was built with (AC 11, 12).
     const { rows } = await context.admin.query("SELECT id, epoch, auth_token_hash, layout_version FROM app.apple_passes WHERE card_id = $1", [card.cardId]);
-    expect(rows).toEqual([{ id: first.serial, epoch: 1, auth_token_hash: hashToken(first.token), layout_version: 1 }]);
+    expect(rows).toEqual([{ id: first.serial, epoch: 1, auth_token_hash: hashToken(first.token), layout_version: APPLE_PASS_LAYOUT_VERSION }]);
   });
 
   it("offers no Apple pass when Apple Wallet is not configured", async () => {
@@ -236,7 +236,7 @@ describe("PassKit web service (AC 11)", () => {
     const pass = await download(app, (await issueCard(app.owner.cafeId)).webSecret);
     const lastModified = String((await latest(app, pass)).headers["last-modified"]);
     // As a release with another pass layout left it.
-    await context.admin.query("UPDATE app.apple_passes SET layout_version = 2 WHERE id = $1", [pass.serial]);
+    await context.admin.query("UPDATE app.apple_passes SET layout_version = $2 WHERE id = $1", [pass.serial, APPLE_PASS_LAYOUT_VERSION - 1]);
     const relaid = await latest(app, pass, { "if-modified-since": lastModified });
     expect(relaid.statusCode).toBe(200);
     expect(Date.parse(String(relaid.headers["last-modified"]))).toBeGreaterThan(Date.parse(lastModified));
@@ -244,7 +244,7 @@ describe("PassKit web service (AC 11)", () => {
     expect((await latest(app, pass, { "if-modified-since": lastModified })).statusCode).toBe(200);
     expect((await latest(app, pass, { "if-modified-since": String(relaid.headers["last-modified"]) })).statusCode).toBe(304);
     const { rows } = await context.admin.query("SELECT layout_version FROM app.apple_passes WHERE id = $1", [pass.serial]);
-    expect(rows).toEqual([{ layout_version: 1 }]);
+    expect(rows).toEqual([{ layout_version: APPLE_PASS_LAYOUT_VERSION }]);
   });
 
   it("marks a pass changed by any write to its card's stamps, a previous release's included", async () => {
@@ -257,6 +257,67 @@ describe("PassKit web service (AC 11)", () => {
     const updated = await latest(app, pass, { "if-modified-since": lastModified });
     expect(updated.statusCode).toBe(200);
     expect(readPass(updated).strings("en")).toContain('"stamps_value" = "⁨1⁩ of ⁨2 stamps⁩";');
+  });
+
+  it("shows an opted-in card's announced offer while it runs, notifying only that day, and drops the field on opting out (AC 4, 14)", async () => {
+    const app = await cafeApp();
+    // A café clock between 06:00 and 18:00 (Etc/GMT+6 is UTC-6), so "today" never turns over during the test.
+    await context.admin.query("UPDATE app.cafes SET time_zone = $2 WHERE id = $1", [app.owner.cafeId, new Date().getUTCHours() >= 12 ? "Etc/GMT+6" : "Etc/GMT-6"]);
+    const card = await issueCard(app.owner.cafeId);
+    const optIn = (offers: boolean) => app.app.inject({ method: "POST", url: `/c/${card.webSecret}/offers`, ...formBody(offers ? { offers: "yes" } : {}) });
+    const pass = await download(app, card.webSecret);
+    expect(pass.json).toMatchObject({ storeCard: { auxiliaryFields: [] } });
+    expect((await optIn(true)).statusCode).toBe(303);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+    const none = readPass(await latest(app, pass));
+    expect(none.json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", value: "offer_value" }] } });
+    expect(JSON.stringify(none.json)).not.toContain("changeMessage");
+    expect(none.strings("en")).toContain('"offer_value" = "None right now";');
+
+    const created = await app.app.inject({
+      method: "POST",
+      url: "/api/campaigns",
+      headers: withCookie(app.owner.session),
+      payload: { nameAr: "عصرية", nameEn: "Afternoon", weekdays: [1, 2, 3, 4, 5, 6, 7], startsMinute: 0, endsMinute: 1440, discount: { kind: "percent", value: 20 }, orderTypeIds: [app.coffee] },
+    });
+    const campaignId = created.json<{ running: { id: string }[] }>().running[0]?.id ?? "missing";
+    const lastModified = String((await latest(app, pass)).headers["last-modified"]);
+    // As the worker announces it (announceCampaigns).
+    await context.admin.query("INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id) VALUES ($1, $2, $3)", [app.owner.cafeId, campaignId, card.cardId]);
+    const announced = await latest(app, pass, { "if-modified-since": lastModified });
+    expect(announced.statusCode).toBe(200);
+    const offer = readPass(announced);
+    expect(offer.json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", changeMessage: "offer_change" }], backFields: [{ key: "offer_details" }, { key: "about" }] } });
+    expect(offer.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
+    expect(offer.strings("en")).toContain('"offer_details_value" = "Every day, all day, on Coffee.";');
+    // Fetched on a later day: the same offer, silently.
+    await context.admin.query("UPDATE app.campaign_announcements SET announced_at = announced_at - interval '2 days' WHERE card_id = $1", [card.cardId]);
+    const later = readPass(await latest(app, pass));
+    expect(later.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
+    expect(JSON.stringify(later.json)).not.toContain("changeMessage");
+    // Opting out and in again the day it was announced brings the offer back, silently.
+    await context.admin.query("UPDATE app.campaign_announcements SET announced_at = now() - interval '1 minute' WHERE card_id = $1", [card.cardId]);
+    await context.admin.query("UPDATE app.cards SET offers_opt_in_at = now() - interval '2 minutes' WHERE id = $1", [card.cardId]);
+    expect(JSON.stringify(readPass(await latest(app, pass)).json)).toContain("changeMessage");
+    expect((await optIn(false)).statusCode).toBe(303);
+    expect((await optIn(true)).statusCode).toBe(303);
+    const again = readPass(await latest(app, pass));
+    expect(again.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
+    expect(JSON.stringify(again.json)).not.toContain("changeMessage");
+
+    // Ending the campaign queues the pass's update with it; the pass then shows no offer, silently.
+    await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
+    const ended = await app.app.inject({ method: "POST", url: `/api/campaigns/${campaignId}/end`, headers: withCookie(app.owner.session), payload: {} });
+    expect(ended.statusCode).toBe(200);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+    const over = readPass(await latest(app, pass));
+    expect(over.strings("en")).toContain('"offer_value" = "None right now";');
+    expect(JSON.stringify(over.json)).not.toContain("changeMessage");
+
+    await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
+    expect((await optIn(false)).statusCode).toBe(303);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+    expect(readPass(await latest(app, pass)).json).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "about" }] } });
   });
 
   it("unregisters a device, and keeps only a pass's newest registrations", async () => {

@@ -1,4 +1,4 @@
-import type { Transaction } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { PgBoss, fromKysely, type Queue, type SendOptions } from "pg-boss";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -91,6 +91,30 @@ export async function startJobQueue(boss: PgBoss): Promise<void> {
  */
 export function sendInTransaction(boss: PgBoss, trx: Transaction<Database>, name: string, data: object, options: Omit<SendOptions, "db"> = {}): Promise<string | null> {
   return boss.send(name, data, { ...options, db: fromKysely(trx) });
+}
+
+/**
+ * Queues an update of each of these cards' wallet passes that this transaction marked changed (AC 12, 13), inside the
+ * transaction (withCafe for their café), so a change that rolls back sends nothing. The database marks the passes
+ * (triggers on cards, campaigns and campaign_announcements, migrations 0008, 0009 and 0013); at most one job waits per
+ * pass (its id is the singletonKey). Narrowed by card, so it reads only these cards' passes.
+ */
+export async function queueChangedPasses(boss: PgBoss, trx: Transaction<Database>, cafeId: string, cardIds: readonly string[]): Promise<void> {
+  if (cardIds.length === 0) {
+    return;
+  }
+  const ofCards = sql<boolean>`card_id = ANY(${[...cardIds]}::uuid[])`;
+  const changedNow = sql<string>`pg_current_xact_id()`;
+  const apple = await trx.selectFrom("apple_passes").select("id").where(ofCards).where("updated_xid", "=", changedNow).execute();
+  const google = await trx.selectFrom("google_passes").select("id").where(ofCards).where("updated_xid", "=", changedNow).execute();
+  for (const [queue, passes] of [
+    [APPLE_PASS_UPDATE_QUEUE, apple],
+    [GOOGLE_PASS_UPDATE_QUEUE, google],
+  ] as const) {
+    for (const pass of passes) {
+      await sendInTransaction(boss, trx, queue, { cafeId, passId: pass.id }, { singletonKey: pass.id });
+    }
+  }
 }
 
 /**

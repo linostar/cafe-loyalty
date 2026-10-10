@@ -1,6 +1,7 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { PASS_TEXT, googleClassId, googleLoyaltyClass, googleLoyaltyObject, googleObjectId, signJwt } from "./wallet.js";
+import type { CardOffer } from "./offers.js";
+import { PASS_TEXT, googleClassId, googleLoyaltyClass, googleLoyaltyObject, googleObjectId, googleOfferMessage, offerText, signJwt } from "./wallet.js";
 
 const ISSUER = "3388000000012345678";
 const CONTENT = {
@@ -10,7 +11,45 @@ const CONTENT = {
   stamps: 4,
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "qr-token",
+  offer: undefined,
 };
+
+const OFFER: CardOffer = {
+  campaignId: "2d7e0c1b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",
+  nameAr: "عصرية",
+  nameEn: "Afternoon",
+  discount: { kind: "percent", value: 20 },
+  weekdays: [1, 3, 5],
+  startsMinute: 14 * 60,
+  endsMinute: 24 * 60,
+  orderTypes: [
+    { nameAr: "إسبريسو", nameEn: "Espresso" },
+    { nameAr: "لاتيه", nameEn: "Latte" },
+  ],
+  announcedAt: new Date("2026-10-05T12:00:00Z"),
+  mayNotify: true,
+};
+
+describe("offer text", () => {
+  it("names the offer, its discount, days, hours and order types, in English and Arabic (AC 14)", () => {
+    expect(offerText("en", OFFER)).toEqual({ headline: "Afternoon · 20% off", details: "Monday, Wednesday, and Friday, 14:00–00:00, on Espresso and Latte." });
+    const ar = offerText("ar", OFFER);
+    // Latin digits, like the pass's stamps and hours.
+    expect(ar.headline).toBe("عصرية · خصم 20%");
+    expect(ar.details).toContain("الاثنين");
+    expect(ar.details).toContain("14:00–00:00");
+    expect(ar.details).toContain("لاتيه");
+  });
+
+  it("says every day for a campaign that runs all week, and an amount off in dollars", () => {
+    const text = offerText("en", { ...OFFER, weekdays: [1, 2, 3, 4, 5, 6, 7], discount: { kind: "amount", value: 50 }, orderTypes: [{ nameAr: "إسبريسو", nameEn: "Espresso" }] });
+    expect(text).toEqual({ headline: "Afternoon · $0.50 off", details: "Every day, 14:00–00:00, on Espresso." });
+    expect(offerText("ar", { ...OFFER, discount: { kind: "amount", value: 50 } }).headline).toBe("عصرية · خصم $0.50");
+    // Midnight to midnight reads as all day, not as an empty 00:00–00:00.
+    expect(offerText("en", { ...OFFER, startsMinute: 0, endsMinute: 1440 }).details).toBe("Monday, Wednesday, and Friday, all day, on Espresso and Latte.");
+    expect(offerText("ar", { ...OFFER, startsMinute: 0, endsMinute: 1440 }).details).toContain("طوال اليوم");
+  });
+});
 
 describe("Google Wallet objects", () => {
   it("derives class and object ids from the café, the card and its epoch (AC 12)", () => {
@@ -50,8 +89,25 @@ describe("Google Wallet objects", () => {
     expect(googleLoyaltyObject(ISSUER, { ...CONTENT, program: undefined })).toMatchObject({ loyaltyPoints: { balance: { int: 4 } } });
   });
 
+  it("shows the card's offer first, and announces it with one notifying message named after the campaign (AC 14)", () => {
+    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, offer: OFFER });
+    expect(object.textModulesData.map((module) => module.id)).toEqual(["offer", "reward", "about"]);
+    expect(object.textModulesData[0]).toMatchObject({ header: "Afternoon · 20% off", body: offerText("en", OFFER).details });
+    expect(object.textModulesData[0]?.localizedHeader.translatedValues[0]?.value).toBe(offerText("ar", OFFER).headline);
+    expect(googleOfferMessage(OFFER)).toEqual({
+      id: `offer-${OFFER.campaignId}`,
+      header: "New offer",
+      body: "Afternoon · 20% off",
+      localizedHeader: { defaultValue: { language: "en", value: "New offer" }, translatedValues: [{ language: "ar", value: "عرض جديد" }] },
+      localizedBody: { defaultValue: { language: "en", value: "Afternoon · 20% off" }, translatedValues: [{ language: "ar", value: offerText("ar", OFFER).headline }] },
+      messageType: "TEXT_AND_NOTIFY",
+    });
+    // Google's message ids: letters, digits, '.', '_' or '-'.
+    expect(googleOfferMessage(OFFER).id).toMatch(/^[A-Za-z0-9._-]+$/);
+  });
+
   it("builds an earlier epoch's object INACTIVE, without the QR or stamps (AC 8)", () => {
-    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, qr: null });
+    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, qr: null, offer: OFFER });
     expect(object).toEqual({
       id: googleObjectId(ISSUER, CONTENT.cardId, 2),
       classId: googleClassId(ISSUER, CONTENT.cafeId),

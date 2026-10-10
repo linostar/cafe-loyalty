@@ -284,6 +284,14 @@ export interface CampaignOrderTypesTable {
   order_type_id: ColumnType<string, string, never>;
 }
 
+/** A campaign announced on a card's passes (AC 14): once per campaign and card, never changed; deleted with the card. */
+export interface CampaignAnnouncementsTable {
+  cafe_id: ColumnType<string, string, never>;
+  campaign_id: ColumnType<string, string, never>;
+  card_id: ColumnType<string, string, never>;
+  announced_at: CreatedAt;
+}
+
 /** A reward given at the counter (AC 31). Append-only; card_id is set null when the card is deleted. */
 export interface RedemptionsTable {
   id: ColumnType<string, string | undefined, never>;
@@ -333,6 +341,8 @@ export interface GooglePassesTable {
   delivery_failures: ColumnType<number, never, number>;
   delivery_failed_at: ColumnType<Date | null, never, Date | null>;
   delivery_error: ColumnType<string | null, never, string | null>;
+  /** When the pass last had a notifying write (an offer's announcement, AC 14), set before the write is tried. */
+  offer_notified_at: ColumnType<Date | null, never, Date>;
   created_at: CreatedAt;
 }
 
@@ -383,6 +393,7 @@ export interface Database {
   visit_items: VisitItemsTable;
   campaigns: CampaignsTable;
   campaign_order_types: CampaignOrderTypesTable;
+  campaign_announcements: CampaignAnnouncementsTable;
   redemptions: RedemptionsTable;
   apple_passes: ApplePassesTable;
   apple_pass_registrations: ApplePassRegistrationsTable;
@@ -501,6 +512,7 @@ export const TABLE_COLUMNS = {
     "ended_at",
   ],
   campaign_order_types: ["cafe_id", "campaign_id", "order_type_id"],
+  campaign_announcements: ["cafe_id", "campaign_id", "card_id", "announced_at"],
   redemptions: ["id", "cafe_id", "device_id", "event_id", "card_id", "staff_id", "stamps_used", "stamps_left", "redeemed_at"],
   apple_passes: [
     "id",
@@ -518,7 +530,19 @@ export const TABLE_COLUMNS = {
     "created_at",
   ],
   apple_pass_registrations: ["cafe_id", "pass_id", "device_library_hash", "push_token", "created_at", "updated_at"],
-  google_passes: ["id", "cafe_id", "card_id", "epoch", "updated_xid", "delivered_xid", "delivery_failures", "delivery_failed_at", "delivery_error", "created_at"],
+  google_passes: [
+    "id",
+    "cafe_id",
+    "card_id",
+    "epoch",
+    "updated_xid",
+    "delivered_xid",
+    "delivery_failures",
+    "delivery_failed_at",
+    "delivery_error",
+    "offer_notified_at",
+    "created_at",
+  ],
 } as const satisfies ColumnLists;
 
 /**
@@ -547,6 +571,7 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   visit_items: "cafe_id",
   campaigns: "cafe_id",
   campaign_order_types: "cafe_id",
+  campaign_announcements: "cafe_id",
   redemptions: "cafe_id",
   apple_passes: "cafe_id",
   apple_pass_registrations: "cafe_id",

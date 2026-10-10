@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { crc32, deflateSync } from "node:zlib";
-import { PASS_BACKGROUND } from "@cafe-loyalty/db";
+import { PASS_BACKGROUND, offerText, type CardOffer } from "@cafe-loyalty/db";
 import { PKPass } from "passkit-generator";
 import type { CustomerSecrets } from "./customer-crypto.js";
 import { count, t, type Lang } from "./customer-html.js";
@@ -18,7 +18,7 @@ export interface ApplePassConfig {
  * fetched, so every device of it gets the new layout; bump this when the layout changes (and, to reach passes nobody
  * fetches, push those whose layout_version is older).
  */
-export const APPLE_PASS_LAYOUT_VERSION = 1;
+export const APPLE_PASS_LAYOUT_VERSION = 2;
 
 /**
  * The authenticationToken of a card's pass at the epoch of `webSecret` (AC 11): 256 bits keyed with the pepper from
@@ -37,6 +37,8 @@ export interface ApplePassContent {
   program: { stampsRequired: number; rewardNameAr: string; rewardNameEn: string } | undefined;
   /** The card's QR token, or null for a pass of an earlier epoch (the card moved to another phone): voided. */
   qr: string | null;
+  /** What the card shows of offers (loadCardOffer). */
+  offers: { optedIn: boolean; offer: CardOffer | undefined };
 }
 
 /**
@@ -95,16 +97,45 @@ function passStrings(lang: Lang, content: ApplePassContent): Record<string, stri
     about_value: t(lang, moved ? "passMovedText" : "passAboutText"),
     // The stamps it takes show above, as "4 of 9 stamps".
     ...(reward === undefined ? {} : { reward_label: t(lang, "passRewardLabel"), reward_value: reward }),
+    ...offerStrings(lang, content.offers.offer),
   };
   return Object.fromEntries(Object.entries(strings).map(([key, value]) => [key, stringsValue(value)]));
 }
 
+/** The offer field's texts: the offer's headline and details, or that there is none. */
+function offerStrings(lang: Lang, offer: CardOffer | undefined): Record<string, string> {
+  const text = offer === undefined ? undefined : offerText(lang, offer);
+  return {
+    offer_label: t(lang, "passOfferLabel"),
+    offer_value: text?.headline ?? t(lang, "passNoOffer"),
+    offer_change: t(lang, "passOfferChange"),
+    ...(text === undefined ? {} : { offer_details_label: t(lang, "passOfferDetailsLabel"), offer_details_value: text.details }),
+  };
+}
+
+/**
+ * A card's offer field, on the front of an opted-in card's pass (AC 4): Wallet shows a lock-screen notification when a
+ * field with a changeMessage changes value, so only an offer that may notify has one (announced today, CardOffer.mayNotify; AC 14). The field stays while
+ * the card is opted in, saying there is no offer, so an ended offer goes away silently.
+ */
+function offerFields(content: ApplePassContent) {
+  const { optedIn, offer } = content.offers;
+  if (!optedIn || content.qr === null) {
+    return { auxiliaryFields: [], backFields: [] };
+  }
+  return {
+    auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", ...(offer?.mayNotify === true ? { changeMessage: "offer_change" } : {}) }],
+    backFields: offer === undefined ? [] : [{ key: "offer_details", label: "offer_details_label", value: "offer_details_value" }],
+  };
+}
+
 /**
  * A signed .pkpass of a card (AC 10): its stamps, the reward and the card's QR, updated through the PassKit web
- * service at `${publicUrl}/passkit` (AC 11). No field has a changeMessage, so updates (stamps) are silent: lock-screen
- * notifications are kept for offers, at most one a day (AC 14). Sharing is off: the pass carries the card's QR.
+ * service at `${publicUrl}/passkit` (AC 11). Only the offer field can have a changeMessage (offerFields), so stamp
+ * updates are silent: lock-screen notifications are kept for offers, at most one a day (AC 14). Sharing is off: the pass carries the card's QR.
  */
 export function buildApplePass(config: ApplePassConfig, publicUrl: string, content: ApplePassContent): Buffer {
+  const offer = offerFields(content);
   const json = {
     formatVersion: 1,
     passTypeIdentifier: config.passTypeId,
@@ -123,7 +154,8 @@ export function buildApplePass(config: ApplePassConfig, publicUrl: string, conte
     storeCard: {
       primaryFields: [{ key: "stamps", label: "stamps_label", value: "stamps_value" }],
       secondaryFields: content.program === undefined || content.qr === null ? [] : [{ key: "reward", label: "reward_label", value: "reward_value" }],
-      backFields: [{ key: "about", label: "about_label", value: "about_value" }],
+      auxiliaryFields: offer.auxiliaryFields,
+      backFields: [...offer.backFields, { key: "about", label: "about_label", value: "about_value" }],
     },
   };
   const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...ICONS }, config.certificates);

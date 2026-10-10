@@ -1,5 +1,7 @@
 import { createPrivateKey, createSign } from "node:crypto";
+import { formatUsd } from "@cafe-loyalty/shared";
 import { z } from "zod";
+import type { CardOffer } from "./offers.js";
 
 /**
  * Text on wallet passes in both languages (AC 10), shared by the server (the customer pages' messages, Apple passes
@@ -16,6 +18,15 @@ export const PASS_TEXT = {
     passMovedLabel: "Card moved",
     passMovedValue: "Use your new card",
     passMovedText: "This card was restored on another phone. Use the card there.",
+    passOfferLabel: "Offer",
+    passNoOffer: "None right now",
+    passOfferChange: "New offer: %@",
+    passOfferNew: "New offer",
+    passOfferDetailsLabel: "Offer details",
+    passOfferHeadline: "{name} · {discount} off",
+    passOfferDetails: "{days}, {hours}, on {items}.",
+    passOfferEveryDay: "Every day",
+    passOfferAllDay: "all day",
   },
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
@@ -27,10 +38,49 @@ export const PASS_TEXT = {
     passMovedLabel: "نُقلت البطاقة",
     passMovedValue: "استخدم بطاقتك الجديدة",
     passMovedText: "استُعيدت هذه البطاقة على هاتف آخر. استخدم البطاقة هناك.",
+    passOfferLabel: "العرض",
+    passNoOffer: "لا عرض حالياً",
+    passOfferChange: "عرض جديد: %@",
+    passOfferNew: "عرض جديد",
+    passOfferDetailsLabel: "تفاصيل العرض",
+    passOfferHeadline: "{name} · خصم {discount}",
+    passOfferDetails: "{days}، {hours}، على {items}.",
+    passOfferEveryDay: "كل يوم",
+    passOfferAllDay: "طوال اليوم",
   },
 } as const satisfies Record<"ar" | "en", Record<string, string>>;
 
 type PassTextKey = keyof (typeof PASS_TEXT)["en"];
+
+const LOCALES = { ar: "ar-LB", en: "en-US" } as const;
+
+/** A local minute of the day as 24-hour time; the end of the day (1440) is 00:00, as the dashboard shows it. */
+const clock = (minute: number): string => `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+
+/**
+ * An offer's text in one language (AC 14), the same on Apple and Google passes: the headline ("Afternoon espresso · 20%
+ * off"), which is what notifies, and its details (days, hours and the order types it discounts).
+ */
+export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: string; details: string } {
+  const text = PASS_TEXT[lang];
+  const locale = LOCALES[lang];
+  const list = (items: readonly string[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(items);
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
+  // In Latin digits in both languages, like the pass's stamps ("4/9") and hours.
+  const discount = offer.discount.kind === "percent" ? `${String(offer.discount.value)}%` : formatUsd(offer.discount.value, "en");
+  const days =
+    offer.weekdays.length === 7
+      ? text.passOfferEveryDay
+      : // 1 January 2024 was a Monday, ISO weekday 1.
+        list(offer.weekdays.map((day) => weekday.format(new Date(Date.UTC(2024, 0, day)))));
+  return {
+    headline: text.passOfferHeadline.replace("{name}", lang === "ar" ? offer.nameAr : offer.nameEn).replace("{discount}", discount),
+    details: text.passOfferDetails
+      .replace("{days}", days)
+      .replace("{hours}", offer.startsMinute === 0 && offer.endsMinute === 1440 ? text.passOfferAllDay : `${clock(offer.startsMinute)}–${clock(offer.endsMinute)}`)
+      .replace("{items}", list(offer.orderTypes.map((type) => (lang === "ar" ? type.nameAr : type.nameEn)))),
+  };
+}
 
 /** The passes' background colour (RGB), on Apple and Google alike. */
 export const PASS_BACKGROUND = [74, 44, 42] as const;
@@ -121,12 +171,39 @@ export interface GooglePassContent {
   program: { stampsRequired: number; rewardNameAr: string; rewardNameEn: string } | undefined;
   /** The card's QR token, or null for an object of an earlier epoch (the card moved to another phone): INACTIVE. */
   qr: string | null;
+  /** The offer the card shows (loadCardOffer), if any. */
+  offer: CardOffer | undefined;
+}
+
+/** An offer's text in both languages, as a header and body of a Google object. */
+const offerTexts = (offer: CardOffer) => {
+  const en = offerText("en", offer);
+  const ar = offerText("ar", offer);
+  return { headline: localized(en.headline, ar.headline), details: localized(en.details, ar.details) };
+};
+
+/**
+ * The message that announces an offer on a Google pass (AC 14): added once per pass with TEXT_AND_NOTIFY, Google's
+ * one way to notify (field updates notify only for fields Google allows). Its id is the campaign's, which a card is
+ * announced once.
+ */
+export function googleOfferMessage(offer: CardOffer) {
+  const { headline } = offerTexts(offer);
+  const header = passText("passOfferNew");
+  return {
+    id: `offer-${offer.campaignId}`,
+    header: header.defaultValue.value,
+    body: headline.defaultValue.value,
+    localizedHeader: header,
+    localizedBody: headline,
+    messageType: "TEXT_AND_NOTIFY" as const,
+  };
 }
 
 /**
- * A card's whole loyalty object as it is now (AC 10): the stamps, the reward and the card's QR, or, for an earlier
- * epoch, an INACTIVE object without them (AC 8). Written whole, so every write leaves Google with the current card. No
- * notifyPreference: updates are silent, keeping lock-screen notifications for offers (AC 14).
+ * A card's whole loyalty object as it is now (AC 10): the offer it shows, the stamps, the reward and the card's QR, or,
+ * for an earlier epoch, an INACTIVE object without them (AC 8). Written whole, so every write leaves Google with the
+ * current card. Writes are silent (no notifyPreference); only an offer's message notifies (googleOfferMessage, AC 14).
  */
 export function googleLoyaltyObject(issuerId: string, content: GooglePassContent) {
   const ids = { id: googleObjectId(issuerId, content.cardId, content.epoch), classId: googleClassId(issuerId, content.cafeId) };
@@ -145,6 +222,7 @@ export function googleLoyaltyObject(issuerId: string, content: GooglePassContent
       balance: program === undefined ? { int: content.stamps } : { string: `${String(content.stamps)}/${String(program.stampsRequired)}` },
     },
     textModulesData: [
+      ...(content.offer === undefined ? [] : [textModule("offer", offerTexts(content.offer).headline, offerTexts(content.offer).details)]),
       ...(program === undefined ? [] : [textModule("reward", passText("passRewardLabel"), localized(program.rewardNameEn, program.rewardNameAr))]),
       textModule("about", passText("passAboutLabel"), passText("passAboutText")),
     ],
@@ -153,3 +231,4 @@ export function googleLoyaltyObject(issuerId: string, content: GooglePassContent
 
 export type GoogleLoyaltyClass = ReturnType<typeof googleLoyaltyClass>;
 export type GoogleLoyaltyObject = ReturnType<typeof googleLoyaltyObject>;
+export type GoogleOfferMessage = ReturnType<typeof googleOfferMessage>;

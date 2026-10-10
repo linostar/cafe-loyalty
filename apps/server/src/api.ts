@@ -36,7 +36,7 @@ export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (erro
   registerAccessControl(app, options.db);
   void app.register(ownerAuthRoutes, { prefix: "/auth", db: options.db, mailer: options.mailer, background: options.background, dashboardUrl: options.dashboardUrl });
   void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl });
-  void app.register(campaignRoutes, { db: options.db });
+  void app.register(campaignRoutes, { db: options.db, jobs: options.jobs });
   void app.register(staffRoutes, { db: options.db });
   void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl, releaseBuiltAt: options.releaseBuiltAt });
   void app.register(syncRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs });

@@ -223,6 +223,8 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .values({ cafe_id: cafeId, pass_id: idOf("applePass", cafeId), device_library_hash: randomBytes(32), push_token: "ab".repeat(32) })
       .execute(),
   google_passes: (trx, cafeId) => trx.insertInto("google_passes").values({ cafe_id: cafeId, card_id: idOf("card", cafeId), epoch: 1 }).execute(),
+  campaign_announcements: (trx, cafeId) =>
+    trx.insertInto("campaign_announcements").values({ cafe_id: cafeId, campaign_id: idOf("campaign", cafeId), card_id: idOf("card", cafeId) }).execute(),
 };
 
 const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];

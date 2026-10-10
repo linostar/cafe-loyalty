@@ -6,6 +6,7 @@ import { pushPassUpdate } from "./apple-passes.js";
 import { trackDelivery } from "./delivery.js";
 import { writeGooglePass, type GooglePassSettings } from "./google-passes.js";
 import type { GoogleWallet } from "./google-wallet.js";
+import { ANNOUNCE_CRON, ANNOUNCE_QUEUE, announceCampaigns } from "./offers.js";
 import type { WorkerTask } from "./worker.js";
 
 /** Removes expired owner sessions, reset links, invites, device tokens, pairing codes and card recovery links. */
@@ -84,7 +85,8 @@ function logged(queue: string, logger: Logger, run: (job: Job, log: Logger) => P
 }
 
 /**
- * Runs the job queue: the hourly purge, the sweep of undelivered passes every 15 minutes and, with APNs and Google
+ * Runs the job queue: the hourly purge, the sweep of undelivered passes every 15 minutes, the campaign announcements
+ * every 5 minutes and, with APNs and Google
  * Wallet, each one's pass updates (without them, those wait, queued, for a worker that has them), recording each
  * update's outcome on its pass (trackDelivery). Stopping waits for running jobs at most what is left of `shutdownTimeoutMs` after the longest
  * statement on each of the two pools (pg-boss's and the app's, both closed after it), so the worker stops in time.
@@ -107,6 +109,12 @@ export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: nu
         logged(RESEND_QUEUE, logger, (_job, log) => resendUndeliveredPasses(boss, log)),
       );
       const { db, pusher, google } = dependencies;
+      await boss.createQueue(ANNOUNCE_QUEUE);
+      await boss.schedule(ANNOUNCE_QUEUE, ANNOUNCE_CRON);
+      await boss.work(
+        ANNOUNCE_QUEUE,
+        logged(ANNOUNCE_QUEUE, logger, (_job, log) => announceCampaigns(boss, db, log)),
+      );
       if (pusher !== undefined) {
         await boss.work(
           APPLE_PASS_UPDATE_QUEUE,

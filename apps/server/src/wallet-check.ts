@@ -9,14 +9,16 @@ import { queuePassUpdate } from "./pass-updates.js";
 
 /**
  * The manual wallet check (AC 46), run against staging: makes a demo card whose web card offers the Apple and Google
- * passes, then changes it the way stamping and recovery do, so a tester sees on real phones that passes save, update
- * and void. The card is an ordinary card without a phone number; delete it from its web card afterwards.
+ * passes, then changes it the way stamping, offer announcements and recovery do, so a tester sees on real phones that
+ * passes save, update silently, notify of an offer and void. The card is an ordinary card without a phone number;
+ * delete it from its web card afterwards.
  */
-export type WalletCheckCommand = { command: "issue"; cafeId: string } | { command: "stamp" | "restore"; secret: string };
+export type WalletCheckCommand = { command: "issue"; cafeId: string } | { command: "stamp" | "offer" | "restore"; secret: string };
 
 export const WALLET_CHECK_USAGE = [
   "Usage: wallet-check issue --cafe-id <uuid>    a demo card at the café; prints its web card link",
   "       wallet-check stamp <web card link>     adds a stamp (back to 0 once the reward is due); passes update",
+  "       wallet-check offer <web card link>     opts the card in and announces a running campaign on it; passes notify",
   "       wallet-check restore <web card link>   moves the card to a new phone, as recovery does; prints the new link",
 ].join("\n");
 
@@ -34,7 +36,7 @@ export function parseWalletCheckArgs(args: readonly string[]): WalletCheckComman
       const cafeId = z.uuid().safeParse(values["cafe-id"]);
       return cafeId.success ? { command, cafeId: cafeId.data } : null;
     }
-    if ((command === "stamp" || command === "restore") && link !== undefined && rest.length === 0 && values["cafe-id"] === undefined) {
+    if ((command === "stamp" || command === "offer" || command === "restore") && link !== undefined && rest.length === 0 && values["cafe-id"] === undefined) {
       const secret = secretOf(link);
       return secret === undefined ? null : { command, secret };
     }
@@ -78,6 +80,26 @@ export async function runWalletCheck(db: Kysely<Database>, jobs: PgBoss | undefi
       await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: "card.stamps_set", entityType: "card", entityId: card.id, changes: { ...changes, stamps: updated.stamps } });
       await queuePassUpdate(trx, jobs, card.cafe_id, card.id);
       return `The card has ${String(updated.stamps)} stamps. Within a minute, each phone's pass should show them, without a notification.`;
+    }
+    if (command.command === "offer") {
+      // As the worker announces it (announceCampaigns), but now and whatever was announced today: a tester checks on demand.
+      const campaign = await trx
+        .selectFrom("campaigns")
+        .select(["id", "name_en"])
+        .where("ended_at", "is", null)
+        .where((eb) =>
+          eb.not(eb.exists(eb.selectFrom("campaign_announcements").select("card_id").whereRef("campaign_announcements.campaign_id", "=", "campaigns.id").where("card_id", "=", card.id))),
+        )
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      if (campaign === undefined) {
+        throw new Error("The café has no running campaign this card has not been told of yet. Create one on the dashboard's Campaigns page, then run this again.");
+      }
+      await trx.updateTable("cards").set({ offers_opt_in_at: sql<Date>`coalesce(offers_opt_in_at, now())` }).where("id", "=", card.id).execute();
+      await trx.insertInto("campaign_announcements").values({ cafe_id: card.cafe_id, campaign_id: campaign.id, card_id: card.id }).execute();
+      await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: "card.offer_announced", entityType: "card", entityId: card.id, changes: { ...changes, campaignId: campaign.id } });
+      await queuePassUpdate(trx, jobs, card.cafe_id, card.id);
+      return `Announced "${campaign.name_en}" on the card. Within a minute, each phone should show one notification of the new offer, and the pass should show it. Then run stamp: the pass updates without another notification.`;
     }
     const secret = newToken();
     await trx
