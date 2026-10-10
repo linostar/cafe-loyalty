@@ -70,10 +70,10 @@ describe("buildApplePass", () => {
       },
     });
     const english = text("en.lproj/pass.strings");
-    expect(english).toContain('"offer_value" = "Afternoon: 20% off";');
+    expect(english).toContain('"offer_value" = "Afternoon · 20% off";');
     expect(english).toContain('"offer_change" = "New offer: %@";');
     expect(english).toContain('"offer_details_value" = "Every day, 14:00–16:00, on Espresso.";');
-    expect(text("ar.lproj/pass.strings")).toContain('"offer_value" = "عصرية: خصم');
+    expect(text("ar.lproj/pass.strings")).toContain('"offer_value" = "عصرية · خصم');
     // Fetched on a later day: the same offer, silently.
     const later = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: { ...offer, mayNotify: false } } })).json;
     expect(JSON.stringify(later)).not.toContain("changeMessage");

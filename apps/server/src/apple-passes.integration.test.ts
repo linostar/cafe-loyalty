@@ -261,6 +261,8 @@ describe("PassKit web service (AC 11)", () => {
 
   it("shows an opted-in card's announced offer while it runs, notifying only that day, and drops the field on opting out (AC 4, 14)", async () => {
     const app = await cafeApp();
+    // A café clock between 06:00 and 18:00 (Etc/GMT+6 is UTC-6), so "today" never turns over during the test.
+    await context.admin.query("UPDATE app.cafes SET time_zone = $2 WHERE id = $1", [app.owner.cafeId, new Date().getUTCHours() >= 12 ? "Etc/GMT+6" : "Etc/GMT-6"]);
     const card = await issueCard(app.owner.cafeId);
     const optIn = (offers: boolean) => app.app.inject({ method: "POST", url: `/c/${card.webSecret}/offers`, ...formBody(offers ? { offers: "yes" } : {}) });
     const pass = await download(app, card.webSecret);
@@ -286,12 +288,12 @@ describe("PassKit web service (AC 11)", () => {
     expect(announced.statusCode).toBe(200);
     const offer = readPass(announced);
     expect(offer.json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", changeMessage: "offer_change" }], backFields: [{ key: "offer_details" }, { key: "about" }] } });
-    expect(offer.strings("en")).toContain('"offer_value" = "Afternoon: 20% off";');
-    expect(offer.strings("en")).toContain('"offer_details_value" = "Every day, 00:00–24:00, on Coffee.";');
+    expect(offer.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
+    expect(offer.strings("en")).toContain('"offer_details_value" = "Every day, all day, on Coffee.";');
     // Fetched on a later day: the same offer, silently.
     await context.admin.query("UPDATE app.campaign_announcements SET announced_at = announced_at - interval '2 days' WHERE card_id = $1", [card.cardId]);
     const later = readPass(await latest(app, pass));
-    expect(later.strings("en")).toContain('"offer_value" = "Afternoon: 20% off";');
+    expect(later.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
     expect(JSON.stringify(later.json)).not.toContain("changeMessage");
     // Opting out and in again the day it was announced brings the offer back, silently.
     await context.admin.query("UPDATE app.campaign_announcements SET announced_at = now() - interval '1 minute' WHERE card_id = $1", [card.cardId]);
@@ -300,8 +302,17 @@ describe("PassKit web service (AC 11)", () => {
     expect((await optIn(false)).statusCode).toBe(303);
     expect((await optIn(true)).statusCode).toBe(303);
     const again = readPass(await latest(app, pass));
-    expect(again.strings("en")).toContain('"offer_value" = "Afternoon: 20% off";');
+    expect(again.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
     expect(JSON.stringify(again.json)).not.toContain("changeMessage");
+
+    // Ending the campaign queues the pass's update with it; the pass then shows no offer, silently.
+    await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
+    const ended = await app.app.inject({ method: "POST", url: `/api/campaigns/${campaignId}/end`, headers: withCookie(app.owner.session), payload: {} });
+    expect(ended.statusCode).toBe(200);
+    expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+    const over = readPass(await latest(app, pass));
+    expect(over.strings("en")).toContain('"offer_value" = "None right now";');
+    expect(JSON.stringify(over.json)).not.toContain("changeMessage");
 
     await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
     expect((await optIn(false)).statusCode).toBe(303);

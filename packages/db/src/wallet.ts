@@ -23,9 +23,10 @@ export const PASS_TEXT = {
     passOfferChange: "New offer: %@",
     passOfferNew: "New offer",
     passOfferDetailsLabel: "Offer details",
-    passOfferHeadline: "{name}: {discount} off",
+    passOfferHeadline: "{name} · {discount} off",
     passOfferDetails: "{days}, {hours}, on {items}.",
     passOfferEveryDay: "Every day",
+    passOfferAllDay: "all day",
   },
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
@@ -42,9 +43,10 @@ export const PASS_TEXT = {
     passOfferChange: "عرض جديد: %@",
     passOfferNew: "عرض جديد",
     passOfferDetailsLabel: "تفاصيل العرض",
-    passOfferHeadline: "{name}: خصم {discount}",
+    passOfferHeadline: "{name} · خصم {discount}",
     passOfferDetails: "{days}، {hours}، على {items}.",
     passOfferEveryDay: "كل يوم",
+    passOfferAllDay: "طوال اليوم",
   },
 } as const satisfies Record<"ar" | "en", Record<string, string>>;
 
@@ -52,11 +54,11 @@ type PassTextKey = keyof (typeof PASS_TEXT)["en"];
 
 const LOCALES = { ar: "ar-LB", en: "en-US" } as const;
 
-/** A local minute of the day as 24-hour time; the end of the day (1440) is 24:00. */
-const clock = (minute: number): string => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+/** A local minute of the day as 24-hour time; the end of the day (1440) is 00:00, as the dashboard shows it. */
+const clock = (minute: number): string => `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
 /**
- * An offer's text in one language (AC 14), the same on Apple and Google passes: the headline ("Afternoon espresso: 20%
+ * An offer's text in one language (AC 14), the same on Apple and Google passes: the headline ("Afternoon espresso · 20%
  * off"), which is what notifies, and its details (days, hours and the order types it discounts).
  */
 export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: string; details: string } {
@@ -64,8 +66,8 @@ export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: stri
   const locale = LOCALES[lang];
   const list = (items: readonly string[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(items);
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
-  const discount =
-    offer.discount.kind === "percent" ? new Intl.NumberFormat(locale, { style: "percent" }).format(offer.discount.value / 100) : formatUsd(offer.discount.value, lang);
+  // In Latin digits in both languages, like the pass's stamps ("4/9") and hours.
+  const discount = offer.discount.kind === "percent" ? `${String(offer.discount.value)}%` : formatUsd(offer.discount.value, "en");
   const days =
     offer.weekdays.length === 7
       ? text.passOfferEveryDay
@@ -75,7 +77,7 @@ export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: stri
     headline: text.passOfferHeadline.replace("{name}", lang === "ar" ? offer.nameAr : offer.nameEn).replace("{discount}", discount),
     details: text.passOfferDetails
       .replace("{days}", days)
-      .replace("{hours}", `${clock(offer.startsMinute)}–${clock(offer.endsMinute)}`)
+      .replace("{hours}", offer.startsMinute === 0 && offer.endsMinute === 1440 ? text.passOfferAllDay : `${clock(offer.startsMinute)}–${clock(offer.endsMinute)}`)
       .replace("{items}", list(offer.orderTypes.map((type) => (lang === "ar" ? type.nameAr : type.nameEn)))),
   };
 }

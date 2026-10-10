@@ -27,8 +27,9 @@ export interface GooglePassSettings {
  * exists. It reads inside withCafe for the job's café, so a job naming another café's pass writes nothing (AC 2).
  * Failures throw, for pg-boss to retry; the whole object is written again, so a retry never duplicates or loses a
  * change. The first write after an offer's announcement, on the day it was announced, to a pass that existed by then,
- * adds the message that notifies (AC 14); the pass records that before the write, so a retry, or a write whose answer was lost, never notifies twice
- * (a failed one does not notify at all; the offer still shows).
+ * adds the message that notifies (AC 14), unless the card's Apple pass is on a device (Wallet tells that one itself,
+ * and AC 14 counts per card). The pass records it before the write, so a retry, or a write whose answer was lost,
+ * never notifies twice; a failed one does not notify at all (logged; the offer still shows).
  */
 export async function writeGooglePass(
   db: Kysely<Database>,
@@ -52,6 +53,14 @@ export async function writeGooglePass(
       cafe: await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", job.cafeId).executeTakeFirstOrThrow(),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, pass.card_id),
+      appleOnDevice:
+        (await trx
+          .selectFrom("apple_pass_registrations")
+          .innerJoin("apple_passes", "apple_passes.id", "apple_pass_registrations.pass_id")
+          .select("apple_passes.id")
+          .where("apple_passes.card_id", "=", pass.card_id)
+          .where("apple_passes.epoch", "=", pass.card_epoch)
+          .executeTakeFirst()) !== undefined,
     };
   });
   if (found === undefined) {
@@ -62,11 +71,12 @@ export async function writeGooglePass(
   const { pass, cafe, program } = found;
   const current = pass.epoch === pass.card_epoch;
   const offer = current ? found.offers.offer : undefined;
-  // Only a pass that existed when the offer was announced: one saved since (on a new phone, or after the card's Apple
-  // pass was told) shows the offer silently, so the card is not told twice that day.
+  // Only a pass that existed when the offer was announced (one saved since, on a new phone, shows it silently), and
+  // only for a card whose Apple pass is not told already: the card is told once that day.
   const notify =
     offer !== undefined &&
     offer.mayNotify &&
+    !found.appleOnDevice &&
     pass.created_at < offer.announcedAt &&
     (pass.offer_notified_at === null || pass.offer_notified_at < offer.announcedAt);
   if (notify) {
@@ -81,7 +91,17 @@ export async function writeGooglePass(
     qr: current ? signCardQr(settings, { cardId: pass.card_id, cafeId: job.cafeId, epoch: pass.epoch }) : null,
     offer,
   });
-  const result = await wallet.save(googleLoyaltyClass(settings.issuerId, cafe, googleLogoUrl(settings.publicUrl)), object, current, notify ? googleOfferMessage(offer) : undefined);
+  let result: SaveResult;
+  try {
+    result = await wallet.save(googleLoyaltyClass(settings.issuerId, cafe, googleLogoUrl(settings.publicUrl)), object, current, notify ? googleOfferMessage(offer) : undefined);
+  } catch (error) {
+    if (notify) {
+      // Recorded as told already, so the retry writes the offer silently: unless Google applied the write and only its
+      // answer was lost, this notification is not sent (AC 14 over AC 42).
+      logger.warn({ campaignId: offer.campaignId }, "google offer notification may not have been sent: the write failed");
+    }
+    throw error;
+  }
   logger.info({ result, notified: notify }, "google pass written");
   return { result };
 }

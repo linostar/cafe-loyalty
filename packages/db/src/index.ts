@@ -19,6 +19,7 @@ export {
   createJobQueue,
   isJobQueueVersionMismatch,
   passUpdateJobSchema,
+  queueChangedPasses,
   sendInTransaction,
   startJobQueue,
   type JobQueueOptions,

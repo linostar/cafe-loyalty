@@ -1,4 +1,4 @@
-import { withCafe, type Database } from "@cafe-loyalty/db";
+import { queueChangedPasses, withCafe, type Database, type PgBoss } from "@cafe-loyalty/db";
 import {
   ApiError,
   MAX_RUNNING_CAMPAIGNS,
@@ -20,6 +20,8 @@ import { parseInput } from "./http-errors.js";
 
 export interface CampaignRoutesOptions {
   db: Kysely<Database>;
+  /** The job queue, or undefined when it could not start (passes are still marked changed, for the sweep). */
+  jobs: PgBoss | undefined;
 }
 
 /**
@@ -87,7 +89,7 @@ const listCampaigns = async (trx: Transaction<Database>): Promise<Campaigns> => 
 
 /** Quiet-hour campaigns (AC 35): the owner makes them, refused below the margin floor, and ends them. */
 export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOptions, done: (error?: Error) => void): void {
-  const { db } = options;
+  const { db, jobs } = options;
 
   app.get("/campaigns", { config: { access: "owner" } }, async (request): Promise<Campaigns> => {
     const { cafeId } = ownerOf(request);
@@ -177,7 +179,10 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
     return reply.code(201).send(campaigns);
   });
 
-  /** Ends a running campaign; counters stop offering it at their next catalog refresh. */
+  /**
+   * Ends a running campaign; counters stop offering it at their next catalog refresh, and the passes showing it are
+   * updated (a trigger marks them changed, migration 0013; AC 14), silently.
+   */
   app.post("/campaigns/:id/end", { config: { access: "owner" } }, async (request) => {
     const owner = ownerOf(request);
     const { id } = parseInput(idParams, request.params);
@@ -193,6 +198,16 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         throw new ApiError("NOT_FOUND", "This campaign is not running. Reload the page to see the current list.");
       }
       await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "campaign.ended", entityType: "campaign", entityId: id });
+      if (jobs !== undefined) {
+        // ponytail: one job per pass in this request, a few thousand at most for a café; a background job if that grows.
+        const announced = await trx.selectFrom("campaign_announcements").select("card_id").where("campaign_id", "=", id).execute();
+        await queueChangedPasses(
+          jobs,
+          trx,
+          owner.cafeId,
+          announced.map((row) => row.card_id),
+        );
+      }
       return listCampaigns(trx);
     });
     request.log.info({ cafeId: owner.cafeId }, "campaign ended");

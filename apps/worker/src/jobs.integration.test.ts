@@ -3,7 +3,9 @@ import {
   APPLE_PASS_UPDATE_QUEUE,
   GOOGLE_PASS_UPDATE_QUEUE,
   createJobQueue,
+  loadCardOffer,
   verifyCardQr,
+  withCafe,
   type GoogleLoyaltyClass,
   type GoogleLoyaltyObject,
   type GoogleOfferMessage,
@@ -15,10 +17,10 @@ import { pino } from "pino";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PassPusher, PushResult } from "./apns.js";
 import { DeliveryError } from "./delivery.js";
-import type { GooglePassSettings } from "./google-passes.js";
+import { writeGooglePass, type GooglePassSettings } from "./google-passes.js";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
 import { PURGE_QUEUE, RESEND_QUEUE, jobQueueTask } from "./jobs.js";
-import { ANNOUNCE_QUEUE } from "./offers.js";
+import { ANNOUNCE_QUEUE, announceCampaigns } from "./offers.js";
 
 let db: TestDatabase;
 let admin: pg.Client;
@@ -164,34 +166,40 @@ const registrationTokens = async (cafeId: string): Promise<string[]> =>
  * A café whose clock reads between 06:00 and 18:00 now (a fixed-offset zone picked from the UTC hour), so a campaign
  * running all day has hours left whenever the test runs; returns the café and its local minute of the day.
  */
-async function cafeAtDaytime(): Promise<{ cafeId: string; minute: number }> {
+async function cafeAtDaytime(): Promise<{ cafeId: string; minute: number; weekday: number }> {
   const cafeId = randomUUID();
   // Etc/GMT+6 is UTC-6 (POSIX signs).
   const timeZone = new Date().getUTCHours() >= 12 ? "Etc/GMT+6" : "Etc/GMT-6";
   await admin.query("INSERT INTO app.cafes (id, name, time_zone) VALUES ($1, 'Café Najjar', $2)", [cafeId, timeZone]);
-  const { rows } = await admin.query<{ minute: number }>(
-    "SELECT (extract(hour FROM now() AT TIME ZONE $1) * 60 + extract(minute FROM now() AT TIME ZONE $1))::int AS minute",
+  const { rows } = await admin.query<{ minute: number; weekday: number }>(
+    `SELECT (extract(hour FROM now() AT TIME ZONE $1) * 60 + extract(minute FROM now() AT TIME ZONE $1))::int AS minute,
+            extract(isodow FROM now() AT TIME ZONE $1)::int AS weekday`,
     [timeZone],
   );
-  return { cafeId, minute: rows[0]?.minute ?? 0 };
+  return { cafeId, minute: rows[0]?.minute ?? 0, weekday: rows[0]?.weekday ?? 0 };
 }
 
-/** A campaign of the café on every weekday, from `starts` to `ends` (local minutes), 20% off its one order type. */
-async function campaign(cafeId: string, name: string, starts: number, ends: number): Promise<string> {
+const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7];
+
+/** A campaign of the café on `weekdays`, from `starts` to `ends` (local minutes), 20% off its one order type. */
+async function campaign(cafeId: string, name: string, starts: number, ends: number, weekdays = EVERY_DAY): Promise<string> {
   const id = randomUUID();
   const orderType = randomUUID();
   await admin.query("INSERT INTO app.order_types (id, cafe_id, name_ar, name_en, price_cents, cost_cents) VALUES ($1, $2, 'إسبريسو', 'Espresso', 250, 70)", [orderType, cafeId]);
   await admin.query(
     `INSERT INTO app.campaigns (id, cafe_id, name_ar, name_en, weekdays, starts_minute, ends_minute, discount_kind, discount_value, min_margin_percent, created_at)
-     VALUES ($1, $2, $3, $3, '{1,2,3,4,5,6,7}', $4, $5, 'percent', 20, 0, clock_timestamp())`,
-    [id, cafeId, name, starts, ends],
+     VALUES ($1, $2, $3, $3, $6, $4, $5, 'percent', 20, 0, clock_timestamp())`,
+    [id, cafeId, name, starts, ends, weekdays],
   );
   await admin.query("INSERT INTO app.campaign_order_types (cafe_id, campaign_id, order_type_id) VALUES ($1, $2, $3)", [cafeId, id, orderType]);
   return id;
 }
 
-/** A card of the café, opted in to offers or not, with delivered Apple (one device) and Google passes when `passes`. */
-async function offerCard(cafeId: string, { optedIn = true, passes = false } = {}) {
+/**
+ * A card of the café, opted in to offers or not, with delivered Apple and Google passes when `passes`; the Apple pass
+ * is on one device unless `onDevice` is false.
+ */
+async function offerCard(cafeId: string, { optedIn = true, passes = false, onDevice = true } = {}) {
   const cardId = randomUUID();
   await admin.query("INSERT INTO app.cards (id, cafe_id, web_secret_hash, privacy_accepted_at, offers_opt_in_at) VALUES ($1, $2, $3, now(), $4)", [
     cardId,
@@ -204,12 +212,14 @@ async function offerCard(cafeId: string, { optedIn = true, passes = false } = {}
   }
   const applePassId = randomUUID();
   const googlePassId = randomUUID();
-  const token = randomBytes(32).toString("hex");
+  const token = onDevice ? randomBytes(32).toString("hex") : "";
   await admin.query(
     "INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, 2, pg_current_xact_id())",
     [applePassId, cafeId, cardId, randomBytes(32)],
   );
-  await admin.query("INSERT INTO app.apple_pass_registrations (cafe_id, pass_id, device_library_hash, push_token) VALUES ($1, $2, $3, $4)", [cafeId, applePassId, randomBytes(32), token]);
+  if (onDevice) {
+    await admin.query("INSERT INTO app.apple_pass_registrations (cafe_id, pass_id, device_library_hash, push_token) VALUES ($1, $2, $3, $4)", [cafeId, applePassId, randomBytes(32), token]);
+  }
   await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch, delivered_xid) VALUES ($1, $2, $3, 1, pg_current_xact_id())", [googlePassId, cafeId, cardId]);
   return { cardId, applePassId, googlePassId, token };
 }
@@ -471,13 +481,24 @@ describe("job queue", () => {
   });
 
   it("announces each open campaign once to each opted-in card, at most once a day, and notifies once per announcement (AC 14)", async () => {
-    const { cafeId, minute } = await cafeAtDaytime();
-    const first = await campaign(cafeId, "Afternoon", 0, 1440);
-    const second = await campaign(cafeId, "Evening", 0, 1440);
-    // Closed now, and open with too little left to announce.
+    const { cafeId, minute, weekday } = await cafeAtDaytime();
+    // Not open now (closed already, too little left, starting later today, on the other days of the week), and made
+    // first, so the daily cap would not hide them if they were listed.
     await campaign(cafeId, "Night", 1, 60);
     await campaign(cafeId, "Ending", 0, minute + 10);
-    const withPasses = await offerCard(cafeId, { passes: true });
+    await campaign(cafeId, "Later", minute + 60, 1440);
+    await campaign(
+      cafeId,
+      "Other days",
+      0,
+      1440,
+      EVERY_DAY.filter((day) => day !== weekday),
+    );
+    const first = await campaign(cafeId, "Afternoon", 0, 1440);
+    const second = await campaign(cafeId, "Evening", 0, 1440);
+    // A card on Google Wallet only, one whose Apple pass is on a phone (and that has a Google pass too), one without a pass.
+    const onGoogle = await offerCard(cafeId, { passes: true, onDevice: false });
+    const onApple = await offerCard(cafeId, { passes: true });
     const withoutPasses = await offerCard(cafeId);
     const optedOut = await offerCard(cafeId, { optedIn: false });
     // Another café's opted-in card, with no campaign of its own.
@@ -488,55 +509,60 @@ describe("job queue", () => {
       const id = (await boss.send(ANNOUNCE_QUEUE)) ?? "";
       await finished(boss, ANNOUNCE_QUEUE, id, "completed");
     };
+    const writes = (card: { cardId: string }) => wallet.saved.filter((save) => save.object.id.includes(card.cardId));
+    const cards = [onGoogle, onApple, withoutPasses];
     await task.start();
     try {
       await announce();
       // The older campaign first; the daily cap holds the other back.
-      expect(await announcements(cafeId)).toEqual([`${withPasses.cardId} ${first}`, `${withoutPasses.cardId} ${first}`].sort());
+      expect(await announcements(cafeId)).toEqual(cards.map((card) => `${card.cardId} ${first}`).sort());
       expect(await announcements(elsewhere.cafeId)).toEqual([]);
       expect((await announcements(cafeId)).join()).not.toContain(optedOut.cardId);
       await vi.waitFor(
         async () => {
-          expect(await deliveryState("apple_passes", withPasses.applePassId)).toMatchObject({ delivered: true });
-          expect(await deliveryState("google_passes", withPasses.googlePassId)).toMatchObject({ delivered: true });
+          for (const card of [onGoogle, onApple]) {
+            expect(await deliveryState("apple_passes", card.applePassId)).toMatchObject({ delivered: true });
+            expect(await deliveryState("google_passes", card.googlePassId)).toMatchObject({ delivered: true });
+          }
         },
         { timeout: 20_000, interval: 250 },
       );
-      expect(pusher.pushed).toEqual([withPasses.token]);
-      expect(wallet.saved).toHaveLength(1);
-      expect(wallet.saved[0]?.object.textModulesData[0]).toMatchObject({ id: "offer", header: "Afternoon: 20% off" });
-      expect(wallet.saved[0]?.message).toMatchObject({ id: `offer-${first}`, messageType: "TEXT_AND_NOTIFY" });
+      expect(pusher.pushed).toEqual([onApple.token]);
+      expect(writes(onGoogle)).toHaveLength(1);
+      expect(writes(onGoogle)[0]?.object.textModulesData[0]).toMatchObject({ id: "offer", header: "Afternoon · 20% off" });
+      expect(writes(onGoogle)[0]?.message).toMatchObject({ id: `offer-${first}`, messageType: "TEXT_AND_NOTIFY" });
+      // Wallet tells the Apple pass itself (its changeMessage): the card's Google pass shows the offer silently.
+      expect(writes(onApple)[0]?.object.textModulesData[0]).toMatchObject({ id: "offer" });
+      expect(writes(onApple)[0]?.message).toBeUndefined();
 
       // Run again the same day: nothing new. A later write of the pass (a stamp) shows the offer silently.
       await announce();
-      expect(await announcements(cafeId)).toHaveLength(2);
-      const stamp = (await boss.send(GOOGLE_PASS_UPDATE_QUEUE, { cafeId, passId: withPasses.googlePassId })) ?? "";
+      expect(await announcements(cafeId)).toHaveLength(3);
+      const stamp = (await boss.send(GOOGLE_PASS_UPDATE_QUEUE, { cafeId, passId: onGoogle.googlePassId })) ?? "";
       await finished(boss, GOOGLE_PASS_UPDATE_QUEUE, stamp, "completed");
-      expect(wallet.saved[1]?.object.textModulesData[0]).toMatchObject({ id: "offer" });
-      expect(wallet.saved[1]?.message).toBeUndefined();
+      expect(writes(onGoogle)[1]?.object.textModulesData[0]).toMatchObject({ id: "offer" });
+      expect(writes(onGoogle)[1]?.message).toBeUndefined();
 
       // The next day the other campaign is announced, and notifies; the first is never announced again.
       await admin.query("UPDATE app.campaign_announcements SET announced_at = announced_at - interval '2 days' WHERE cafe_id = $1", [cafeId]);
       await announce();
-      expect(await announcements(cafeId)).toEqual(
-        [`${withPasses.cardId} ${first}`, `${withoutPasses.cardId} ${first}`, `${withPasses.cardId} ${second}`, `${withoutPasses.cardId} ${second}`].sort(),
-      );
+      expect(await announcements(cafeId)).toEqual(cards.flatMap((card) => [`${card.cardId} ${first}`, `${card.cardId} ${second}`]).sort());
       await vi.waitFor(
         () => {
-          expect(wallet.saved).toHaveLength(3);
+          expect(writes(onGoogle)).toHaveLength(3);
         },
         { timeout: 20_000, interval: 250 },
       );
-      expect(wallet.saved[2]?.message).toMatchObject({ id: `offer-${second}` });
+      expect(writes(onGoogle)[2]?.message).toMatchObject({ id: `offer-${second}` });
 
       // Ending the campaign marks the passes showing it changed; their next write shows no offer, silently.
       await admin.query("UPDATE app.campaigns SET ended_at = now() WHERE id = $1", [second]);
-      expect(await deliveryState("google_passes", withPasses.googlePassId)).toMatchObject({ delivered: false });
-      expect(await deliveryState("apple_passes", withPasses.applePassId)).toMatchObject({ delivered: false });
-      const ended = (await boss.send(GOOGLE_PASS_UPDATE_QUEUE, { cafeId, passId: withPasses.googlePassId })) ?? "";
+      expect(await deliveryState("google_passes", onGoogle.googlePassId)).toMatchObject({ delivered: false });
+      expect(await deliveryState("apple_passes", onApple.applePassId)).toMatchObject({ delivered: false });
+      const ended = (await boss.send(GOOGLE_PASS_UPDATE_QUEUE, { cafeId, passId: onGoogle.googlePassId })) ?? "";
       await finished(boss, GOOGLE_PASS_UPDATE_QUEUE, ended, "completed");
-      expect(wallet.saved[3]?.object.textModulesData.map((module) => module.id)).toEqual(["about"]);
-      expect(wallet.saved[3]?.message).toBeUndefined();
+      expect(writes(onGoogle)[3]?.object.textModulesData.map((module) => module.id)).toEqual(["about"]);
+      expect(writes(onGoogle)[3]?.message).toBeUndefined();
     } finally {
       await task.stop();
     }
@@ -545,7 +571,7 @@ describe("job queue", () => {
   it("shows an offer silently on a Google pass saved after it was announced, so the card is not told twice that day (AC 14)", async () => {
     const { cafeId } = await cafeAtDaytime();
     const running = await campaign(cafeId, "Afternoon", 0, 1440);
-    const card = await offerCard(cafeId, { passes: true });
+    const card = await offerCard(cafeId, { passes: true, onDevice: false });
     // Announced before the pass existed, as when the card is saved again on a new phone the same day.
     await admin.query("INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id, announced_at) VALUES ($1, $2, $3, now())", [cafeId, running, card.cardId]);
     await admin.query("UPDATE app.google_passes SET created_at = now() + interval '1 second' WHERE id = $1", [card.googlePassId]);
@@ -559,6 +585,133 @@ describe("job queue", () => {
     } finally {
       await task.stop();
     }
+  });
+
+  it("counts the day in the café's time zone, not UTC's, for the daily cap and for notifying (AC 14)", async () => {
+    const { cafeId } = await cafeAtDaytime();
+    const earlier = await campaign(cafeId, "Morning", 0, 1440);
+    const later = await campaign(cafeId, "Afternoon", 0, 1440);
+    const beforeMidnight = await offerCard(cafeId);
+    const afterMidnight = await offerCard(cafeId);
+    await admin.query("UPDATE app.cards SET offers_opt_in_at = now() - interval '2 days' WHERE cafe_id = $1", [cafeId]);
+    // Announced a minute either side of the café's last midnight, which is 6 hours off UTC's.
+    for (const [card, offset] of [
+      [beforeMidnight, "-1 minute"],
+      [afterMidnight, "1 minute"],
+    ] as const) {
+      await admin.query(
+        `INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id, announced_at)
+         SELECT $1, $2, $3, (date_trunc('day', now() AT TIME ZONE time_zone) AT TIME ZONE time_zone) + $4::interval FROM app.cafes WHERE id = $1`,
+        [cafeId, earlier, card.cardId, offset],
+      );
+    }
+    const offerOf = (card: { cardId: string }) => withCafe(db.app.db, cafeId, (trx) => loadCardOffer(trx, card.cardId));
+    expect((await offerOf(beforeMidnight)).offer?.mayNotify).toBe(false);
+    expect((await offerOf(afterMidnight)).offer?.mayNotify).toBe(true);
+    const { boss, task } = jobQueue();
+    await task.start();
+    try {
+      await announceCampaigns(boss, db.app.db, pino({ level: "silent" }));
+      // Yesterday's card is told of the other campaign; today's is not.
+      expect(await announcements(cafeId)).toEqual(
+        [`${beforeMidnight.cardId} ${earlier}`, `${beforeMidnight.cardId} ${later}`, `${afterMidnight.cardId} ${earlier}`].sort(),
+      );
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("serializes announcers on the café's row without holding up stamping's inserts (AC 13, 14)", async () => {
+    const { cafeId } = await cafeAtDaytime();
+    await campaign(cafeId, "Morning", 0, 1440);
+    await campaign(cafeId, "Afternoon", 0, 1440);
+    await offerCard(cafeId);
+    // The first announcer to insert stays in its transaction, holding the café's row, for a second and a half.
+    await admin.query("CREATE FUNCTION app.test_slow_announcement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(1.5); RETURN NEW; END $$");
+    await admin.query(
+      `CREATE TRIGGER test_slow_announcement BEFORE INSERT ON app.campaign_announcements FOR EACH ROW WHEN (NEW.cafe_id = '${cafeId}') EXECUTE FUNCTION app.test_slow_announcement()`,
+    );
+    const { boss, task } = jobQueue();
+    await task.start();
+    try {
+      const silent = pino({ level: "silent" });
+      const runs = Promise.all([announceCampaigns(boss, db.app.db, silent), announceCampaigns(boss, db.app.db, silent)]);
+      // One announcer inserting, the other waiting for the café's row.
+      await vi.waitFor(
+        async () => {
+          const { rows } = await admin.query<{ sleeping: number; waiting: number }>(
+            `SELECT count(*) FILTER (WHERE wait_event = 'PgSleep')::int AS sleeping,
+                    count(*) FILTER (WHERE wait_event_type = 'Lock' AND query ILIKE '%from "cafes"%')::int AS waiting
+               FROM pg_stat_activity`,
+          );
+          expect(rows[0]).toEqual({ sleeping: 1, waiting: 1 });
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+      // A stamp's audit row goes in meanwhile: its foreign key's lock does not wait on the announcer's.
+      await withCafe(db.app.db, cafeId, async (trx) => {
+        await sql`SET LOCAL lock_timeout = '500ms'`.execute(trx);
+        await trx.insertInto("audit_log").values({ cafe_id: cafeId, actor_type: "system", actor_id: null, action: "card.stamps_set", entity_type: "card", entity_id: null }).execute();
+      });
+      await runs;
+      // One after the other: the second sees the first's announcement, and the daily cap holds.
+      expect(await announcements(cafeId)).toHaveLength(1);
+    } finally {
+      await task.stop();
+      await admin.query("DROP TRIGGER test_slow_announcement ON app.campaign_announcements");
+      await admin.query("DROP FUNCTION app.test_slow_announcement()");
+    }
+  });
+
+  it("announces the other cafés when one café's announcement fails, then fails the run for a retry (AC 13)", async () => {
+    const broken = await cafeAtDaytime();
+    await campaign(broken.cafeId, "Morning", 0, 1440);
+    await offerCard(broken.cafeId);
+    // Made later, so listed after the broken café's.
+    const working = await cafeAtDaytime();
+    const running = await campaign(working.cafeId, "Afternoon", 0, 1440);
+    const card = await offerCard(working.cafeId);
+    await admin.query("CREATE FUNCTION app.test_refuse_announcement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'refused for the test'; END $$");
+    await admin.query(
+      `CREATE TRIGGER test_refuse_announcement BEFORE INSERT ON app.campaign_announcements FOR EACH ROW WHEN (NEW.cafe_id = '${broken.cafeId}') EXECUTE FUNCTION app.test_refuse_announcement()`,
+    );
+    const lines: Record<string, unknown>[] = [];
+    const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as Record<string, unknown>) });
+    const { boss, task } = jobQueue();
+    await task.start();
+    try {
+      await expect(announceCampaigns(boss, db.app.db, logger)).rejects.toBeInstanceOf(AggregateError);
+      expect(await announcements(working.cafeId)).toEqual([`${card.cardId} ${running}`]);
+      expect(await announcements(broken.cafeId)).toEqual([]);
+      expect(lines).toContainEqual(expect.objectContaining({ msg: "campaign announcement failed", cafeId: broken.cafeId }));
+      expect(lines.filter((line) => line.msg === "campaign announced" && line.cafeId === broken.cafeId)).toEqual([]);
+    } finally {
+      await task.stop();
+      await admin.query("DROP TRIGGER test_refuse_announcement ON app.campaign_announcements");
+      await admin.query("DROP FUNCTION app.test_refuse_announcement()");
+    }
+  });
+
+  it("logs an offer notification lost to a failed write, and the retry shows the offer silently (AC 14, 42)", async () => {
+    const { cafeId } = await cafeAtDaytime();
+    const running = await campaign(cafeId, "Afternoon", 0, 1440);
+    const card = await offerCard(cafeId, { passes: true, onDevice: false });
+    await admin.query("UPDATE app.cards SET offers_opt_in_at = now() - interval '1 hour' WHERE id = $1", [card.cardId]);
+    await admin.query("UPDATE app.google_passes SET created_at = now() - interval '1 hour' WHERE id = $1", [card.googlePassId]);
+    await admin.query("INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id) VALUES ($1, $2, $3)", [cafeId, running, card.cardId]);
+    const wallet = new FakeGoogleWallet();
+    wallet.answer = new DeliveryError("Google Wallet answered 503 to PUT loyaltyObject.", "google_503");
+    const lines: Record<string, unknown>[] = [];
+    const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as Record<string, unknown>) });
+    const job = { cafeId, passId: card.googlePassId };
+    await expect(writeGooglePass(db.app.db, wallet, GOOGLE, logger, job)).rejects.toBeInstanceOf(DeliveryError);
+    expect(wallet.saved[0]?.message).toMatchObject({ id: `offer-${running}` });
+    expect(lines).toContainEqual(expect.objectContaining({ level: 40, msg: "google offer notification may not have been sent: the write failed", campaignId: running }));
+    // The retry: recorded as told already, so it writes the offer without the message.
+    wallet.answer = "updated";
+    expect(await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job)).toEqual({ result: "updated" });
+    expect(wallet.saved[1]?.object.textModulesData[0]).toMatchObject({ id: "offer" });
+    expect(wallet.saved[1]?.message).toBeUndefined();
   });
 
   it("marks a card's current passes changed when it opts in or out of offers, and not on other card changes", async () => {

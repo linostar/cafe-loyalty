@@ -1,5 +1,5 @@
-import { APPLE_PASS_UPDATE_QUEUE, GOOGLE_PASS_UPDATE_QUEUE, sendInTransaction, type Database, type PassUpdateJob, type PgBoss } from "@cafe-loyalty/db";
-import { sql, type Transaction } from "kysely";
+import { queueChangedPasses, sendInTransaction, type Database, type PassUpdateJob, type PgBoss } from "@cafe-loyalty/db";
+import type { Transaction } from "kysely";
 
 /**
  * Queues the update of each of a card's wallet passes this transaction changed (AC 12, 13), inside the same
@@ -11,19 +11,8 @@ import { sql, type Transaction } from "kysely";
  * next refreshes them.
  */
 export async function queuePassUpdate(trx: Transaction<Database>, jobs: PgBoss | undefined, cafeId: string, cardId: string): Promise<void> {
-  if (jobs === undefined) {
-    return;
-  }
-  const changedNow = sql<string>`pg_current_xact_id()`;
-  const apple = await trx.selectFrom("apple_passes").select("id").where("card_id", "=", cardId).where("updated_xid", "=", changedNow).execute();
-  const google = await trx.selectFrom("google_passes").select("id").where("card_id", "=", cardId).where("updated_xid", "=", changedNow).execute();
-  for (const [queue, passes] of [
-    [APPLE_PASS_UPDATE_QUEUE, apple],
-    [GOOGLE_PASS_UPDATE_QUEUE, google],
-  ] as const) {
-    for (const pass of passes) {
-      await queueOne(trx, jobs, queue, { cafeId, passId: pass.id });
-    }
+  if (jobs !== undefined) {
+    await queueChangedPasses(jobs, trx, cafeId, [cardId]);
   }
 }
 

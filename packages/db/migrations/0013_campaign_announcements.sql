@@ -7,8 +7,9 @@
 -- gets at most one notifying update a day.
 --
 -- An announcement, a campaign's end and a card opting in or out mark the card's current passes changed in the database
--- itself, as stamp changes do (migrations 0008, 0009): the announcing job queues their updates, and the sweep of
--- undelivered passes delivers the rest within 15 minutes. Deleting a card deletes its announcements (AC 9).
+-- itself, as stamp changes do (migrations 0008, 0009); whatever makes the change queues their updates in the same
+-- transaction (the sweep of undelivered passes catches up on any it could not). Deleting a card deletes its
+-- announcements (AC 9).
 -- Runs as cl_owner with search_path = app.
 
 CREATE TABLE campaign_announcements (
