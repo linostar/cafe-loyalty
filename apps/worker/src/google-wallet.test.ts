@@ -1,7 +1,7 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { googleLoyaltyClass, googleLoyaltyObject } from "@cafe-loyalty/db";
+import { googleLoyaltyClass, googleLoyaltyObject, googleOfferMessage } from "@cafe-loyalty/db";
 import { afterEach, describe, expect, it } from "vitest";
 import { DeliveryError, deliveryErrorCode } from "./delivery.js";
 import { createGoogleWallet } from "./google-wallet.js";
@@ -11,7 +11,19 @@ const SERVICE_ACCOUNT = { email: "wallet@example-test.iam.gserviceaccount.com", 
 const ISSUER = "3388000000012345678";
 const QR = "test-qr-token-that-must-never-be-logged";
 const CLASS = googleLoyaltyClass(ISSUER, { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", name: "Café Najjar" }, "https://card.example.test/wallet/logo.png");
-const OBJECT = googleLoyaltyObject(ISSUER, { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", epoch: 1, stamps: 2, program: undefined, qr: QR });
+const OBJECT = googleLoyaltyObject(ISSUER, { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", epoch: 1, stamps: 2, program: undefined, qr: QR, offer: undefined });
+const MESSAGE = googleOfferMessage({
+  campaignId: "2d7e0c1b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",
+  nameAr: "عصرية",
+  nameEn: "Afternoon",
+  discount: { kind: "percent", value: 20 },
+  weekdays: [1],
+  startsMinute: 840,
+  endsMinute: 960,
+  orderTypes: [{ nameAr: "إسبريسو", nameEn: "Espresso" }],
+  announcedAt: new Date(),
+  mayNotify: true,
+});
 
 interface Seen {
   method: string;
@@ -97,6 +109,26 @@ describe("Google Wallet client", () => {
     const google = await fakeGoogle([{ status: 404 }, { status: 200 }, { status: 409 }, { status: 200 }]);
     expect(await google.wallet.save(CLASS, OBJECT, true)).toBe("updated");
     expect(google.api()).toEqual([`PUT ${objectPath}`, "POST /walletobjects/v1/loyaltyClass", "POST /walletobjects/v1/loyaltyObject", `PUT ${objectPath}`]);
+  });
+
+  it("adds an offer's message to an updated object, the one write that notifies (AC 14), but not to one it just made", async () => {
+    const google = await fakeGoogle([{ status: 200 }, { status: 200 }, { status: 404 }, { status: 200 }, { status: 200 }]);
+    expect(await google.wallet.save(CLASS, OBJECT, true, MESSAGE)).toBe("updated");
+    expect(await google.wallet.save(CLASS, OBJECT, true, MESSAGE)).toBe("created");
+    expect(google.api()).toEqual([
+      `PUT ${objectPath}`,
+      `POST ${objectPath}/addMessage`,
+      `PUT ${objectPath}`,
+      "POST /walletobjects/v1/loyaltyClass",
+      "POST /walletobjects/v1/loyaltyObject",
+    ]);
+    expect(JSON.parse(google.seen.find((request) => request.path.endsWith("/addMessage"))?.body ?? "{}")).toEqual({ message: MESSAGE });
+  });
+
+  it("takes a message an earlier attempt added, and fails on any other refusal of it", async () => {
+    const google = await fakeGoogle([{ status: 200 }, { status: 409 }, { status: 200 }, { status: 429, body: { error: { status: "RESOURCE_EXHAUSTED" } } }]);
+    expect(await google.wallet.save(CLASS, OBJECT, true, MESSAGE)).toBe("updated");
+    expect(deliveryErrorCode(await google.wallet.save(CLASS, OBJECT, true, MESSAGE).catch((error: unknown) => error))).toBe("google_429_RESOURCE_EXHAUSTED");
   });
 
   it("fails with Google's status as its code and none of the answer's text, and signs in again after a 401", async () => {

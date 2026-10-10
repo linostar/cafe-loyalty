@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { GOOGLE_PASS_UPDATE_QUEUE, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { GOOGLE_PASS_UPDATE_QUEUE, loadCardOffer, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -451,6 +451,7 @@ ${errorBlock(errors.delete, "delete-error")}
         stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
         cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
         program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
+        offers: await loadCardOffer(trx, card.id),
       };
     });
     const pkpass = buildApplePass(apple, options.publicUrl, {
@@ -463,6 +464,7 @@ ${errorBlock(errors.delete, "delete-error")}
           ? undefined
           : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
+      offers: found.offers,
     });
     request.log.info({ cafeId: card.cafe_id }, "apple pass downloaded");
     return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("content-disposition", 'attachment; filename="card.pkpass"').send(pkpass);
@@ -507,6 +509,8 @@ ${errorBlock(errors.delete, "delete-error")}
           ? undefined
           : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
+      // Texts are left out of the link (googleSaveUrl); the write queued above adds the offer.
+      offer: undefined,
     });
     request.log.info({ cafeId: card.cafe_id }, "google pass save link opened");
     return reply.code(303).header("location", location).send();
@@ -544,7 +548,7 @@ ${errorBlock(errors.delete, "delete-error")}
     return reply.code(303).header("location", `/c/${secret}?lang=${lang}&saved=1`).send();
   });
 
-  /** Opts in to or out of offers, recording when (AC 4). */
+  /** Opts in to or out of offers, recording when (AC 4), and updates the card's passes. */
   app.post("/c/:secret/offers", async (request, reply) => {
     const { secret } = request.params as { secret: string };
     const lang = langOf(request);
@@ -559,6 +563,8 @@ ${errorBlock(errors.delete, "delete-error")}
         .where("id", "=", card.id)
         .execute();
       await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: optIn ? "card.offers_opted_in" : "card.offers_opted_out", entityType: "card", entityId: card.id, changes: { source: "customer" } });
+      // Opting in or out shows or removes the passes' offer field (cards_touch_offer_passes, migration 0013).
+      await queuePassUpdate(trx, options.jobs, card.cafe_id, card.id);
     });
     return reply.code(303).header("location", `/c/${secret}?lang=${lang}&saved=1`).send();
   });

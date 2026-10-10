@@ -4,8 +4,9 @@ import { sql, type Transaction } from "kysely";
 /**
  * Queues the update of each of a card's wallet passes this transaction changed (AC 12, 13), inside the same
  * transaction (withCafe for the card's café): a change that rolls back sends nothing, and the stamp itself never waits
- * for APNs or Google. The database marks the passes changed when the card's stamps or epoch change
- * (cards_touch_apple_passes and cards_touch_google_passes, migrations 0008 and 0009); call this after such a change.
+ * for APNs or Google. The database marks the passes changed when the card's stamps, epoch or offer opt-in change
+ * (cards_touch_apple_passes, cards_touch_google_passes and cards_touch_offer_passes, migrations 0008, 0009 and 0013);
+ * call this after such a change.
  * Without a job queue (it failed to start) the passes are still marked, and Apple devices see the change when Wallet
  * next refreshes them.
  */

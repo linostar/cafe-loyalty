@@ -1,4 +1,4 @@
-import { signJwt, type GoogleLoyaltyClass, type GoogleLoyaltyObject } from "@cafe-loyalty/db";
+import { signJwt, type GoogleLoyaltyClass, type GoogleLoyaltyObject, type GoogleOfferMessage } from "@cafe-loyalty/db";
 import { DeliveryError } from "./delivery.js";
 
 /** "missing": Google has no such object and none was to be created (an INACTIVE object nobody saved). */
@@ -8,9 +8,10 @@ export type SaveResult = "updated" | "created" | "missing";
 export interface GoogleWallet {
   /**
    * Replaces the object with `object`. When Google has none, `create` makes it (with its class, if that is missing
-   * too); otherwise nothing is written.
+   * too); otherwise nothing is written. With `message`, an updated object then gets it (addMessage), which notifies;
+   * an object just made is on no phone yet, so it gets none.
    */
-  save(loyaltyClass: GoogleLoyaltyClass, object: GoogleLoyaltyObject, create: boolean): Promise<SaveResult>;
+  save(loyaltyClass: GoogleLoyaltyClass, object: GoogleLoyaltyObject, create: boolean, message?: GoogleOfferMessage): Promise<SaveResult>;
 }
 
 export interface GoogleWalletOptions {
@@ -77,12 +78,23 @@ export function createGoogleWallet(options: GoogleWalletOptions): GoogleWallet {
 
   const failed = (status: number, what: string) => new DeliveryError(`Google Wallet answered ${String(status)} to ${what}.`, `google_${String(status)}`);
 
+  async function addMessage(path: string, message: GoogleOfferMessage | undefined): Promise<"updated"> {
+    if (message !== undefined) {
+      const status = await call("POST", `${path}/addMessage`, { message });
+      // 409: an earlier attempt added it.
+      if (status !== 200 && status !== 409) {
+        throw failed(status, "a message");
+      }
+    }
+    return "updated";
+  }
+
   return {
-    async save(loyaltyClass, object, create) {
+    async save(loyaltyClass, object, create, message) {
       const path = `/loyaltyObject/${encodeURIComponent(object.id)}`;
       const status = await call("PUT", path, object);
       if (status === 200) {
-        return "updated";
+        return addMessage(path, message);
       }
       if (status !== 404) {
         throw failed(status, "an object update");
@@ -104,7 +116,7 @@ export function createGoogleWallet(options: GoogleWalletOptions): GoogleWallet {
       if (updated !== 200) {
         throw failed(updated, "an object update");
       }
-      return "updated";
+      return addMessage(path, message);
     },
   };
 }

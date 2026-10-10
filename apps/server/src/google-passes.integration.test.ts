@@ -261,6 +261,7 @@ describe("manual wallet check (AC 46)", () => {
     expect(parseWalletCheckArgs(["issue", "--cafe-id", cafeId])).toEqual({ command: "issue", cafeId });
     expect(parseWalletCheckArgs(["stamp", `${PUBLIC_URL}/c/${secret}?lang=ar`])).toEqual({ command: "stamp", secret });
     expect(parseWalletCheckArgs(["restore", secret])).toEqual({ command: "restore", secret });
+    expect(parseWalletCheckArgs(["offer", secret])).toEqual({ command: "offer", secret });
     for (const wrong of [[], ["issue"], ["issue", "--cafe-id", "nope"], ["stamp"], ["stamp", "https://card.example.test/c/short"], ["stamp", secret, "extra"], ["delete", secret], ["stamp", secret, "--cafe-id", cafeId]]) {
       expect(parseWalletCheckArgs(wrong)).toBeNull();
     }
@@ -285,6 +286,23 @@ describe("manual wallet check (AC 46)", () => {
     expect(await queuedPassUpdates(app.owner.cafeId)).toHaveLength(1);
     expect(await queuedPassUpdates(app.owner.cafeId, GOOGLE_PASS_UPDATE_QUEUE)).toHaveLength(1);
 
+    // An offer needs a running campaign the card was not told of yet; it opts the card in.
+    await expect(runWalletCheck(db, context.jobs, PUBLIC_URL, { command: "offer", secret })).rejects.toThrow("no running campaign");
+    const campaign = await app.app.inject({
+      method: "POST",
+      url: "/api/campaigns",
+      headers: withCookie(app.owner.session),
+      payload: { nameAr: "عصرية", nameEn: "Afternoon", weekdays: [1], startsMinute: 840, endsMinute: 960, discount: { kind: "percent", value: 10 }, orderTypeIds: [app.coffee] },
+    });
+    expect(campaign.statusCode).toBe(201);
+    await clearJobs(app.owner.cafeId);
+    expect(await runWalletCheck(db, context.jobs, PUBLIC_URL, { command: "offer", secret })).toContain('Announced "Afternoon"');
+    expect(await queuedPassUpdates(app.owner.cafeId)).toHaveLength(1);
+    expect(await queuedPassUpdates(app.owner.cafeId, GOOGLE_PASS_UPDATE_QUEUE)).toHaveLength(1);
+    const { rows } = await context.admin.query("SELECT offers_opt_in_at IS NOT NULL AS opted_in FROM app.cards WHERE web_secret_hash = $1", [hashToken(secret)]);
+    expect(rows).toEqual([{ opted_in: true }]);
+    await expect(runWalletCheck(db, context.jobs, PUBLIC_URL, { command: "offer", secret })).rejects.toThrow("no running campaign");
+
     await clearJobs(app.owner.cafeId);
     const moved = await runWalletCheck(db, context.jobs, PUBLIC_URL, { command: "restore", secret });
     const newSecret = new RegExp(`${PUBLIC_URL}/c/([A-Za-z0-9_-]{43})`).exec(moved)?.[1] ?? "missing";
@@ -293,6 +311,6 @@ describe("manual wallet check (AC 46)", () => {
     expect(await queuedPassUpdates(app.owner.cafeId)).toHaveLength(1);
     expect(await queuedPassUpdates(app.owner.cafeId, GOOGLE_PASS_UPDATE_QUEUE)).toHaveLength(1);
     await expect(runWalletCheck(db, context.jobs, PUBLIC_URL, { command: "stamp", secret })).rejects.toThrow("No card has this link");
-    expect(await context.auditActions(app.owner.cafeId)).toEqual(expect.arrayContaining(["card.created", "card.stamps_set", "card.restored"]));
+    expect(await context.auditActions(app.owner.cafeId)).toEqual(expect.arrayContaining(["card.created", "card.stamps_set", "card.offer_announced", "card.restored"]));
   });
 });
