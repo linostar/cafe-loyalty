@@ -2,6 +2,8 @@
 
 A cash-first loyalty tool for independent cafés in Tripoli, Lebanon. Customers get a phone-number loyalty card in Apple Wallet, Google Wallet or a web card; baristas add stamps from an offline-capable counter app; owners see busy and quiet hours, win back lapsed regulars and run quiet-hour offers that never discount below a margin floor.
 
+Customers and owners see it as **Qahwa Loyalty**, a working name defined once (`PRODUCT_NAME`, packages/shared/src/brand.ts).
+
 ## Requirements
 
 - Node.js 22 (see `.nvmrc`)
@@ -59,12 +61,23 @@ Every package also has `build` and `typecheck` scripts, which the root commands 
 |---|---|---|
 | `packages/shared` | `@cafe-loyalty/shared` | Code shared by every app: environment loading, log redaction, error codes, money, time, sync wire format |
 | `packages/db` | `@cafe-loyalty/db` | Database: migrations, bootstrap, the café-scoped query helper, schema types, the job queue, wallet pass content and card QR signing (server and worker only) |
+| `packages/ui` | `@cafe-loyalty/ui` | Design system: tokens, base and customer-page styles, the self-hosted font, the logo and app icons, and the helpers the server uses to inline them |
 | `apps/server` | `@cafe-loyalty/server` | Fastify API server |
 | `apps/worker` | `@cafe-loyalty/worker` | Background worker |
 | `apps/counter` | `@cafe-loyalty/counter` | Counter web app used by baristas (Vite, React) |
 | `apps/dashboard` | `@cafe-loyalty/dashboard` | Owner dashboard (Vite, React) |
 | `e2e` | | Playwright browser tests |
 | `compose.dev.yaml` | | Local development database |
+
+## Design system
+
+- **One source.** `packages/ui` holds the design tokens (`src/tokens.css`: colours, type, spacing, radius, shadow, motion), the base styles every front end shares (`src/base.css`: elements, controls, messages, cards, checkbox labels), the dashboard and counter components (`src/app.css`: badges, pills, row lists and actions, the brand, top bar and footer, empty states, visually hidden text), the customer pages' layer (`src/customer.css`), the font list (`src/fonts.css`) and the logo (`assets/logo.svg`). The dashboard and the counter import the CSS through Vite (`main.tsx`) and add only their own layout (`src/styles.css`); the server inlines tokens, base and customer styles (without comments, and without app.css) into each customer page, so the page's CSP still allows its one stylesheet by hash. Apps use the tokens and never set colour values of their own.
+- **The look.** Warm café: a cream page, white cards with a soft shadow, espresso text and top bar (the passes' colour), and one copper accent for primary actions, links, the current page and focus. A form's submit button is the primary action; other buttons are outlined, and `.danger` marks what cannot be undone.
+- **Font.** IBM Plex Sans Arabic (SIL OFL 1.1, from `@fontsource/ibm-plex-sans-arabic`): regular, semibold and bold, Arabic and Latin in one family, each subset with its `unicode-range` and `font-display: swap`. The apps bundle it; the server serves the same files at `/assets/fonts/<file>` (and the logo at `/assets/logo.svg`), so the customer pages' CSP adds only `font-src 'self'` and `img-src 'self'`. The counter's service worker keeps the font, logo and icons offline.
+- **Checks.** `packages/ui/src/tokens.test.ts` computes the contrast of every colour pair the styles draw (WCAG AA: 4.5:1 for text, 3:1 for control borders and focus), and fails on a colour token it does not check. `styles.test.ts` fails on any physical-direction property (`margin-left`, `left:`, `width:`, `text-align: right`, four-value shorthands) in any front end's stylesheet: use logical ones (`margin-inline-start`, `inset-inline-start`, `inline-size`, `text-align: end`), so right-to-left pages need no styles of their own.
+- **Adding a style.** A component the customer pages and an app both use goes in `base.css`, one only the dashboard and counter use in `app.css` (it stays out of every customer page); one app's layout goes in its own `styles.css`. Use the tokens; a new colour is a new token, added to the contrast test's pairs. Nothing sticks to the top of the viewport over the page, since a focused control could hide under it (the screen specs walk the focus back up each page to check). Keep the accessible names, roles and labels the tests read, and wrap text rather than splitting a sentence a test matches.
+- **Brand files.** The logo is hand-written SVG. The counter's PWA icons are made from it: `rsvg-convert -w 192 -h 192 packages/ui/assets/logo.svg -o packages/ui/assets/icon-192.png` (and 512); the counter's build adds them with its web app manifest. Page titles and the theme colour come from `PRODUCT_NAME` and the tokens (`brandHtml` in each app's vite.config.ts).
+- **Screenshots.** `e2e/dashboard/screens.spec.ts`, `e2e/dashboard/customer-screens.spec.ts` and `e2e/counter/screens.spec.ts` capture every screen at 1440, 1024 and 390 px with fake data and attach them to the Playwright report (`test-results/` locally). They compare no pixels; the counter's checks that a landscape tablet keeps the order's total and Record visit button in view.
 
 ## Database
 
@@ -127,7 +140,7 @@ PostgreSQL 18. Everything lives in schema `app`; migration history is in `meta.s
 
 - **Signup.** The owner prints the café's signup QR (dashboard, Café page), which opens `PUBLIC_URL/join/<code>`. The customer enters a mobile number (Arabic-Indic digits, spaces, dashes, a leading `0` or `00961` are all fine; it is normalised to E.164), accepts the privacy notice and may opt in to offers; both are stored with their time. The reply is a redirect to a new web card, after at least 400 ms, whatever the number's history: a new number gets a linked card; a number known at other cafés gets a linked card here; a number that already has a card here gets a fresh, unlinked card that works by QR only, and the number can no longer stamp the existing card (see Stamping). The existing card is never shown. Signup is limited to 60 attempts per hour per address and, as a backstop, 1,000 cards per hour per café (valid signups only, so junk cannot shut a café's page); the owner can replace a misused code. Deleting a card also takes a minimum time, so it never reveals whether the card was linked.
 - **Phone numbers** are stored as an HMAC-SHA256 lookup hash (`PHONE_LOOKUP_PEPPER`) and AES-256-GCM ciphertext (`PHONE_ENCRYPTION_KEYS`). A café reaches a customer only through its own cards. Because numbers are not verified, everything a card holder controls (recovery email, offers, deletion) belongs to the card, not the number.
-- **Web card** (`/c/<256-bit secret>`): server-rendered in Arabic or English, with no script, a hash-based Content-Security-Policy, `no-store`, `no-referrer` and `noindex`. It shows the stamps and a QR signed with HMAC-SHA256 over card, café, epoch and key id (`CARD_QR_KEYS`), checked in constant time.
+- **Web card** (`/c/<256-bit secret>`): server-rendered in Arabic or English, with no script, a hash-based Content-Security-Policy, `no-store`, `no-referrer` and `noindex`. It shows the card itself (the café on an espresso face, the stamps as a grid of the program's slots with the stamps left, and the QR, signed with HMAC-SHA256 over card, café, epoch and key id (`CARD_QR_KEYS`), checked in constant time), then the offer the card holds when it is opted in to offers, the wallet button and the card's settings.
 - **Recovery.** A card holder may add an email. `/recover` emails a single-use link (`/r/<token>`, 30 minutes, newest only, same reply whether or not a card uses the email). Opening it shows buttons; restoring gives every card with that email a new epoch and a new link, so old QR codes and links stop working and the old Apple pass is pushed voided, and deleting removes those cards.
 - **Deletion.** Deleting a card (from its page, or all cards of an email from a recovery link) removes it with its Apple and Google passes and the Apple device registrations, and the phone number too once no café has a card for it. Deletions are audit-logged without personal data.
 
@@ -146,7 +159,7 @@ PostgreSQL 18. Everything lives in schema `app`; migration history is in `meta.s
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs `pnpm test` on Ubuntu with the Node version from `.nvmrc`, a frozen lockfile, Playwright Chromium and a PostgreSQL 18 service container (trust authentication, reachable only from the job). It has read-only repository permissions, pins every action to a commit SHA, and uploads the Playwright report when a run fails.
+`.github/workflows/ci.yml` runs `pnpm test` on Ubuntu with the Node version from `.nvmrc`, a frozen lockfile, Playwright Chromium and a PostgreSQL 18 service container (trust authentication, reachable only from the job). It has read-only repository permissions, pins every action to a commit SHA, and uploads the Playwright report (with the screen specs' screenshots) after every run that was not cancelled.
 
 ## Configuration
 

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
-import { CUSTOMER_CSP, SafeHtml, count, html, page, pickLang, t } from "./customer-html.js";
+import { CUSTOMER_CSP, FONT_FILES, SafeHtml, count, html, page, pickLang, t } from "./customer-html.js";
 
 describe("html", () => {
   it("escapes interpolated text and attribute values", () => {
@@ -43,6 +44,25 @@ describe("page", () => {
     expect(CUSTOMER_CSP).toContain(`style-src 'sha256-${hash}'`);
     expect(CUSTOMER_CSP).toMatch(/^default-src 'none';/);
     expect(document).not.toContain("<script");
+  });
+
+  it("allows only its own stylesheet, images, fonts and forms: no script, nothing from another origin", () => {
+    expect(CUSTOMER_CSP.replace(/'sha256-[^']+'/, "'sha256-x'")).toBe(
+      "default-src 'none'; style-src 'sha256-x'; img-src 'self' data:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    );
+  });
+
+  it("styles the page with the design system's self-hosted fonts, and names the product in the footer", () => {
+    const document = page("en", "Title", html`<p>x</p>`, null);
+    const style = /<style>([\s\S]*)<\/style>/.exec(document)?.[1] ?? "";
+    expect(style).toContain("--color-espresso");
+    expect(style).toContain(".loyalty-card");
+    expect(style).not.toMatch(/url\((?!\/assets\/fonts\/)/);
+    for (const file of FONT_FILES.keys()) {
+      expect(style).toContain(`url(/assets/fonts/${file})`);
+    }
+    expect(document).toContain('<link rel="icon" type="image/svg+xml" href="/assets/logo.svg">');
+    expect(document).toContain(`Loyalty card by \u2068${PRODUCT_NAME}\u2069</footer>`);
   });
 
   it("sets language and direction, and omits the language switch when asked", () => {

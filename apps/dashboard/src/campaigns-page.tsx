@@ -97,6 +97,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
   return (
     <form
       aria-labelledby="new-campaign-title"
+      className="card"
       onSubmit={(event) => {
         event.preventDefault();
         const startsMinute = minuteOf(starts, false);
@@ -128,8 +129,10 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
     >
       <h3 id="new-campaign-title">New campaign</h3>
       <FormError message={error} />
-      <Field label="Name (English)" name="nameEn" type="text" value={nameEn} onChange={setNameEn} maxLength={60} hint="Such as Quiet afternoons." error={fieldErrors.nameEn} />
-      <Field label="Name (Arabic)" name="nameAr" type="text" lang="ar" value={nameAr} onChange={setNameAr} maxLength={60} error={fieldErrors.nameAr} />
+      <div className="form-grid">
+        <Field label="Name (English)" name="nameEn" type="text" value={nameEn} onChange={setNameEn} maxLength={60} hint="Such as Quiet afternoons." error={fieldErrors.nameEn} />
+        <Field label="Name (Arabic)" name="nameAr" type="text" lang="ar" value={nameAr} onChange={setNameAr} maxLength={60} error={fieldErrors.nameAr} />
+      </div>
       <fieldset aria-describedby={problems.weekdays === undefined ? undefined : "campaign-days-error"}>
         <legend>Days</legend>
         <div className="choices">
@@ -152,8 +155,10 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           </p>
         )}
       </fieldset>
-      <TimeField label="Starts at" value={starts} onChange={setStarts} error={problems.startsMinute ?? fieldErrors.startsMinute} />
-      <TimeField label="Ends at" value={ends} onChange={setEnds} hint="Café time. Use 00:00 to run until midnight." error={problems.endsMinute ?? fieldErrors.endsMinute} />
+      <div className="form-grid">
+        <TimeField label="Starts at" value={starts} onChange={setStarts} error={problems.startsMinute ?? fieldErrors.startsMinute} />
+        <TimeField label="Ends at" value={ends} onChange={setEnds} hint="Café time. Use 00:00 to run until midnight." error={problems.endsMinute ?? fieldErrors.endsMinute} />
+      </div>
       <fieldset>
         <legend>Discount</legend>
         <div className="choices">
@@ -195,7 +200,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
             const after = discount === null ? null : type.priceCents - unitDiscountCents(type.priceCents, discount);
             return (
               <li key={type.id}>
-                <label>
+                <label className="check">
                   <input
                     type="checkbox"
                     aria-invalid={kept || !chosen.includes(type.id) ? undefined : true}
@@ -252,17 +257,19 @@ export function CampaignsPage() {
       <h2 id="campaigns-page-title" tabIndex={-1} data-focus-after-change>
         Campaigns
       </h2>
-      <p>A campaign takes money off chosen order types at quiet hours. The counter gives the discount to every loyalty card holder.</p>
+      <p className="page-intro">A campaign takes money off chosen order types at quiet hours. The counter gives the discount to every loyalty card holder.</p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={ending.error} />
       <h3>Running</h3>
       {state.data.running.length === 0 ? (
-        <p>No campaigns running.</p>
+        <p className="empty">No campaigns running. Start one below for the hours the busy and quiet hours show as quiet.</p>
       ) : (
         <ul className="items">
           {state.data.running.map((campaign) => (
-            <li key={campaign.id}>
-              <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)}{" "}
+            <li key={campaign.id} className="row">
+              <span className="row-main">
+                <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)} <span className="badge badge-success">running</span>
+              </span>
               <ConfirmButton
                 label={`End ${campaign.nameEn}`}
                 confirmLabel={`Yes, end ${campaign.nameEn}`}
@@ -285,8 +292,10 @@ export function CampaignsPage() {
           <h3>Ended</h3>
           <ul className="items">
             {state.data.ended.map((campaign) => (
-              <li key={campaign.id}>
-                <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)}
+              <li key={campaign.id} className="row">
+                <span className="row-main">
+                  <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)} <span className="badge">ended</span>
+                </span>
               </li>
             ))}
           </ul>

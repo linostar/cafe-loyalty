@@ -22,6 +22,7 @@ function AddStaffForm({ change }: { change: Change }) {
   return (
     <form
       aria-labelledby="add-staff-title"
+      className="card form-grid"
       onSubmit={(event) => {
         event.preventDefault();
         void submit(() => change("POST", "/api/staff", { name, pin })).then((result) => {
@@ -61,13 +62,23 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
   const item = useFocusOnChange<HTMLLIElement>(changingPin);
 
   return (
-    <li ref={item}>
-      <strong>{member.name}</strong>
-      {member.revoked ? " · removed" : null}
+    <li ref={item} className="row">
+      <span className="row-main">
+        <strong>{member.name}</strong>
+        {member.revoked ? (
+          <>
+            {" "}
+            <span className="badge">
+              <span className="visually-hidden">· </span>removed
+            </span>
+          </>
+        ) : null}
+      </span>
       <FormError message={error} />
       {member.revoked ? null : changingPin ? (
         <form
           aria-label={`New PIN for ${member.name}`}
+          className="row-form"
           onSubmit={(event) => {
             event.preventDefault();
             void submit(() => change("PATCH", `/api/staff/${member.id}`, { pin })).then((result) => {
@@ -91,18 +102,20 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
             hint={PIN_HINT}
             error={fieldErrors.pin}
           />
-          <button type="submit" disabled={pending}>
-            {pending ? "Saving…" : "Save PIN"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setChangingPin(false);
-              setPin("");
-            }}
-          >
-            Cancel
-          </button>
+          <div className="actions">
+            <button type="submit" disabled={pending}>
+              {pending ? "Saving…" : "Save PIN"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setChangingPin(false);
+                setPin("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       ) : (
         <span className="actions">
@@ -153,9 +166,10 @@ export function StaffPage() {
       <h2 id="staff-page-title" tabIndex={-1} data-focus-after-change>
         Staff
       </h2>
+      <p className="page-intro">Baristas sign in on the counter phones with their PIN, and every stamp they give is recorded under their name.</p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       {staff.length === 0 ? (
-        <p>No baristas yet. Each one gets a PIN to use at the counter.</p>
+        <p className="empty">No baristas yet. Each one gets a PIN to use at the counter.</p>
       ) : (
         <ul className="items">
           {staff.map((member) => (

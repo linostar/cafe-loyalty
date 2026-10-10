@@ -1,0 +1,308 @@
+/*
+ * Base styles shared by every front end, the customer pages included: elements, controls, messages, cards and
+ * checkbox labels. Logical properties only (inline/block start and end), so right-to-left pages need
+ * no other styles (styles.test.ts). Tokens come from tokens.css.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: var(--font-sans);
+  font-size: 100%;
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  background: var(--color-page);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-block-size: 100vh;
+  background: var(--color-page);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin-block: 0 var(--space-3);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-bold);
+  color: var(--color-text);
+}
+
+h1 {
+  font-size: var(--text-2xl);
+}
+
+h2 {
+  font-size: var(--text-xl);
+}
+
+h3 {
+  font-size: var(--text-lg);
+}
+
+h4 {
+  font-size: var(--text-base);
+}
+
+p {
+  margin-block: 0 var(--space-3);
+}
+
+a {
+  color: var(--color-accent-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+strong {
+  font-weight: var(--weight-semibold);
+}
+
+img,
+svg,
+video {
+  max-inline-size: 100%;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Controls */
+label {
+  display: block;
+  margin-block-end: var(--space-1);
+  font-weight: var(--weight-semibold);
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input:not([type="checkbox"], [type="radio"]),
+select,
+textarea {
+  display: block;
+  inline-size: 100%;
+  min-block-size: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+input:not([type="checkbox"], [type="radio"]):hover,
+select:hover,
+textarea:hover {
+  border-color: var(--color-text-muted);
+}
+
+input:not([type="checkbox"], [type="radio"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--color-focus);
+  outline-offset: 0;
+}
+
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: var(--color-danger);
+  border-width: 2px;
+}
+
+input:disabled {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  margin: 0;
+  flex: none;
+  accent-color: var(--color-accent);
+}
+
+fieldset {
+  min-inline-size: 0;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+legend {
+  padding-inline: var(--space-1);
+  font-weight: var(--weight-semibold);
+}
+
+/*
+ * Buttons: a quiet outlined button by default, the form's submit button in copper (each form has one primary action),
+ * and `.primary` for a primary action that is not a submit button. `.danger` for what cannot be undone.
+ */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-block-size: var(--control-height);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-align: center;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+button:hover {
+  border-color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
+}
+
+button[type="submit"],
+button.primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-sm);
+}
+
+button[type="submit"]:hover,
+button.primary:hover {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+
+button.danger {
+  border-color: var(--color-danger);
+  background: var(--color-surface);
+  color: var(--color-danger);
+}
+
+button.danger:hover {
+  background: var(--color-danger-soft);
+}
+
+button[type="submit"].danger {
+  box-shadow: none;
+}
+
+/* Unavailable; aria-disabled ones stay focusable, so the keyboard stays where it was. */
+button:disabled,
+button[aria-disabled="true"] {
+  border-color: var(--color-border);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Messages */
+.hint {
+  margin-block: var(--space-1) 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.field-error {
+  margin-block: var(--space-1) 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-danger);
+}
+
+.form-error,
+.notice,
+.warning-box {
+  margin-block: 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-inline-start-width: 4px;
+  border-radius: var(--radius-md);
+}
+
+.form-error {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.notice {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.warning-box {
+  border-color: var(--color-warning);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.form-error > :last-child,
+.notice > :last-child,
+.warning-box > :last-child {
+  margin-block-end: 0;
+}
+
+.form-error h2,
+.form-error h3 {
+  color: inherit;
+}
+
+/* Components */
+.card {
+  margin-block: 0 var(--space-4);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+/* A checkbox with its label beside it, the box level with the label's first line. */
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-weight: var(--weight-regular);
+}
+
+.check input {
+  margin-block-start: 0.2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

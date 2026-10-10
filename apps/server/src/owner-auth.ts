@@ -1,6 +1,7 @@
 import { withCafe, withLookup, type AuditActorType, type Database } from "@cafe-loyalty/db";
 import {
   ApiError,
+  PRODUCT_NAME,
   loginRequestSchema,
   passwordChangeRequestSchema,
   passwordResetCompleteRequestSchema,
@@ -87,14 +88,14 @@ async function setPassword(trx: Transaction<Database>, cafeId: string, ownerId: 
 export function passwordResetEmail(to: string, link: string): EmailMessage {
   return {
     to,
-    subject: "Reset your Cafe Loyalty password",
+    subject: `Reset your ${PRODUCT_NAME} password`,
     text: [
-      "Someone asked to reset the password of your Cafe Loyalty account.",
+      `Someone asked to reset the password of your ${PRODUCT_NAME} account.`,
       `To choose a new password, open this link within 30 minutes: ${link}`,
       "If you asked more than once, only the link in the newest email works.",
       "If you did not ask for this, ignore this email. Your password stays the same.",
       "",
-      "طلب أحدهم إعادة تعيين كلمة مرور حسابك في Cafe Loyalty.",
+      `طلب أحدهم إعادة تعيين كلمة مرور حسابك في ${PRODUCT_NAME}.`,
       `لاختيار كلمة مرور جديدة، افتح هذا الرابط خلال 30 دقيقة: ${link}`,
       "إذا طلبت أكثر من مرة، فالرابط في أحدث رسالة هو الوحيد الذي يعمل.",
       "إذا لم تطلب ذلك، تجاهل هذه الرسالة. كلمة مرورك لن تتغير.",

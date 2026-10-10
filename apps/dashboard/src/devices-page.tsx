@@ -13,18 +13,18 @@ function NewCode({ code, onDone }: { code: PairingCode; onDone: () => void }) {
   // A 4-module quiet zone, as the QR specification asks, so phone cameras read it reliably.
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(code.pairingUrl, { border: 4 }))}`;
   return (
-    <section aria-labelledby="new-code-title" className="new-code">
+    <section aria-labelledby="new-code-title" className="card new-code">
       <h3 id="new-code-title" tabIndex={-1} data-focus-target>
         Pair {code.deviceName}
       </h3>
-      <p>On the counter phone, scan this code with the camera, or open the counter app and type the code.</p>
+      <p className="hint">On the counter phone, scan this code with the camera, or open the counter app and type the code.</p>
       <img src={qr} alt={`QR code to pair ${code.deviceName}`} width={200} height={200} />
       <p className="code">
         <span aria-hidden="true">{code.code}</span>
         <span className="visually-hidden">Pairing code, letter by letter: {Array.from(code.code.replace(/-/g, "")).join(" ")}</span>
       </p>
       <p>It works once, until {clockFormat.format(new Date(code.expiresAt))}. It is not shown again.</p>
-      <button type="button" onClick={onDone}>
+      <button type="button" className="primary" onClick={onDone}>
         Done
       </button>
     </section>
@@ -37,6 +37,7 @@ function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void }) {
   return (
     <form
       aria-labelledby="pair-title"
+      className="card"
       onSubmit={(event) => {
         event.preventDefault();
         void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName })).then((result) => {
@@ -85,6 +86,7 @@ export function DevicesPage() {
       <h2 id="devices-page-title" tabIndex={-1} data-focus-after-change>
         Devices
       </h2>
+      <p className="page-intro">The phones and tablets your baristas record visits on. Pair a new one with a one-time code; remove one that is lost.</p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />
       <div ref={pairing}>
@@ -107,13 +109,23 @@ export function DevicesPage() {
       </div>
       <h3>Counter phones</h3>
       {devices.devices.length === 0 ? (
-        <p>No phones paired yet.</p>
+        <p className="empty">No phones paired yet. Pair one above to start recording visits at the counter.</p>
       ) : (
         <ul className="items">
           {devices.devices.map((device) => (
-            <li key={device.id}>
-              <strong>{device.name}</strong>
-              {device.revoked ? " · removed" : ` · last seen ${timeFormat.format(new Date(device.lastSeenAt))}`}{" "}
+            <li key={device.id} className="row">
+              <span className="row-main">
+                <strong>{device.name}</strong>{" "}
+                {device.revoked ? (
+                  <span className="badge">
+                    <span className="visually-hidden">· </span>removed
+                  </span>
+                ) : (
+                  <span className="row-meta">
+                    <span className="visually-hidden">· </span>last seen {timeFormat.format(new Date(device.lastSeenAt))}
+                  </span>
+                )}
+              </span>
               {device.revoked ? null : (
                 <ConfirmButton
                   label={`Remove ${device.name}`}
@@ -140,8 +152,10 @@ export function DevicesPage() {
           <h3>Open pairing codes</h3>
           <ul className="items">
             {devices.pairingCodes.map((code) => (
-              <li key={code.id}>
-                {code.deviceName} · until {clockFormat.format(new Date(code.expiresAt))}{" "}
+              <li key={code.id} className="row">
+                <span className="row-main">
+                  {code.deviceName} · until {clockFormat.format(new Date(code.expiresAt))}
+                </span>
                 <button
                   type="button"
                   disabled={pending}

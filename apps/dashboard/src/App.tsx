@@ -1,5 +1,6 @@
 import {
   OWNER_PASSWORD_MIN_LENGTH,
+  PRODUCT_NAME,
   VISIT_HOURS_WEEKS,
   ownerSessionSchema,
   visitHoursSchema,
@@ -7,6 +8,7 @@ import {
   type OwnerSession,
   type VisitHours as VisitHoursData,
 } from "@cafe-loyalty/shared";
+import logoUrl from "@cafe-loyalty/ui/logo.svg";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, noContent } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
@@ -45,7 +47,7 @@ function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
   const { pending, error, fieldErrors, submit } = useSubmit();
 
   return (
-    <section aria-labelledby="password-title">
+    <section aria-labelledby="password-title" className="card">
       <h3 id="password-title">Change password</h3>
       <p>Changing your password signs you out everywhere, on this device too.</p>
       <form
@@ -177,9 +179,9 @@ function VisitHours() {
   const first = hours[0] ?? 0;
   const shown = [...Array((hours.at(-1) ?? -1) - first + 1).keys()].map((offset) => first + offset);
   return (
-    <section aria-labelledby="visit-hours-title">
+    <section aria-labelledby="visit-hours-title" className="card">
       <h3 id="visit-hours-title">Busy and quiet hours</h3>
-      <p>
+      <p className="hint">
         Members only: visits recorded with a loyalty card over the last {VISIT_HOURS_WEEKS} weeks, by the hour they happened in café time
         {data === null ? "" : ` (${data.timeZone})`}. Updated every hour.
       </p>
@@ -197,7 +199,7 @@ function VisitHours() {
           <PageStatus state={state} />
         ) : null
       ) : shown.length === 0 ? (
-        <p>No member visits in the last {VISIT_HOURS_WEEKS} weeks yet.</p>
+        <p className="empty">No member visits in the last {VISIT_HOURS_WEEKS} weeks yet.</p>
       ) : (
         <div className="visit-hours">
           <table>
@@ -228,6 +230,14 @@ function VisitHours() {
               ))}
             </tbody>
           </table>
+          {/* The shades only repeat the numbers in the cells, so the legend is for the eye. */}
+          <p className="heat-legend" aria-hidden="true">
+            Quiet
+            {[1, 2, 3, 4].map((level) => (
+              <span key={level} className={`heat-swatch level-${String(level)}`} />
+            ))}
+            Busy
+          </p>
         </div>
       )}
     </section>
@@ -238,27 +248,33 @@ function HomePage({ session }: { session: OwnerSession }) {
   return (
     <section aria-labelledby="cafe-title">
       <h2 id="cafe-title">{session.cafe.name}</h2>
-      <p>Signed in as {session.owner.email}</p>
+      <p className="page-intro">Signed in as {session.owner.email}</p>
       <WalletDeliveryNotice />
       <VisitHours />
-      <ul className="items">
+      <ul className="tiles">
         <li>
-          <a href="/cafe">Café</a>: name, loyalty program and order types
+          <a href="/cafe">Café</a>
+          <p>Name, loyalty program, margin and order types.</p>
         </li>
         <li>
-          <a href="/campaigns">Campaigns</a>: discounts at quiet hours, above your minimum margin
+          <a href="/campaigns">Campaigns</a>
+          <p>Discounts at quiet hours, above your minimum margin.</p>
         </li>
         <li>
-          <a href="/staff">Staff</a>: baristas and their PINs
+          <a href="/staff">Staff</a>
+          <p>Baristas and their PINs.</p>
         </li>
         <li>
-          <a href="/devices">Devices</a>: pair or remove counter phones
+          <a href="/devices">Devices</a>
+          <p>Pair or remove counter phones.</p>
         </li>
         <li>
-          <a href="/review">Review</a>: what removed phones and baristas recorded
+          <a href="/review">Review</a>
+          <p>What removed phones and baristas recorded.</p>
         </li>
         <li>
-          <a href="/account">Account</a>: password and signing out
+          <a href="/account">Account</a>
+          <p>Password and signing out.</p>
         </li>
       </ul>
     </section>
@@ -269,8 +285,10 @@ function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void })
   const { pending, error, submit } = useSubmit();
   return (
     <>
-      <section aria-labelledby="account-title">
-        <h2 id="account-title">Account</h2>
+      <h2 id="account-page-title">Account</h2>
+      <section aria-labelledby="account-title" className="card">
+        <h3 id="account-title">Sign out</h3>
+        <p>Signing out ends your session on every device.</p>
         <FormError message={error} />
         <button
           type="button"
@@ -297,7 +315,7 @@ function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void })
 
 function OwnerNav({ path }: { path: OwnerPath }) {
   return (
-    <nav aria-label="Dashboard">
+    <nav aria-label="Dashboard" className="sidenav">
       <ul>
         {OWNER_PAGES.map((page) => (
           <li key={page.path}>
@@ -308,6 +326,60 @@ function OwnerNav({ path }: { path: OwnerPath }) {
         ))}
       </ul>
     </nav>
+  );
+}
+
+/** The product's mark and name: the page's one h1. */
+function Brand() {
+  return (
+    <div className="brand">
+      <img src={logoUrl} alt="" width={36} height={36} />
+      <h1>
+        {PRODUCT_NAME} <span className="brand-app">Dashboard</span>
+      </h1>
+    </div>
+  );
+}
+
+function BuildFooter() {
+  return (
+    <footer className="app-footer">
+      <p>Build {__BUILD_ID__}</p>
+    </footer>
+  );
+}
+
+/** The pages before a session (sign-in, signup, password reset, the session check): one card, centred, the brand above it. */
+function AuthLayout({ children }: { children: ReactNode }) {
+  return (
+    <div className="auth-layout">
+      <header>
+        <Brand />
+      </header>
+      <main className="card auth-card">{children}</main>
+      <BuildFooter />
+    </div>
+  );
+}
+
+/** The signed-in pages: the top bar with the café and the account, the navigation, then the page. */
+function OwnerLayout({ session, path, children }: { session: OwnerSession; path: OwnerPath; children: ReactNode }) {
+  return (
+    <div className="owner-layout">
+      <header className="topbar">
+        <Brand />
+        <p className="topbar-account">
+          <span className="topbar-cafe">{session.cafe.name}</span>
+          <a href="/account" className="topbar-email" aria-current={path === "/account" ? "page" : undefined}>
+            <span className="visually-hidden">Account: </span>
+            {session.owner.email}
+          </a>
+        </p>
+      </header>
+      <OwnerNav path={path} />
+      <main className="owner-main">{children}</main>
+      <BuildFooter />
+    </div>
   );
 }
 
@@ -346,15 +418,20 @@ function OwnerArea({ path }: { path: OwnerPath }) {
   let content: ReactNode;
   switch (state.status) {
     case "loading":
-      return <p role="status">Loading…</p>;
+      return (
+        <AuthLayout>
+          <p role="status">Loading…</p>
+        </AuthLayout>
+      );
     case "unavailable":
       return (
-        <>
+        <AuthLayout>
           <p role="alert" className="form-error">
             {state.message}
           </p>
           <button
             type="button"
+            className="primary"
             onClick={() => {
               setState({ status: "loading" });
               setAttempt((value) => value + 1);
@@ -362,16 +439,18 @@ function OwnerArea({ path }: { path: OwnerPath }) {
           >
             Try again
           </button>
-        </>
+        </AuthLayout>
       );
     case "signed-out":
       return (
-        <LoginForm
-          notice={state.notice}
-          onSignedIn={(session) => {
-            setState({ status: "signed-in", session });
-          }}
-        />
+        <AuthLayout>
+          <LoginForm
+            notice={state.notice}
+            onSignedIn={(session) => {
+              setState({ status: "signed-in", session });
+            }}
+          />
+        </AuthLayout>
       );
     case "signed-in":
       switch (path) {
@@ -399,8 +478,9 @@ function OwnerArea({ path }: { path: OwnerPath }) {
       }
       return (
         <SessionEndedContext.Provider value={signOut}>
-          <OwnerNav path={path} />
-          {content}
+          <OwnerLayout session={state.session} path={path}>
+            {content}
+          </OwnerLayout>
         </SessionEndedContext.Provider>
       );
   }
@@ -409,28 +489,28 @@ function OwnerArea({ path }: { path: OwnerPath }) {
 function Page({ path }: { path: string }) {
   switch (path) {
     case "/signup":
-      return <SignupPage />;
+      return (
+        <AuthLayout>
+          <SignupPage />
+        </AuthLayout>
+      );
     case "/forgot-password":
-      return <ForgotPasswordPage />;
+      return (
+        <AuthLayout>
+          <ForgotPasswordPage />
+        </AuthLayout>
+      );
     case "/reset-password":
-      return <ResetPasswordPage />;
+      return (
+        <AuthLayout>
+          <ResetPasswordPage />
+        </AuthLayout>
+      );
     default:
       return <OwnerArea path={isOwnerPath(path) ? path : "/"} />;
   }
 }
 
 export function App() {
-  return (
-    <>
-      <header>
-        <h1>Cafe Loyalty Dashboard</h1>
-      </header>
-      <main>
-        <Page path={window.location.pathname} />
-      </main>
-      <footer>
-        <p>Build {__BUILD_ID__}</p>
-      </footer>
-    </>
-  );
+  return <Page path={window.location.pathname} />;
 }

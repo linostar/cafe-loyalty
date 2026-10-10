@@ -1,0 +1,260 @@
+/*
+ * The customer pages (signup, the web card, recovery and deletion), server-rendered without scripts and read on a
+ * phone: one column, the café's loyalty card at the top. The server inlines this after tokens.css and base.css.
+ */
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  inline-size: 100%;
+  max-inline-size: 30rem;
+  margin-inline: auto;
+  padding: var(--space-4) var(--space-4) var(--space-5);
+}
+
+h1 {
+  font-size: var(--text-xl);
+}
+
+.card h2 {
+  font-size: var(--text-lg);
+}
+
+.lang {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-align: end;
+}
+
+/* A small label above a title: "Loyalty card", "Your offer". */
+.kicker {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+}
+
+/* Spaced capitals read well in Latin script only; spacing Arabic letters would break their joins. */
+html[lang="en"] .kicker {
+  letter-spacing: 0.06em;
+}
+
+/* The signup page's welcome, on the card's espresso. */
+.hero {
+  margin-block-end: var(--space-4);
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--color-espresso);
+  color: var(--color-on-espresso);
+  box-shadow: var(--shadow-md);
+}
+
+.hero h1 {
+  color: var(--color-on-espresso);
+}
+
+.hero p {
+  margin-block-end: 0;
+  color: var(--color-on-espresso-muted);
+}
+
+.hero .kicker {
+  margin-block-end: var(--space-1);
+}
+
+/* The loyalty card: its espresso face with the stamps, then the QR the barista scans. */
+.loyalty-card {
+  margin-block-end: var(--space-4);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.card-face {
+  padding: var(--space-5);
+  background: var(--color-espresso);
+  background: radial-gradient(circle at 100% 0, color-mix(in srgb, var(--color-accent) 45%, transparent), transparent 60%), var(--color-espresso);
+  color: var(--color-on-espresso);
+}
+
+/* The glow sits at the inline end's top corner, on the other side in right-to-left pages. */
+[dir="rtl"] .card-face {
+  background: radial-gradient(circle at 0 0, color-mix(in srgb, var(--color-accent) 45%, transparent), transparent 60%), var(--color-espresso);
+}
+
+.card-face .kicker,
+.card-face .reward {
+  color: var(--color-on-espresso-muted);
+}
+
+.card-face h1 {
+  margin-block-end: var(--space-3);
+  color: var(--color-on-espresso);
+}
+
+.stamps {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+}
+
+.stamp-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  max-inline-size: 17rem;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.stamp {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 2px dashed var(--color-on-espresso-muted);
+  border-radius: 50%;
+}
+
+.stamp.is-filled {
+  border: 2px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.stamp svg {
+  inline-size: 62%;
+  block-size: 62%;
+}
+
+.reward {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.card-qr {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.qr {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 16rem;
+  block-size: auto;
+}
+
+/* The offer the card holds now. */
+.offer {
+  margin-block-end: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-accent);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+}
+
+.offer .kicker {
+  color: var(--color-accent-strong);
+}
+
+.offer h2 {
+  margin-block-end: var(--space-1);
+  font-size: var(--text-lg);
+}
+
+.offer p:last-child {
+  margin: 0;
+}
+
+/* Add to Apple Wallet in Apple's black, Google's own badge as it comes. */
+.wallet-row {
+  display: flex;
+  justify-content: center;
+  margin-block: 0 var(--space-3);
+}
+
+.wallet {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 3rem;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--color-text);
+  color: var(--color-surface);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.google-wallet img {
+  display: block;
+  inline-size: auto;
+  block-size: 55px;
+}
+
+.aside {
+  margin-block-end: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* Forms */
+.check {
+  margin-block: var(--space-3);
+}
+
+form button {
+  inline-size: 100%;
+  margin-block-start: var(--space-3);
+}
+
+.privacy {
+  margin-block: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-sm);
+}
+
+.privacy p {
+  margin: var(--space-1) 0 0;
+}
+
+.card-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card-links li {
+  padding-block: var(--space-2);
+  border-block-end: 1px solid var(--color-border);
+  font-weight: var(--weight-semibold);
+}
+
+.card-links li:last-child {
+  border-block-end: 0;
+}
+
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-block-start: auto;
+  padding: var(--space-5) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.site-footer img {
+  border-radius: var(--radius-sm);
+}

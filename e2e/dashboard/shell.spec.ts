@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { expect, test } from "@playwright/test";
 import { SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
@@ -59,7 +60,7 @@ test("shows busy and quiet hours on the home page, the whole week visible on a 3
 
 test("shows the heading and build", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Cafe Loyalty Dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: `${PRODUCT_NAME} Dashboard` })).toBeVisible();
   await expect(page.getByText(/^Build \S+$/)).toBeVisible();
 });
 

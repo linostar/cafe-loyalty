@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
@@ -36,7 +37,7 @@ describe("Dashboard App", () => {
   it("shows the heading, the build id and the sign-in form when signed out", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(unauthenticated())));
     render(<App />);
-    expect(screen.getByRole("heading", { level: 1, name: "Cafe Loyalty Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: `${PRODUCT_NAME} Dashboard` })).toBeInTheDocument();
     expect(screen.getByText("Build test-build")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });

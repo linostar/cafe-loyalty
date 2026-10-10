@@ -1,8 +1,9 @@
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { expect, test } from "@playwright/test";
 
 test("shows the build and tracks connectivity", async ({ page, context }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Cafe Loyalty Counter" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: `${PRODUCT_NAME} Counter` })).toBeVisible();
   await expect(page.getByText(/^Build \S+$/)).toBeVisible();
 
   const status = page.getByRole("status");

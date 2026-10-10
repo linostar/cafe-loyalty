@@ -1,95 +1,175 @@
-:root {
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
-  color: #1d1d1f;
-  background: #ffffff;
+/*
+ * The counter's layout and screen styles, on the shared design system (@cafe-loyalty/ui: fonts, tokens, base, app). Built
+ * for a tablet at the counter first (landscape and portrait), and still usable on a phone: every control at least
+ * the touch height. Tokens only; logical properties only (packages/ui/src/styles.test.ts).
+ */
+
+/* Large targets for a busy counter. */
+button,
+input:not([type="checkbox"], [type="radio"]) {
+  min-block-size: var(--control-height-touch);
 }
 
-body {
+button {
+  padding-inline: var(--space-5);
+}
+
+/* Header: the brand, then connectivity and the queue, which wrap under it on a phone. */
+.topbar {
+  flex-wrap: wrap;
+}
+
+.connection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pill-online {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.pill-offline {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill-idle {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+}
+
+.pill-waiting {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+main {
+  inline-size: 100%;
+  max-inline-size: 72rem;
+  margin-inline: auto;
+  padding: var(--space-4) var(--space-4) var(--space-6);
+}
+
+.messages > p {
+  margin-block: 0 var(--space-3);
+}
+
+.app-footer {
+  max-inline-size: 72rem;
+  margin-inline: auto;
+}
+
+/* Pairing and PIN: one card in the middle. */
+.screen-card {
+  max-inline-size: 32rem;
+  margin: var(--space-5) auto;
+}
+
+.screen-card form > button[type="submit"] {
+  inline-size: 100%;
+  margin-block-start: var(--space-4);
+}
+
+.screen-card .actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-block-start: var(--space-4);
+}
+
+.code-input {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.pin-input {
+  font-size: var(--text-2xl);
+  letter-spacing: 0.4em;
+  text-align: center;
+}
+
+.field-error {
+  margin-block-start: var(--space-2);
+}
+
+/* Who is working: one large tile per barista. */
+.who {
+  max-inline-size: 48rem;
+  margin: var(--space-5) auto;
+}
+
+.who h2 {
+  text-align: center;
+}
+
+.staff-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staff-tiles button {
+  flex-direction: column;
+  inline-size: 100%;
+  min-block-size: 8rem;
+  border-color: var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--text-lg);
+}
+
+.staff-tiles button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.initial {
+  display: grid;
+  place-items: center;
+  inline-size: 3rem;
+  block-size: 3rem;
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}
+
+/* Home: who is signed in, then the order and the reward. */
+.session-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.session-bar p {
   margin: 0;
 }
 
-header,
-main,
-footer {
-  box-sizing: border-box;
-  max-width: 32rem;
-  margin: 0 auto;
-  padding: 0 1rem;
+.counter-screen {
+  display: grid;
+  gap: var(--space-4);
 }
 
-label {
-  display: block;
-  font-weight: 600;
-}
-
-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0.75rem;
-  font: inherit;
-}
-
-/* A checkbox with its label beside it, not a full-width input. */
-.check {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  min-height: 3rem;
-}
-
-.check input {
-  width: auto;
-  min-width: 1.5rem;
-  min-height: 1.5rem;
-}
-
-/* Large targets for a busy counter. */
-button {
-  min-height: 3rem;
-  padding: 0.5rem 1.25rem;
-  font: inherit;
-}
-
-/* Unavailable but still focusable, so the keyboard stays where it was (a stepper at its limit, a visit saving). */
-button[aria-disabled="true"] {
-  color: GrayText;
-  cursor: not-allowed;
-}
-
-form > button,
-.actions {
-  margin-block-start: 1rem;
-}
-
-:focus-visible {
-  outline: 3px solid #1a5fb4;
-  outline-offset: 2px;
-}
-
-.field-error,
-.warning {
-  color: #a51d2d;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.warning-box {
-  padding: 0.5rem 1rem;
-  border-inline-start: 4px solid #a51d2d;
-  background: #fbeeee;
-}
-
-button.danger {
-  border-color: #a51d2d;
-  color: #a51d2d;
+.counter-screen > .card {
+  margin: 0;
 }
 
 .menu {
+  margin: 0 0 var(--space-4);
   padding: 0;
   list-style: none;
 }
@@ -99,74 +179,163 @@ button.danger {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding-block: 0.5rem;
-  border-block-end: 1px solid #d0d0d7;
+  gap: var(--space-2) var(--space-3);
+  padding-block: var(--space-3);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.menu > li:last-child {
+  border-block-end: 0;
+}
+
+/* The name wraps before the stepper does, so each line keeps its buttons beside it on a phone. */
+.menu-item {
+  flex: 1 1 8rem;
+  min-inline-size: 0;
 }
 
 .stepper {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .stepper button {
-  min-width: 3rem;
+  inline-size: var(--control-height-touch);
+  padding: 0;
+  border-radius: 50%;
+  font-size: var(--text-xl);
 }
 
 .count {
-  min-width: 2ch;
+  min-inline-size: 2.5ch;
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
   text-align: center;
-  font-weight: 600;
+}
+
+.count-chosen {
+  color: var(--color-accent-strong);
+}
+
+.order-summary {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.order-summary > :last-child {
+  margin-block-end: 0;
+}
+
+.total {
+  margin-block: 0 var(--space-4);
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+}
+
+.card-choice {
+  display: grid;
+  gap: var(--space-3);
+  margin-block-end: var(--space-3);
+}
+
+.card-choice > button {
+  inline-size: 100%;
+}
+
+.card-choice > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  padding-block: var(--space-2);
+  padding-inline: var(--space-4) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-weight: var(--weight-semibold);
+}
+
+.card-choice .field {
+  margin: 0;
+}
+
+.record {
+  inline-size: 100%;
+  min-block-size: 3.5rem;
+  font-size: var(--text-lg);
+}
+
+/* The shared checkbox label (base.css) at the touch height, with a larger box centred on its one-line label. */
+.check {
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: var(--control-height-touch);
+}
+
+.check input {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  margin-block-start: 0;
+}
+
+.scanner {
+  display: grid;
+  gap: var(--space-3);
 }
 
 .camera {
   display: block;
-  width: 100%;
-  max-height: 60vh;
-  background: #000000;
-}
-
-.choices {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0;
-  list-style: none;
-}
-
-.choices button {
-  width: 100%;
+  inline-size: 100%;
+  max-block-size: 60vh;
+  border-radius: var(--radius-md);
+  background: var(--color-espresso);
 }
 
 .rejected {
-  margin-block-start: 2rem;
-  padding: 0.5rem 1rem;
-  border-inline-start: 4px solid #a51d2d;
-  background: #fbeeee;
+  margin-block-start: var(--space-6);
   overflow-wrap: anywhere;
 }
 
-.status-bar {
-  margin-block-start: 2rem;
-  border-block-start: 1px solid #d0d0d7;
+.rejected ul {
+  padding-inline-start: var(--space-5);
 }
 
-.status-bar p {
-  margin-block: 0.25rem;
-}
+/* A landscape tablet: the menu, and beside it the order, kept in view while the menu scrolls. */
+@media (min-width: 56rem) {
+  .topbar {
+    padding-inline: var(--space-5);
+  }
 
-.build {
-  color: #4a4a4f;
-  /* A 40-character commit hash in CI and production: let it wrap on a phone. */
-  overflow-wrap: anywhere;
-}
+  main {
+    padding-inline: var(--space-5);
+  }
 
-/* Read by screen readers, not shown. */
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  .visit {
+    display: grid;
+    grid-template-areas: "title title" "menu summary";
+    grid-template-columns: minmax(0, 3fr) minmax(18rem, 2fr);
+    align-items: start;
+    column-gap: var(--space-5);
+  }
+
+  .visit > h3 {
+    grid-area: title;
+  }
+
+  .visit > .menu {
+    grid-area: menu;
+    margin: 0;
+  }
+
+  .visit > .order-summary {
+    grid-area: summary;
+    position: sticky;
+    inset-block-start: var(--space-4);
+  }
 }
