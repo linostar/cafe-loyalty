@@ -24,9 +24,20 @@ const visitHours = (busy: [number, number, number][] = []) => ({
   ),
 });
 
-/** The home page's own requests, answered as for a café with nothing to report. */
+/** The home page's own requests, answered as for a café on its pilot plan with nothing to report. */
+const CAFE_SETUP = {
+  cafe: { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 0, winBack: { discount: null, cooldownDays: 30 }, googleReviewUrl: null, plan: "pilot" },
+  program: null,
+  orderTypes: [],
+};
 const homeData = (path: string): Response | undefined =>
-  path === "/api/cafe/wallet-deliveries" ? respond(200, { failing: [] }) : path === "/api/cafe/visit-hours" ? respond(200, visitHours()) : undefined;
+  path === "/api/cafe/wallet-deliveries"
+    ? respond(200, { failing: [] })
+    : path === "/api/cafe/visit-hours"
+      ? respond(200, visitHours())
+      : path === "/api/cafe"
+        ? respond(200, CAFE_SETUP)
+        : undefined;
 
 afterEach(() => {
   vi.useRealTimers();

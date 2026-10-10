@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { TenantContextError, createDatabase, withCafe } from "./database.js";
+import { TenantContextError, createDatabase, setLookup, withCafe } from "./database.js";
 import { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 import { TABLE_COLUMNS, TENANT_KEY, type Database, type TableName } from "./schema.js";
 import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
@@ -64,8 +64,8 @@ const idOf = (kind: string, cafeId: string): string => {
 };
 const PUBLIC_KEY = JSON.stringify({ kty: "EC", crv: "P-256", x: "A".repeat(43), y: "B".repeat(43) });
 
-/** Tables without a café of their own (TENANT_KEY null), tested in customers.integration.test.ts. */
-type GlobalTable = "customers" | "customer_recovery_tokens";
+/** Tables without a café of their own (TENANT_KEY null), tested in customers.integration.test.ts and operators.integration.test.ts. */
+type GlobalTable = "customers" | "customer_recovery_tokens" | "operators" | "operator_sessions";
 
 /** Inserts one row of each café table for a café, in this order. Every café table needs an entry (checked below). */
 const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx: Transaction<Database>, cafeId: string) => Promise<unknown>>> = {
@@ -245,6 +245,18 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .values({ id: idOf("feedbackRequest", cafeId), cafe_id: cafeId, card_id: idOf("card", cafeId), visit_id: idOf("visit", cafeId) })
       .execute(),
   feedback: (trx, cafeId) => trx.insertInto("feedback").values({ cafe_id: cafeId, request_id: idOf("feedbackRequest", cafeId), message: "Fake feedback for the tenancy test." }).execute(),
+  cafe_payments: async (trx, cafeId) => {
+    // The operator who recorded it, a row of no café: allowed by its own email, as create-operator makes it.
+    const email = `operator-${cafeId}@example.com`;
+    await setLookup(trx, { operatorEmail: email });
+    // Once: the cross-café write test runs this again for a café that already has it.
+    await trx
+      .insertInto("operators")
+      .values({ id: idOf("operator", cafeId), email, password_hash: "fake-hash" })
+      .onConflict((conflict) => conflict.column("email").doNothing())
+      .execute();
+    return trx.insertInto("cafe_payments").values({ cafe_id: cafeId, amount_cents: 2500, paid_on: "2026-10-01", method: "cash", operator_id: idOf("operator", cafeId) }).execute();
+  },
 };
 
 const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];

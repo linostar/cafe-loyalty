@@ -6,7 +6,7 @@ import { SessionEndedContext } from "./session.js";
 interface FieldProps {
   label: string;
   name: string;
-  type: "email" | "password" | "text" | "url";
+  type: "email" | "password" | "text" | "url" | "date";
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;

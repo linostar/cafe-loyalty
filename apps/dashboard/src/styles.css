@@ -540,3 +540,71 @@ form > .actions {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Results and the admin screen: figures, and plain tables that scroll sideways on a phone. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stats li {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.stats p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.stats .stat-value {
+  color: var(--color-text);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-scroll table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-scroll th,
+.table-scroll td {
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--color-border);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+/* The operator's screen: the owner layout without its navigation. */
+.admin-layout,
+.owner-layout.admin-layout {
+  grid-template-areas: "top" "main" "foot";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+}
+
+.admin-cafes {
+  display: grid;
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A grid item is as wide as its content by default; this lets a card shrink so its table scrolls instead. */
+.admin-cafes > li {
+  min-inline-size: 0;
+}
