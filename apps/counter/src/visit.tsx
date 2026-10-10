@@ -201,7 +201,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
 
   if (scanner === "visit") {
     return (
-      <section aria-labelledby="scan-title">
+      <section aria-labelledby="scan-title" className="card">
         <h3 id="scan-title">Scan the customer&apos;s card</h3>
         <QrScanner
           purpose="customer's loyalty card QR code"
@@ -231,7 +231,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   }
 
   return (
-    <section aria-labelledby="visit-title">
+    <section aria-labelledby="visit-title" className="card visit">
       <h3 id="visit-title">New visit</h3>
       <ul className="menu">
         {catalog.orderTypes.map((type) => {
@@ -239,7 +239,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           const offer = discountFor(catalog, type, shownAt, winBack);
           return (
             <li key={type.id}>
-              <span>
+              <span className="menu-item">
                 <strong>{type.nameEn}</strong> ·{" "}
                 {offer === null ? (
                   formatUsd(type.priceCents, "en")
@@ -266,7 +266,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 >
                   −
                 </button>
-                <span className="count">{quantity}</span>
+                <span className={quantity === 0 ? "count" : "count count-chosen"}>{quantity}</span>
                 <button
                   type="button"
                   aria-label={`One more ${type.nameEn}`}
@@ -282,92 +282,95 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           );
         })}
       </ul>
-      {dropped.length === 0 ? null : (
-        <p role="alert" className="warning">
-          No longer on sale, so left out of this order: {dropped.join(", ")}. The total does not include {dropped.length === 1 ? "it" : "them"}.
-        </p>
-      )}
-      {offer === null ? null : (
-        <>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={applyWinBack}
-              onChange={(event) => {
-                setApplyWinBack(event.target.checked);
-                setNotice("");
-              }}
-            />{" "}
-            This card has a win-back offer, {discountText(offer.discount)}: apply it
-          </label>
-          {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
-            <p role="status">
-              The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.
-            </p>
-          ) : null}
-        </>
-      )}
-      <p aria-live="polite">
-        Total {formatUsd(total ?? 0, "en")} · {plural(stamps, "stamp", "stamps")}
-      </p>
-      <div className="card-choice">
-        {scanned === null ? (
-          <button
-            ref={scanButton}
-            type="button"
-            disabled={scanner !== null}
-            onClick={() => {
-              onScanner("visit");
-            }}
-          >
-            Scan card
-          </button>
-        ) : (
-          <p>
-            Card scanned.{" "}
-            <button
-              type="button"
-              onClick={() => {
-                setScanned(null);
-                setApplyWinBack(false);
-                // The button that replaces this one keeps the keyboard where it was.
-                requestAnimationFrame(() => scanButton.current?.focus());
-              }}
-            >
-              Clear card
-            </button>
+      {/* The order beside the menu on a tablet, kept in view as the menu scrolls: total, card and the record button. */}
+      <div className="order-summary">
+        {dropped.length === 0 ? null : (
+          <p role="alert" className="warning-box">
+            No longer on sale, so left out of this order: {dropped.join(", ")}. The total does not include {dropped.length === 1 ? "it" : "them"}.
           </p>
         )}
-        {scanned === null ? (
-          <div className="field">
-            <label htmlFor={phoneId}>Or the customer&apos;s mobile number</label>
-            <input
-              id={phoneId}
-              type="tel"
-              inputMode="tel"
-              autoComplete="off"
-              value={phone}
-              aria-invalid={problem?.phone === true ? true : undefined}
-              aria-describedby={problem?.phone === true ? problemId : undefined}
-              onChange={(event) => {
-                setPhone(event.target.value);
-                setNotice("");
-              }}
-            />
-          </div>
-        ) : null}
-      </div>
-      {problem === null ? null : (
-        <p id={problemId} role="alert" className="field-error">
-          {problem.text}
+        {offer === null ? null : (
+          <>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={applyWinBack}
+                onChange={(event) => {
+                  setApplyWinBack(event.target.checked);
+                  setNotice("");
+                }}
+              />{" "}
+              This card has a win-back offer, {discountText(offer.discount)}: apply it
+            </label>
+            {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
+              <p role="status">
+                The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.
+              </p>
+            ) : null}
+          </>
+        )}
+        <p aria-live="polite" className="total">
+          Total {formatUsd(total ?? 0, "en")} · {plural(stamps, "stamp", "stamps")}
         </p>
-      )}
-      {/* Always in the page, so a new notice is announced. */}
-      <p role="status">{notice}</p>
-      {/* aria-disabled, not disabled: the keyboard stays on it while the visit saves. */}
-      <button ref={recordButton} type="button" aria-disabled={saving} onClick={record}>
-        {saving ? "Saving…" : "Record visit"}
-      </button>
+        <div className="card-choice">
+          {scanned === null ? (
+            <button
+              ref={scanButton}
+              type="button"
+              disabled={scanner !== null}
+              onClick={() => {
+                onScanner("visit");
+              }}
+            >
+              Scan card
+            </button>
+          ) : (
+            <p>
+              Card scanned.{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setScanned(null);
+                  setApplyWinBack(false);
+                  // The button that replaces this one keeps the keyboard where it was.
+                  requestAnimationFrame(() => scanButton.current?.focus());
+                }}
+              >
+                Clear card
+              </button>
+            </p>
+          )}
+          {scanned === null ? (
+            <div className="field">
+              <label htmlFor={phoneId}>Or the customer&apos;s mobile number</label>
+              <input
+                id={phoneId}
+                type="tel"
+                inputMode="tel"
+                autoComplete="off"
+                value={phone}
+                aria-invalid={problem?.phone === true ? true : undefined}
+                aria-describedby={problem?.phone === true ? problemId : undefined}
+                onChange={(event) => {
+                  setPhone(event.target.value);
+                  setNotice("");
+                }}
+              />
+            </div>
+          ) : null}
+        </div>
+        {problem === null ? null : (
+          <p id={problemId} role="alert" className="field-error">
+            {problem.text}
+          </p>
+        )}
+        {/* Always in the page, so a new notice is announced. */}
+        <p role="status">{notice}</p>
+        {/* aria-disabled, not disabled: the keyboard stays on it while the visit saves. */}
+        <button ref={recordButton} type="button" className="primary record" aria-disabled={saving} onClick={record}>
+          {saving ? "Saving…" : "Record visit"}
+        </button>
+      </div>
     </section>
   );
 }
@@ -494,9 +497,9 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
     return null;
   }
   return (
-    <section aria-labelledby="redeem-title">
+    <section aria-labelledby="redeem-title" className="card">
       <h3 id="redeem-title">Give a reward</h3>
-      <p>
+      <p className="hint">
         {catalog.program.rewardNameEn} for {plural(catalog.program.stampsRequired, "stamp", "stamps")}.
       </p>
       {scanner === "reward" ? (
@@ -520,7 +523,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
       ) : (
         <>
           {/* Always in the page, so going offline is announced. */}
-          <p role="status" className={online ? undefined : "warning"}>
+          <p role="status" className={online ? undefined : "field-error"}>
             {online ? "" : "Rewards need an internet connection. Connect the phone, then try again."}
           </p>
           {pending === null ? (
@@ -589,16 +592,16 @@ export function CounterScreen({
   );
 
   if (catalog === undefined) {
-    return <p>{online ? "Loading the menu…" : "Connect to the internet once to load the menu."}</p>;
+    return <p className="empty">{online ? "Loading the menu…" : "Connect to the internet once to load the menu."}</p>;
   }
   if (catalog.orderTypes.length === 0) {
-    return <p>Nothing is on sale yet. Ask the owner to add order types on the dashboard.</p>;
+    return <p className="empty">Nothing is on sale yet. Ask the owner to add order types on the dashboard.</p>;
   }
   // Both stay mounted (an open order survives a reward); the other's scan button is disabled while one scans.
   return (
-    <>
+    <div className="counter-screen">
       <VisitForm device={device} barista={barista} catalog={catalog} scanner={scanner} onScanner={setScanner} onBusy={setVisitBusy} />
       <RedeemPanel device={device} barista={barista} catalog={catalog} online={online} scanner={scanner} onScanner={setScanner} onBusy={setRewardBusy} />
-    </>
+    </div>
   );
 }

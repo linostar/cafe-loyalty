@@ -23,6 +23,7 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
   return (
     <form
       aria-labelledby="cafe-name-title"
+      className="card"
       onSubmit={(event) => {
         event.preventDefault();
         void submit(() => save("PATCH", "/api/cafe", { name: value }));
@@ -47,6 +48,7 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
   return (
     <form
       aria-labelledby="program-title"
+      className="card form-grid"
       onSubmit={(event) => {
         event.preventDefault();
         const stampsRequired = parseWholeNumberInput(stamps);
@@ -87,6 +89,7 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
   return (
     <form
       aria-labelledby="margin-title"
+      className="card"
       onSubmit={(event) => {
         event.preventDefault();
         const percent = parseWholeNumberInput(value);
@@ -128,6 +131,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
   return (
     <form
       aria-labelledby="win-back-title"
+      className="card"
       onSubmit={(event) => {
         event.preventDefault();
         const amount = kind === "percent" ? parseWholeNumberInput(value) : kind === "amount" ? parseUsdInput(value) : null;
@@ -149,7 +153,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
       }}
     >
       <h3 id="win-back-title">Win-back offer</h3>
-      <p>
+      <p className="hint">
         When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for{" "}
         {WIN_BACK_OFFER_DAYS} days, if they agreed to receive offers. It never takes an item below its minimum margin.
       </p>
@@ -222,6 +226,7 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
   return (
     <form
       aria-labelledby={titleId}
+      className={orderType === undefined ? "form-grid add-form" : "form-grid"}
       onSubmit={(event) => {
         event.preventDefault();
         const priceCents = parseUsdInput(price);
@@ -287,7 +292,7 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         error={amountErrors.stampsEarned ?? fieldErrors.stampsEarned}
       />
       <div className="field">
-        <label>
+        <label className="check">
           <input
             type="checkbox"
             checked={active}
@@ -298,14 +303,16 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
           On sale (shown at the counter)
         </label>
       </div>
-      <button type="submit" disabled={pending}>
-        {pending ? "Saving…" : orderType === undefined ? "Add order type" : "Save changes"}
-      </button>
-      {onDone === undefined || orderType === undefined ? null : (
-        <button type="button" onClick={onDone}>
-          Cancel
+      <div className="actions">
+        <button type="submit" disabled={pending}>
+          {pending ? "Saving…" : orderType === undefined ? "Add order type" : "Save changes"}
         </button>
-      )}
+        {onDone === undefined || orderType === undefined ? null : (
+          <button type="button" onClick={onDone}>
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }
@@ -327,12 +334,22 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
     );
   }
   return (
-    <li ref={item}>
-      <strong>{orderType.nameEn}</strong> <span lang="ar">{orderType.nameAr}</span>
-      <br />
-      {formatUsd(orderType.priceCents, "en")} · cost {formatUsd(orderType.costCents, "en")} · {orderType.stampsEarned} stamp
-      {orderType.stampsEarned === 1 ? "" : "s"}
-      {orderType.active ? "" : " · not on sale"}{" "}
+    <li ref={item} className="row">
+      <span className="row-main">
+        <strong>{orderType.nameEn}</strong> <span lang="ar">{orderType.nameAr}</span>
+        {orderType.active ? null : (
+          <>
+            {" "}
+            <span className="badge">
+              <span className="visually-hidden">· </span>not on sale
+            </span>
+          </>
+        )}
+        <span className="row-meta">
+          {formatUsd(orderType.priceCents, "en")} · cost {formatUsd(orderType.costCents, "en")} · {orderType.stampsEarned} stamp
+          {orderType.stampsEarned === 1 ? "" : "s"}
+        </span>
+      </span>
       <button
         type="button"
         aria-label={`Edit ${orderType.nameEn}`}
@@ -355,15 +372,17 @@ function SignupQr() {
   }
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(state.data.joinUrl, { border: 4 }))}`;
   return (
-    <section aria-labelledby="signup-qr-title">
+    <section aria-labelledby="signup-qr-title" className="card">
       <h3 id="signup-qr-title" tabIndex={-1} data-focus-after-change>
         Customer signup QR
       </h3>
-      <p>Print this and put it at the counter. Customers scan it to get their loyalty card.</p>
-      <img className="signup-qr" src={qr} alt="QR code customers scan to get a loyalty card" width={200} height={200} />
-      <p className="link">{state.data.joinUrl}</p>
+      <p className="hint">Print this and put it at the counter. Customers scan it to get their loyalty card.</p>
+      <div className="signup-qr-box">
+        <img className="signup-qr" src={qr} alt="QR code customers scan to get a loyalty card" width={200} height={200} />
+        <p className="link">{state.data.joinUrl}</p>
+      </div>
       <FormError message={error} />
-      <p>Replace the code only if the printed one was misused: the old one stops working at once.</p>
+      <p className="hint">Replace the code only if the printed one was misused: the old one stops working at once.</p>
       <ConfirmButton
         label="Replace code"
         confirmLabel="Yes, replace the code"
@@ -399,16 +418,19 @@ export function CafePage() {
   return (
     <section aria-labelledby="cafe-page-title">
       <h2 id="cafe-page-title">Café</h2>
+      <p className="page-intro">Your café&apos;s name, loyalty program, margin, win-back offer and menu.</p>
       {saved === null ? null : <Notice>{saved}</Notice>}
-      <CafeNameForm name={setup.cafe.name} save={save} />
-      <SignupQr />
-      <ProgramForm program={setup.program} save={save} />
-      <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
-      <WinBackForm winBack={setup.cafe.winBack} save={save} />
-      <section aria-labelledby="order-types-title">
+      <div className="card-grid">
+        <CafeNameForm name={setup.cafe.name} save={save} />
+        <SignupQr />
+        <ProgramForm program={setup.program} save={save} />
+        <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
+        <WinBackForm winBack={setup.cafe.winBack} save={save} />
+      </div>
+      <section aria-labelledby="order-types-title" className="card">
         <h3 id="order-types-title">Order types</h3>
         {setup.orderTypes.length === 0 ? (
-          <p>No order types yet. Add what baristas stamp, such as an espresso drink.</p>
+          <p className="empty">No order types yet. Add what baristas stamp, such as an espresso drink.</p>
         ) : (
           <ul className="items">
             {setup.orderTypes.map((orderType) => (

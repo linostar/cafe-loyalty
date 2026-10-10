@@ -1,143 +1,446 @@
-:root {
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
-  color: #1d1d1f;
-  background: #ffffff;
+/*
+ * The dashboard's layout and page styles, on the shared design system (@cafe-loyalty/ui: fonts, tokens, base). Tokens
+ * only, never new colour values; logical properties only (packages/ui/src/styles.test.ts).
+ */
+
+/* Signed in: top bar, navigation (a bar on phones, a column from 60rem), the page and the footer. */
+.owner-layout {
+  display: grid;
+  grid-template-areas: "top" "nav" "main" "foot";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr auto;
+  min-block-size: 100vh;
 }
 
-body {
+/* The café and the account: shown from 40rem, where they fit beside the brand (the nav has Account on phones). */
+.topbar-account {
+  display: none;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
   margin: 0;
+  font-size: var(--text-sm);
 }
 
-header,
-main,
-footer {
-  box-sizing: border-box;
-  max-width: 32rem;
-  margin: 0 auto;
-  padding: 0 1rem;
-}
-
-.field {
-  margin-block: 1rem;
-}
-
-label {
-  display: block;
-  font-weight: 600;
-}
-
-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0.5rem;
-  font: inherit;
-}
-
-button {
-  padding: 0.5rem 1rem;
-  font: inherit;
-}
-
-:focus-visible {
-  outline: 3px solid #1a5fb4;
-  outline-offset: 2px;
-}
-
-.hint {
-  margin: 0.25rem 0 0;
-  color: #4a4a4f;
-}
-
-.form-error,
-.field-error {
-  color: #a51d2d;
-}
-
-.field-error {
-  margin: 0.25rem 0 0;
-}
-
-.notice {
-  padding: 0.5rem;
-  border-inline-start: 4px solid #26a269;
-  background: #eef8f1;
-}
-
-nav ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1rem;
-  padding: 0;
-  list-style: none;
-}
-
-nav a[aria-current="page"] {
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.items {
-  padding: 0;
-  list-style: none;
-}
-
-.items > li {
-  padding-block: 0.5rem;
-  border-block-end: 1px solid #d0d0d7;
-  overflow-wrap: anywhere;
-}
-
-.actions,
-.confirm {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-button.danger {
-  border-color: #a51d2d;
-  color: #a51d2d;
-}
-
-.new-code img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  background: #ffffff;
-}
-
-.new-code .code {
-  font-family: ui-monospace, monospace;
-  font-size: 1.5rem;
-  letter-spacing: 0.1em;
-}
-
-/* Read by screen readers, not shown. */
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+.topbar-cafe {
+  font-weight: var(--weight-semibold);
   white-space: nowrap;
 }
 
-.signup-qr {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  background: #ffffff;
+.topbar-email {
+  display: inline-block;
+  max-inline-size: 16rem;
+  padding: var(--space-1) var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--color-on-espresso-muted);
+  border-radius: var(--radius-pill);
+  color: var(--color-on-espresso);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* The build id is a 40-character commit hash in CI and production: let it wrap on a phone. */
-footer {
-  overflow-wrap: anywhere;
+.topbar-email:hover,
+.topbar-email[aria-current="page"] {
+  border-color: var(--color-on-espresso);
+}
+
+.topbar {
+  grid-area: top;
+}
+
+.app-footer {
+  grid-area: foot;
+}
+
+.sidenav {
+  grid-area: nav;
+  min-inline-size: 0;
+  border-block-end: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.sidenav ul {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  list-style: none;
+}
+
+.sidenav a {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* Inside the scrolling bar, so the ring is drawn within it rather than cut off. */
+.sidenav a:focus-visible {
+  outline-offset: -3px;
+}
+
+.sidenav a:hover {
+  background: var(--color-surface-sunken);
+}
+
+.sidenav a[aria-current="page"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+.owner-main {
+  grid-area: main;
+  inline-size: 100%;
+  max-inline-size: 72rem;
+  padding: var(--space-5) var(--space-4) var(--space-7);
+}
+
+@media (min-width: 40rem) {
+  .topbar {
+    padding-inline: var(--space-5);
+  }
+
+  .topbar-account {
+    display: flex;
+  }
+
+  .owner-main {
+    padding: var(--space-6) var(--space-6) var(--space-7);
+  }
+
+  .app-footer {
+    padding-inline: var(--space-6);
+  }
+}
+
+@media (min-width: 60rem) {
+  .owner-layout {
+    grid-template-areas: "top top" "nav main" "nav foot";
+    grid-template-columns: 14rem minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .sidenav {
+    border-block-end: 0;
+    border-inline-end: 1px solid var(--color-border);
+  }
+
+  .sidenav ul {
+    position: sticky;
+    inset-block-start: 4.5rem;
+    flex-direction: column;
+    padding: var(--space-5) var(--space-3);
+    overflow: visible;
+  }
+}
+
+/* Signed out: one card in the middle of the page, the brand above it. */
+.auth-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  min-block-size: 100vh;
+  padding: var(--space-7) var(--space-4) 0;
+}
+
+.auth-layout .brand {
+  flex-direction: column;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.auth-layout .brand img {
+  inline-size: 3.5rem;
+  block-size: 3.5rem;
+  box-shadow: var(--shadow-md);
+}
+
+.auth-layout .brand h1 {
+  font-size: var(--text-xl);
+  white-space: normal;
+}
+
+.auth-card {
+  inline-size: 100%;
+  max-inline-size: 28rem;
+}
+
+.auth-card h2 {
+  font-size: var(--text-xl);
+}
+
+.auth-card button[type="submit"] {
+  inline-size: 100%;
+}
+
+.auth-card form + p {
+  margin-block: var(--space-4) 0;
+  text-align: center;
+}
+
+.auth-layout .app-footer {
+  margin-block-start: auto;
+  text-align: center;
+}
+
+/* Pages */
+.owner-main > section > h2 {
+  margin-block-end: var(--space-2);
+  font-size: var(--text-2xl);
+}
+
+.owner-main > h2 {
+  margin-block-end: var(--space-4);
+  font-size: var(--text-2xl);
+}
+
+.page-intro {
+  max-inline-size: 48rem;
+  margin-block-end: var(--space-5);
+  color: var(--color-text-muted);
+}
+
+/* A heading between cards, such as Counter phones or Running. */
+.owner-main section > h3:not(:first-child) {
+  margin-block-start: var(--space-6);
+}
+
+.card h3,
+.card h4 {
+  margin-block-end: var(--space-3);
+}
+
+/* Cards side by side where they fit, each as tall as its content. */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  align-items: start;
+  gap: var(--space-4);
+  margin-block-end: var(--space-4);
+}
+
+.card-grid > .card {
+  margin: 0;
+}
+
+.field {
+  margin-block-end: var(--space-4);
+}
+
+/* A form's fields in columns where they fit; anything else (headings, errors, buttons) on a row of its own. */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  column-gap: var(--space-4);
+}
+
+.form-grid > :not(.field) {
+  grid-column: 1 / -1;
+}
+
+.form-grid > button {
+  justify-self: start;
+}
+
+form > button,
+form > .actions {
+  margin-block-start: var(--space-1);
+}
+
+.add-form {
+  margin-block-start: var(--space-5);
+  padding-block-start: var(--space-5);
+  border-block-start: 1px solid var(--color-border);
+}
+
+/* Choices as chips: days, discount kinds. */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  font-weight: var(--weight-regular);
+  cursor: pointer;
+}
+
+.choices label:has(input:checked) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.choices + .field {
+  margin-block: var(--space-4) 0;
+}
+
+label.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-weight: var(--weight-regular);
+}
+
+label.check input {
+  margin-block-start: 0.15rem;
+}
+
+.choices-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.choices-list li {
+  padding-block: var(--space-2);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.choices-list li:last-child {
+  border-block-end: 0;
+}
+
+/* List rows: the item's text, then its actions at the row's end; a form opened in a row takes the row's width. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.row-main {
+  flex: 1 1 14rem;
+  min-inline-size: 0;
+}
+
+.row-meta {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.row > .form-error,
+.row > form {
+  flex-basis: 100%;
+}
+
+.row-form {
+  margin-block-start: var(--space-2);
+}
+
+.review-item .actions {
+  display: flex;
+  margin-block-start: var(--space-3);
+}
+
+/* Home: the sections as tiles, each a link as a whole. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tiles li {
+  position: relative;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.tiles li:hover {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
+}
+
+.tiles a {
+  display: block;
+  margin-block-end: var(--space-1);
+  color: var(--color-text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  text-decoration: none;
+}
+
+.tiles a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.tiles a:focus-visible {
+  outline: 0;
+}
+
+.tiles li:focus-within {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.tiles p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* QR codes for printing and pairing, on a light panel. */
+.signup-qr-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block-end: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.signup-qr,
+.new-code img {
+  display: block;
+  max-inline-size: 100%;
+  block-size: auto;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.signup-qr-box .link {
+  margin: 0;
+  text-align: center;
 }
 
 .link {
   overflow-wrap: anywhere;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.new-code .code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
 }
 
 /* Busy and quiet hours: eight columns fit a 360 px phone; scrolls sideways rather than overflow the page if not. */
@@ -146,67 +449,84 @@ footer {
 }
 
 .visit-hours table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
+  inline-size: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
 .visit-hours th,
 .visit-hours td {
-  padding: 0.25rem 0.125rem;
+  padding: var(--space-1) 1px;
+  border-radius: var(--radius-sm);
   text-align: center;
+}
+
+/* The hour column as wide as "23:00"; the days share the rest. */
+.visit-hours thead th:first-child {
+  inline-size: 3.25rem;
+}
+
+.visit-hours thead th {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.visit-hours tbody th {
+  padding-inline-end: var(--space-2);
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+  text-align: end;
 }
 
 .visit-hours abbr {
   text-decoration: none;
 }
 
-/* Quiet to busy; every shade keeps its number readable (contrast at least 4.5:1). */
+/* Quiet to busy, in copper; every shade keeps its number readable (tokens.test.ts). */
 .visit-hours .level-0 {
-  color: #6b6b72;
+  color: var(--color-text-muted);
 }
 
 .visit-hours .level-1 {
-  background: #e3edf9;
+  background: var(--color-heat-1);
 }
 
 .visit-hours .level-2 {
-  background: #b5cdee;
+  background: var(--color-heat-2);
 }
 
 .visit-hours .level-3 {
-  background: #7fa9e0;
+  background: var(--color-heat-3);
 }
 
 .visit-hours .level-4 {
-  background: #1a5fb4;
-  color: #ffffff;
+  background: var(--color-heat-4);
+  color: var(--color-on-accent);
+  font-weight: var(--weight-semibold);
 }
 
-/* Checkboxes and radio buttons keep their own size; the text inputs above fill the width. */
-input[type="checkbox"],
-input[type="radio"] {
-  width: auto;
-}
-
-fieldset {
-  margin-block: 1rem;
-  border: 1px solid #d0d0d7;
-}
-
-.choices {
+.heat-legend {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1rem;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
 }
 
-.choices label,
-.choices-list label {
-  font-weight: 400;
+.heat-swatch {
+  display: inline-block;
+  inline-size: 1.5rem;
+  block-size: 0.75rem;
+  border-radius: 3px;
 }
 
-.choices-list {
-  padding: 0;
-  list-style: none;
+@media (max-width: 30rem) {
+  .card {
+    padding: var(--space-4) var(--space-3);
+  }
 }

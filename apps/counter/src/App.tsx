@@ -1,4 +1,5 @@
-import { deviceCatalogSchema, deviceStaffSchema, normalizePairingCode, type DeviceCatalog } from "@cafe-loyalty/shared";
+import { PRODUCT_NAME, deviceCatalogSchema, deviceStaffSchema, normalizePairingCode, type DeviceCatalog } from "@cafe-loyalty/shared";
+import logoUrl from "@cafe-loyalty/ui/logo.svg";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequestFor, pairDevice } from "./device.js";
 import { attemptPin } from "./pin.js";
@@ -75,32 +76,29 @@ const REJECTION_REASONS: Readonly<Record<string, string>> = {
   IDEMPOTENCY_CONFLICT: "it clashed with something this phone sent before",
 };
 
-interface StatusBarProps {
-  online: boolean;
-  pending: number;
-  problem: string | null;
-  notice: string | null;
-  update: UpdateState;
-}
-
-/** Always visible: connectivity, what waits to be sent, problems and the build (AC 29). */
-function StatusBar({ online, pending, problem, notice, update }: StatusBarProps) {
+/** Always visible in the header: connectivity and what waits to be sent (AC 29). */
+function ConnectionStatus({ online, pending }: { online: boolean; pending: number }) {
   return (
-    <section aria-label="Counter status" className="status-bar">
-      <p role="status" aria-live="polite">
+    <section aria-label="Counter status" className="connection">
+      <p role="status" aria-live="polite" className={`pill ${online ? "pill-online" : "pill-offline"}`}>
         {online ? "Online" : "Offline: stamps are saved on this phone and sync when the connection returns."}
       </p>
       {/* Not live: it changes with every sync, and the count is there to look at, not to hear. */}
-      <p>{pending === 0 ? "Nothing waiting to send." : `${String(pending)} waiting to send.`}</p>
-      {/* Always in the page, so screen readers announce what appears in it. */}
-      <div aria-live="polite">
-        {problem === null ? null : <p className="warning">{problem}</p>}
-        {notice === null ? null : <p className="warning">{notice}</p>}
-        {update.waiting ? <p>An update is ready. It installs once everything is sent and nobody is typing.</p> : null}
-        {update.error === null ? null : <p className="warning">{update.error}</p>}
-      </div>
-      <p className="build">Build {__BUILD_ID__}</p>
+      <p className={`pill ${pending === 0 ? "pill-idle" : "pill-waiting"}`}>{pending === 0 ? "Nothing waiting to send." : `${String(pending)} waiting to send.`}</p>
     </section>
+  );
+}
+
+/** Problems, notices and updates, under the header so they are seen (AC 29). */
+function StatusMessages({ problem, notice, update }: { problem: string | null; notice: string | null; update: UpdateState }) {
+  // Always in the page, so screen readers announce what appears in it.
+  return (
+    <div aria-live="polite" className="messages">
+      {problem === null ? null : <p className="warning-box">{problem}</p>}
+      {notice === null ? null : <p className="warning-box">{notice}</p>}
+      {update.waiting ? <p className="notice">An update is ready. It installs once everything is sent and nobody is typing.</p> : null}
+      {update.error === null ? null : <p className="warning-box">{update.error}</p>}
+    </div>
   );
 }
 
@@ -111,7 +109,7 @@ function RejectedList({ rejected }: { rejected: RejectedEvent[] }) {
     return null;
   }
   return (
-    <section aria-labelledby="rejected-title" className="rejected">
+    <section aria-labelledby="rejected-title" className="rejected form-error">
       <h2 id="rejected-title">Not accepted by the server</h2>
       <p>These were not recorded. Show this list to the owner.</p>
       <ul>
@@ -206,9 +204,9 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
 
   let intro: ReactNode = null;
   if (device?.unpairedReason === "revoked") {
-    intro = <p className="warning">The owner removed this phone. Ask them for a new pairing code to use it again. Its waiting stamps are kept and sent once it is paired.</p>;
+    intro = <p className="warning-box">The owner removed this phone. Ask them for a new pairing code to use it again. Its waiting stamps are kept and sent once it is paired.</p>;
   } else if (device?.unpairedReason === "pairing_required") {
-    intro = <p className="warning">This phone was offline too long and must be paired again. Its waiting stamps are kept and sent once it is paired.</p>;
+    intro = <p className="warning-box">This phone was offline too long and must be paired again. Its waiting stamps are kept and sent once it is paired.</p>;
   } else if (device?.paired === true) {
     intro = (
       <p>
@@ -218,12 +216,12 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
   }
 
   return (
-    <section aria-labelledby="pair-title">
+    <section aria-labelledby="pair-title" className="card screen-card">
       <h2 id="pair-title" tabIndex={-1}>
         Pair this phone
       </h2>
       {intro}
-      <p>On the owner&apos;s dashboard, open Devices and create a pairing code. Scan its QR code with this phone&apos;s camera, or type the code here.</p>
+      <p className="hint">On the owner&apos;s dashboard, open Devices and create a pairing code. Scan its QR code with this phone&apos;s camera, or type the code here.</p>
       {elsewhere === null ? null : (
         <div role="alert" className="warning-box">
           <p>
@@ -267,6 +265,7 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
         <label htmlFor={inputId}>Pairing code</label>
         <input
           id={inputId}
+          className="code-input"
           name="code"
           autoComplete="off"
           autoCapitalize="characters"
@@ -364,7 +363,7 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
   }, [locked]);
 
   return (
-    <section aria-labelledby="pin-title">
+    <section aria-labelledby="pin-title" className="card screen-card">
       <h2 id="pin-title" tabIndex={-1} ref={heading}>
         PIN for {staff.name}
       </h2>
@@ -401,6 +400,7 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
         <input
           ref={input}
           id={inputId}
+          className="pin-input"
           name="pin"
           type="password"
           inputMode="numeric"
@@ -435,14 +435,14 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
 
 function BaristaPicker({ staff, online, onChoose }: { staff: StaffEntry[]; online: boolean; onChoose: (staff: StaffEntry) => void }) {
   return (
-    <section aria-labelledby="who-title">
+    <section aria-labelledby="who-title" className="who">
       <h2 id="who-title" tabIndex={-1}>
         Who is working?
       </h2>
       {staff.length === 0 ? (
-        <p>{online ? "No baristas yet. Ask the owner to add staff on the dashboard." : "Connect to the internet once to load the baristas."}</p>
+        <p className="empty">{online ? "No baristas yet. Ask the owner to add staff on the dashboard." : "Connect to the internet once to load the baristas."}</p>
       ) : (
-        <ul className="choices">
+        <ul className="staff-tiles">
           {staff.map((member) => (
             <li key={member.id}>
               <button
@@ -451,6 +451,9 @@ function BaristaPicker({ staff, online, onChoose }: { staff: StaffEntry[]; onlin
                   onChoose(member);
                 }}
               >
+                <span className="initial" aria-hidden="true">
+                  {Array.from(member.name)[0]?.toUpperCase()}
+                </span>
                 {member.name}
               </button>
             </li>
@@ -580,7 +583,7 @@ export function App() {
   let content: ReactNode;
   switch (screen) {
     case "loading":
-      content = <p>Loading…</p>;
+      content = <p className="empty">Loading…</p>;
       break;
     case "pair":
       content = (
@@ -639,23 +642,25 @@ export function App() {
           <h2 id="home-title" tabIndex={-1}>
             {stored?.device?.cafe.name}
           </h2>
-          <p>
-            Signed in as <strong>{barista?.name}</strong> on {stored?.device?.deviceName}.
-          </p>
+          <div className="session-bar">
+            <p>
+              Signed in as <strong>{barista?.name}</strong> on {stored?.device?.deviceName}.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                deleteMeta("barista").catch((caught: unknown) => {
+                  console.error("Signing out the barista failed", caught);
+                  setProblem("Switching barista failed on this phone. Reload the page and try again.");
+                });
+              }}
+            >
+              Switch barista
+            </button>
+          </div>
           {device === undefined || barista === undefined ? null : (
             <CounterScreen device={device} barista={barista} catalog={stored?.catalog} online={online} onBusy={setBusy} />
           )}
-          <button
-            type="button"
-            onClick={() => {
-              deleteMeta("barista").catch((caught: unknown) => {
-                console.error("Signing out the barista failed", caught);
-                setProblem("Switching barista failed on this phone. Reload the page and try again.");
-              });
-            }}
-          >
-            Switch barista
-          </button>
         </section>
       );
       break;
@@ -663,15 +668,22 @@ export function App() {
 
   return (
     <>
-      <header>
-        <h1>Cafe Loyalty Counter</h1>
+      <header className="topbar">
+        <div className="brand">
+          <img src={logoUrl} alt="" width={36} height={36} />
+          <h1>
+            {PRODUCT_NAME} <span className="brand-app">Counter</span>
+          </h1>
+        </div>
+        <ConnectionStatus online={online} pending={pending} />
       </header>
       <main>
+        <StatusMessages problem={problem} notice={notice} update={update} />
         <div ref={screenRef}>{content}</div>
         <RejectedList rejected={stored?.rejected ?? []} />
       </main>
-      <footer>
-        <StatusBar online={online} pending={pending} problem={problem} notice={notice} update={update} />
+      <footer className="app-footer">
+        <p>Build {__BUILD_ID__}</p>
       </footer>
     </>
   );

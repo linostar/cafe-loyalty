@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { hashPassword, hashToken, newToken } from "./credentials.js";
@@ -314,7 +315,7 @@ describe("password reset", () => {
     expect(known.body).toBe(unknown.body);
     expect(known.json()).toEqual({ message: RESET_REQUESTED_MESSAGE });
     expect(h.mailer.sent).toHaveLength(1);
-    expect(h.mailer.sent[0]).toMatchObject({ to: owner.email, subject: "Reset your Cafe Loyalty password" });
+    expect(h.mailer.sent[0]).toMatchObject({ to: owner.email, subject: `Reset your ${PRODUCT_NAME} password` });
   });
 
   it("replies without waiting for the email", async () => {

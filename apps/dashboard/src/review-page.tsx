@@ -39,7 +39,7 @@ function describe(item: ReviewItem): string {
 
 function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: boolean; onDecide: (decision: "accept" | "discard") => void }) {
   return (
-    <li tabIndex={-1} data-review-id={item.id}>
+    <li tabIndex={-1} data-review-id={item.id} className="review-item">
       <strong>{TYPE_LABELS[item.type] ?? item.type}</strong> at {timeFormat.format(new Date(item.occurredAt))} {REASONS[item.reason]}: {item.staffName} on{" "}
       {item.deviceName}.
       {item.discountRefused && item.reason !== "campaign_check" ? (
@@ -101,7 +101,7 @@ export function ReviewPage() {
       <h2 id="review-page-title" tabIndex={-1} data-focus-after-change>
         Review
       </h2>
-      <p>
+      <p className="page-intro">
         When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two
         days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example).
         Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for
@@ -110,7 +110,7 @@ export function ReviewPage() {
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />
       {shown.length === 0 ? (
-        <p>Nothing to review.</p>
+        <p className="empty">Nothing to review.</p>
       ) : (
         <ul className="items" ref={list}>
           {shown.map((item) => (

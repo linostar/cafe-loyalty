@@ -1,0 +1,87 @@
+/*
+ * Design tokens for every front end (the dashboard, the counter and the customer pages): warm café colours, type,
+ * spacing, radius, shadow and motion. Apps use these names and never redefine their values. Every text colour is
+ * checked against the backgrounds it is used on (tokens.test.ts, WCAG AA).
+ */
+:root {
+  /* Surfaces */
+  --color-page: #faf6f0;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f4ede3;
+  --color-espresso: #4a2c2a;
+
+  /* Text */
+  --color-text: #2b1e17;
+  --color-text-muted: #6a5546;
+  --color-on-espresso: #fbf3e9;
+  --color-on-espresso-muted: #d9c3ae;
+  --color-on-accent: #ffffff;
+
+  /* Copper, the one accent: primary actions, links, the current page, focus */
+  --color-accent: #a9532a;
+  --color-accent-hover: #8e4422;
+  --color-accent-strong: #86401f;
+  --color-accent-soft: #f7e6da;
+  --color-focus: #86401f;
+  --color-focus-inverse: #f2c6a5;
+
+  /* Lines: decorative dividers, and the borders of controls (at least 3:1) */
+  --color-border: #e6dccf;
+  --color-border-strong: #8f7b69;
+
+  /* Status */
+  --color-success: #2e6b45;
+  --color-success-soft: #e5f2ea;
+  --color-warning: #7a5200;
+  --color-warning-soft: #fcf1d9;
+  --color-danger: #a3261c;
+  --color-danger-soft: #fbe9e7;
+
+  /* Busy and quiet hours, quiet to busy; the busiest takes the accent with --color-on-accent text */
+  --color-heat-1: #fbede3;
+  --color-heat-2: #f3d3be;
+  --color-heat-3: #e3a884;
+  --color-heat-4: #a9532a;
+
+  /* Type */
+  --font-sans: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+  --weight-regular: 400;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Shape and depth */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 1rem;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgb(74 44 42 / 0.08);
+  --shadow-md: 0 1px 3px rgb(74 44 42 / 0.08), 0 6px 20px rgb(74 44 42 / 0.07);
+  --shadow-lg: 0 2px 6px rgb(74 44 42 / 0.1), 0 16px 40px rgb(74 44 42 / 0.12);
+
+  /* Controls: the dashboard's height, and the counter's larger touch target */
+  --control-height: 2.75rem;
+  --control-height-touch: 3rem;
+
+  /* Motion, removed under prefers-reduced-motion (base.css) */
+  --duration-fast: 120ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}

@@ -15,6 +15,7 @@
   "dependencies": {
     "@cafe-loyalty/db": "workspace:*",
     "@cafe-loyalty/shared": "workspace:*",
+    "@cafe-loyalty/ui": "workspace:*",
     "@node-rs/argon2": "^2.2.2",
     "fastify": "^5.12.5",
     "kysely": "^0.29.6",

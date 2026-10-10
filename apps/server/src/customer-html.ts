@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { PASS_TEXT } from "@cafe-loyalty/db";
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
+import { selfHostedFonts, stylesheets } from "@cafe-loyalty/ui";
 
 export type Lang = "ar" | "en";
 
@@ -43,37 +45,27 @@ export function pickLang(requested: unknown, acceptLanguage: string | undefined)
   return first.startsWith("en") ? "en" : "ar";
 }
 
-/** The one stylesheet; its hash is the only style the CSP allows, and no script is allowed at all (AC 7). */
-const STYLE = `
-:root { font-family: system-ui, sans-serif; line-height: 1.5; color: #1d1d1f; background: #fff; }
-body { margin: 0; }
-main { box-sizing: border-box; max-width: 30rem; margin: 0 auto; padding: 1rem; }
-h1 { font-size: 1.5rem; margin: 0.5rem 0; }
-.lang { text-align: end; margin: 0; }
-label { display: block; font-weight: 600; margin-block: 0.75rem 0.25rem; }
-label.check { display: flex; gap: 0.5rem; align-items: flex-start; font-weight: 400; }
-input[type="tel"], input[type="email"] { box-sizing: border-box; width: 100%; padding: 0.5rem; font: inherit; }
-input[type="checkbox"] { width: 1.25rem; height: 1.25rem; flex: none; margin-top: 0.15rem; }
-button { margin-block: 0.75rem; padding: 0.6rem 1.2rem; font: inherit; }
-button.danger { border-color: #a51d2d; color: #a51d2d; }
-:focus-visible { outline: 3px solid #1a5fb4; outline-offset: 2px; }
-.error { color: #a51d2d; }
-.notice { padding: 0.5rem; border-inline-start: 4px solid #26a269; background: #eef8f1; }
-.privacy { font-size: 0.95rem; padding: 0.75rem; background: #f4f4f6; }
-.qr { display: block; width: 100%; max-width: 18rem; height: auto; margin: 1rem auto; background: #fff; }
-.stamps { font-size: 1.25rem; font-weight: 700; }
-.google-wallet { display: inline-block; margin: 8px 0; }
-.google-wallet img { display: block; height: 55px; width: auto; }
-.wallet { display: inline-block; padding: 0.6rem 1.2rem; border-radius: 0.5rem; background: #000; color: #fff; text-decoration: none; }
-section { border-block-start: 1px solid #d0d0d7; margin-block-start: 1.5rem; }
-ul { padding-inline-start: 1.25rem; }
-`;
+/** Where the customer pages' fonts and logo are served from (customer-pages.ts); their own origin only. */
+export const FONT_PATH = "/assets/fonts/";
+export const LOGO_PATH = "/assets/logo.svg";
 
-/** Content-Security-Policy for every customer page: no scripts, no outside resources, only our own forms. */
+const fonts = selfHostedFonts(FONT_PATH);
+
+/** The font files the stylesheet names, by file name, to their paths on disk. */
+export const FONT_FILES = fonts.files;
+
+/**
+ * The one stylesheet: the design system's fonts, tokens, base and customer styles (@cafe-loyalty/ui). Its hash is the
+ * only style the CSP allows, and no script is allowed at all (AC 7).
+ */
+const STYLE = `${fonts.css}\n${stylesheets(["tokens", "base", "customer"])}`;
+
+/** Content-Security-Policy for every customer page: no scripts, no outside resources, only our own forms, fonts and logo. */
 export const CUSTOMER_CSP = [
   "default-src 'none'",
   `style-src 'sha256-${createHash("sha256").update(STYLE).digest("base64")}'`,
-  "img-src data:",
+  "img-src 'self' data:",
+  "font-src 'self'",
   "form-action 'self'",
   "base-uri 'none'",
   "frame-ancestors 'none'",
@@ -139,6 +131,10 @@ const MESSAGES = {
     failed: "Something went wrong on our side. Try again in a moment.",
     badRequest: "This form could not be read. Go back, check it and send it again.",
     notFound: "No such page. Check the link, or scan the café's code again.",
+    stampsToGo: "{stamps} to go for {reward}.",
+    rewardReady: "Your reward is ready: {reward}. Show this card to the barista.",
+    yourOffer: "Your offer",
+    poweredBy: "Loyalty card by {product}",
   },
   ar: {
     ...PASS_TEXT.ar,
@@ -198,6 +194,10 @@ const MESSAGES = {
     failed: "حدث خطأ لدينا. حاول بعد قليل.",
     badRequest: "تعذّرت قراءة هذا النموذج. ارجع وتحقق منه وأرسله مجدداً.",
     notFound: "لا توجد صفحة كهذه. تحقق من الرابط، أو امسح رمز المقهى مجدداً.",
+    stampsToGo: "تبقّى {stamps} للحصول على {reward}.",
+    rewardReady: "مكافأتك جاهزة: {reward}. أظهر هذه البطاقة للباريستا.",
+    yourOffer: "عرضك",
+    poweredBy: "بطاقة ولاء من {product}",
   },
 } as const satisfies Record<Lang, Record<string, string>>;
 
@@ -233,8 +233,9 @@ export function count(lang: Lang, noun: keyof typeof COUNTED, n: number): string
 }
 
 /**
- * A whole customer page: language and direction, no referrer, noindex, the one stylesheet, and a language switch
- * unless `otherLangHref` is null (a page that cannot be loaded again, such as freshly restored card links).
+ * A whole customer page: language and direction, no referrer, noindex, the one stylesheet, the favicon, a language
+ * switch unless `otherLangHref` is null (a page that cannot be loaded again, such as freshly restored card links), and
+ * the product's name in the footer.
  */
 export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: string | null): string {
   return `<!doctype html>${html`<html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}">
@@ -244,6 +245,7 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>${title}</title>
+<link rel="icon" type="image/svg+xml" href="${LOGO_PATH}">
 <style>${new SafeHtml(STYLE)}</style>
 </head>
 <body>
@@ -251,6 +253,7 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 ${otherLangHref === null ? null : html`<p class="lang"><a href="${otherLangHref}" lang="${lang === "ar" ? "en" : "ar"}">${t(lang, "other")}</a></p>`}
 ${body}
 </main>
+<footer class="site-footer"><img src="${LOGO_PATH}" alt="" width="20" height="20">${t(lang, "poweredBy", { product: PRODUCT_NAME })}</footer>
 </body>
 </html>`.value}`;
 }

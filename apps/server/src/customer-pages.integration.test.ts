@@ -53,7 +53,7 @@ describe("signup page", () => {
       "x-robots-tag": "noindex, nofollow",
       "x-content-type-options": "nosniff",
     });
-    expect(String(arabic.headers["content-security-policy"])).toMatch(/^default-src 'none'; style-src 'sha256-[A-Za-z0-9+/=]+'; img-src data:;/);
+    expect(String(arabic.headers["content-security-policy"])).toMatch(/^default-src 'none'; style-src 'sha256-[A-Za-z0-9+/=]+'; img-src 'self' data:; font-src 'self';/);
     expect(arabic.body).not.toContain("<script");
     const english = await app.inject({ method: "GET", url: `/join/${code}?lang=en`, headers: { "accept-language": "ar" } });
     expect(english.body).toContain('<html lang="en" dir="ltr">');
@@ -196,6 +196,24 @@ describe("signup", () => {
   });
 });
 
+describe("fonts and logo", () => {
+  it("serves the stylesheet's fonts and the logo, cached, and nothing else from there", async () => {
+    const { app } = await harness();
+    const font = await app.inject({ method: "GET", url: "/assets/fonts/ibm-plex-sans-arabic-latin-400-normal.woff2" });
+    expect(font.statusCode).toBe(200);
+    expect(font.headers).toMatchObject({ "content-type": "font/woff2", "cache-control": "public, max-age=604800" });
+    expect(font.rawPayload.subarray(0, 4).toString("latin1")).toBe("wOF2");
+    const logo = await app.inject({ method: "GET", url: "/assets/logo.svg" });
+    expect(logo.headers).toMatchObject({ "content-type": "image/svg+xml", "cache-control": "public, max-age=604800" });
+    expect(logo.body).toMatch(/^<svg /);
+    for (const url of ["/assets/fonts/unknown.woff2", "/assets/fonts/..%2F..%2Fpackage.json"]) {
+      const missing = await app.inject({ method: "GET", url });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.headers["cache-control"]).toBe("no-store");
+    }
+  });
+});
+
 describe("web card", () => {
   it("shows the café, the stamps and the QR, with no script and a strict policy (AC 7)", async () => {
     const { app, code } = await cafeWithJoinCode();
@@ -208,6 +226,41 @@ describe("web card", () => {
     expect(card.body).toMatch(/<img class="qr" src="data:image\/svg\+xml;charset=utf-8,[^"]+" alt="Your card&#39;s QR code/);
     expect(card.body).not.toContain("<script");
     expect(card.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+  });
+
+  it("shows the program's stamps as a grid with the stamps left, and the offer the card holds (AC 14)", async () => {
+    const { app, code, owner } = await cafeWithJoinCode();
+    const as = (method: "POST" | "PUT", url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers: withCookie(owner.session), payload });
+    await as("PUT", "/api/cafe/program", { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" });
+    const coffee =
+      (await as("POST", "/api/cafe/order-types", { nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1, active: true })).json<{ orderTypes: { id: string }[] }>()
+        .orderTypes[0]?.id ?? "missing";
+    const secret = secretOf(await join(app, code, uniquePhone(), { offers: "yes" }));
+    const card = await cardRow(secret);
+    await context.admin.query("UPDATE app.cards SET stamps = 3 WHERE id = $1", [card?.id]);
+    const page = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
+    expect(page).toContain("\u20683\u2069 of \u20689 stamps\u2069");
+    expect(page.match(/<li class="stamp is-filled">/g)).toHaveLength(3);
+    expect(page.match(/<li class="stamp"><\/li>/g)).toHaveLength(6);
+    expect(page).toContain("\u20686 stamps\u2069 to go for \u2068Free coffee\u2069.");
+    expect(page).not.toContain('class="offer"');
+
+    const created = await as("POST", "/api/campaigns", {
+      nameAr: "عصرية",
+      nameEn: "Afternoon",
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+      startsMinute: 0,
+      endsMinute: 1440,
+      discount: { kind: "percent", value: 20 },
+      orderTypeIds: [coffee],
+    });
+    const campaignId = created.json<{ running: { id: string }[] }>().running[0]?.id;
+    // As the worker announces it (announceCampaigns).
+    await context.admin.query("INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id) VALUES ($1, $2, $3)", [owner.cafeId, campaignId, card?.id]);
+    const withOffer = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
+    expect(withOffer).toContain('<section class="offer" aria-labelledby="offer-title">');
+    expect(withOffer).toContain("Afternoon · 20% off");
+    expect(withOffer).toContain("Every day, all day, on Coffee.");
   });
 
   it("sets and removes a recovery email, and opts in and out of offers", async () => {

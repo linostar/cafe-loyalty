@@ -188,3 +188,4 @@ export {
   type Discount,
   type DiscountKind,
 } from "./campaigns.js";
+export { PRODUCT_NAME } from "./brand.js";

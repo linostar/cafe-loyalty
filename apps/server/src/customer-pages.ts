@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
-import { GOOGLE_PASS_UPDATE_QUEUE, loadCardOffer, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { readFile } from "node:fs/promises";
+import { GOOGLE_PASS_UPDATE_QUEUE, loadCardOffer, offerText, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
+import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { renderSVG } from "uqr";
@@ -8,7 +10,8 @@ import { APPLE_PASS_LAYOUT_VERSION, applePassToken, buildApplePass, type ApplePa
 import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
-import { CUSTOMER_CSP, count, html, page, pickLang, t, type Lang, type MessageKey, type SafeHtml } from "./customer-html.js";
+import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
+import { cardView, deletedView, errorView, joinView, recoverView, restoreView, restoredView } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
@@ -92,13 +95,13 @@ const otherLang = (path: string, lang: Lang, saved = false): string => `${path}?
 const sendPage = (reply: FastifyReply, status: number, document: string) =>
   reply.code(status).header("content-type", "text/html; charset=utf-8").send(document);
 
-const errorBlock = (message: string | undefined, id: string): SafeHtml | false =>
-  message !== undefined && html`<p class="error" id="${id}" role="alert">${message}</p>`;
-
 /** An error page: the message as its heading, and a language switch back to the same path. */
 function errorPage(lang: Lang, message: string, url: string): string {
-  return page(lang, t(lang, "siteTitle"), html`<h1 role="alert">${message}</h1>`, otherLang(url.split("?", 1)[0] ?? "/", lang));
+  return errorView(lang, message, otherLang(url.split("?", 1)[0] ?? "/", lang));
 }
+
+/** Fonts and the logo change only with a release, and hold no secret: browsers keep them for a week. */
+const ASSET_CACHE = "public, max-age=604800";
 
 export function recoveryEmail(to: string, link: string): EmailMessage {
   return {
@@ -205,28 +208,15 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   }
 
   function joinPage(lang: Lang, path: string, cafeName: string, program: Awaited<ReturnType<typeof programOf>>, values: Form, errors: { phone?: string; privacy?: string }): string {
-    const reward = program === undefined ? undefined : lang === "ar" ? program.reward_name_ar : program.reward_name_en;
-    return page(
-      lang,
-      t(lang, "joinTitle", { cafe: cafeName }),
-      html`<h1>${t(lang, "joinTitle", { cafe: cafeName })}</h1>
-${program === undefined || reward === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
-<form method="post" action="${path}" novalidate>
-<input type="hidden" name="lang" value="${lang}">
-<input type="hidden" name="form" value="${values.form !== undefined && isToken(values.form) ? values.form : newToken()}">
-<label for="phone">${t(lang, "phoneLabel")}</label>
-<input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" required value="${values.phone ?? ""}" aria-describedby="phone-hint${errors.phone === undefined ? "" : " phone-error"}"${errors.phone === undefined ? "" : html` aria-invalid="true"`}>
-<p id="phone-hint">${t(lang, "phoneHint")}</p>
-${errorBlock(errors.phone, "phone-error")}
-<div class="privacy" id="privacy-text"><strong>${t(lang, "privacyTitle")}</strong><p>${t(lang, "privacyText", { cafe: cafeName })}</p></div>
-<label class="check"><input type="checkbox" name="privacy" value="yes" required aria-describedby="privacy-text${errors.privacy === undefined ? "" : " privacy-error"}"${errors.privacy === undefined ? "" : html` aria-invalid="true"`}${values.privacy === "yes" ? html` checked` : ""}> ${t(lang, "privacyAccept")}</label>
-${errorBlock(errors.privacy, "privacy-error")}
-<label class="check"><input type="checkbox" name="offers" value="yes"${values.offers === "yes" ? html` checked` : ""}> ${t(lang, "offersOptIn", { cafe: cafeName })}</label>
-<button type="submit">${t(lang, "joinButton")}</button>
-</form>
-<p><a href="/recover?lang=${lang}">${t(lang, "lostCard")}</a></p>`,
-      otherLang(path, lang),
-    );
+    return joinView(lang, {
+      path,
+      cafeName,
+      program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
+      formToken: values.form !== undefined && isToken(values.form) ? values.form : newToken(),
+      values,
+      errors,
+      otherLangHref: otherLang(path, lang),
+    });
   }
 
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string", bodyLimit: 8 * 1024 }, (_request, body, next) => {
@@ -262,6 +252,23 @@ ${errorBlock(errors.privacy, "privacy-error")}
     const key: MessageKey = status >= 500 ? "failed" : status === 404 ? "notFound" : "badRequest";
     return sendPage(reply, status, errorPage(lang, t(lang, key), request.url));
   });
+
+  /** The customer pages' fonts (named in their stylesheet) and logo (their favicon and footer): public, no secrets. */
+  app.get(`${FONT_PATH}:file`, async (request, reply) => {
+    const path = FONT_FILES.get((request.params as { file: string }).file);
+    if (path === undefined) {
+      throw new PageError(404, "notFound");
+    }
+    return reply
+      .code(200)
+      .header("content-type", path.endsWith(".woff2") ? "font/woff2" : "font/woff")
+      .header("cache-control", ASSET_CACHE)
+      .send(await readFile(path));
+  });
+
+  app.get(LOGO_PATH, async (_request, reply) =>
+    reply.code(200).header("content-type", "image/svg+xml").header("cache-control", ASSET_CACHE).send(await readFile(LOGO_SVG_PATH)),
+  );
 
   // Bare or truncated paths get a page in the visitor's language rather than the API's JSON 404.
   for (const bare of ["/join", "/c", "/r"]) {
@@ -376,56 +383,34 @@ ${errorBlock(errors.privacy, "privacy-error")}
     notice: string | undefined,
     errors: { email?: string; delete?: string },
   ): Promise<string> {
-    const { cafe, program } = await withCafe(db, card.cafe_id, async (trx) => ({
+    const { cafe, program, offers } = await withCafe(db, card.cafe_id, async (trx) => ({
       cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
+      offers: await loadCardOffer(trx, card.id),
     }));
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4 }))}`;
     const path = `/c/${secret}`;
-    const reward = program === undefined ? undefined : lang === "ar" ? program.reward_name_ar : program.reward_name_en;
-    return page(
-      lang,
-      t(lang, "cardTitle", { cafe: cafe.name }),
-      html`<h1>${t(lang, "cardTitle", { cafe: cafe.name })}</h1>
-${notice === undefined ? null : html`<p class="notice" role="status">${notice}</p>`}
-<p class="stamps">${program === undefined ? count(lang, "stamps", card.stamps) : t(lang, "stampsProgress", { stamps: card.stamps, required: count(lang, "stamps", program.stamps_required) })}</p>
-${reward === undefined || program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stamps_required, reward })}</p>`}
-<img class="qr" src="${qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
-${options.apple === undefined || !onAppleDevice(request) ? null : html`<p><a class="wallet" href="${path}/apple-pass?lang=${lang}">${t(lang, "addToAppleWallet")}</a></p>`}
-${options.google === undefined || onAppleDevice(request) ? null : html`<p><a class="google-wallet" href="${path}/google-pass?lang=${lang}"><img src="${GOOGLE_WALLET_BADGES[lang]}" alt="${t(lang, "addToGoogleWallet")}" width="199" height="55"></a></p>`}
-<p>${t(lang, "keepLink")}</p>
-<section aria-labelledby="email-title">
-<h2 id="email-title">${t(lang, "emailTitle")}</h2>
-<p>${t(lang, "emailText")}</p>
-<form method="post" action="${path}/email" novalidate>
-<input type="hidden" name="lang" value="${lang}">
-<label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr" value="${card.email ?? ""}" aria-describedby="email-hint${errors.email === undefined ? "" : " email-error"}"${errors.email === undefined ? "" : html` aria-invalid="true"`}>
-<p id="email-hint">${t(lang, "emailRemoveHint")}</p>
-${errorBlock(errors.email, "email-error")}
-<button type="submit">${t(lang, "emailSave")}</button>
-</form>
-</section>
-<section aria-labelledby="offers-title">
-<h2 id="offers-title">${t(lang, "offersTitle")}</h2>
-<form method="post" action="${path}/offers">
-<input type="hidden" name="lang" value="${lang}">
-<label class="check"><input type="checkbox" name="offers" value="yes"${card.offers_opt_in_at === null ? "" : html` checked`}> ${t(lang, "offersLabel", { cafe: cafe.name })}</label>
-<button type="submit">${t(lang, "offersSave")}</button>
-</form>
-</section>
-<section aria-labelledby="delete-title">
-<h2 id="delete-title">${t(lang, "deleteTitle")}</h2>
-<p id="delete-text">${t(lang, "deleteText")}</p>
-<form method="post" action="${path}/delete" novalidate>
-<input type="hidden" name="lang" value="${lang}">
-<label class="check"><input type="checkbox" name="confirm" value="yes" aria-describedby="delete-text${errors.delete === undefined ? "" : " delete-error"}"> ${t(lang, "deleteConfirm")}</label>
-${errorBlock(errors.delete, "delete-error")}
-<button type="submit" class="danger">${t(lang, "deleteButton")}</button>
-</form>
-</section>`,
-      otherLang(path, lang, notice !== undefined),
-    );
+    const apple = onAppleDevice(request);
+    return cardView(lang, {
+      path,
+      cafeName: cafe.name,
+      stamps: card.stamps,
+      program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
+      qr,
+      // The offer its passes show (AC 14), for a card opted in to offers.
+      offer: offers.offer === undefined ? undefined : offerText(lang, offers.offer),
+      wallet:
+        apple && options.apple !== undefined
+          ? { kind: "apple", href: `${path}/apple-pass?lang=${lang}` }
+          : !apple && options.google !== undefined
+            ? { kind: "google", href: `${path}/google-pass?lang=${lang}`, badge: GOOGLE_WALLET_BADGES[lang] }
+            : null,
+      email: card.email,
+      offersOptedIn: card.offers_opt_in_at !== null,
+      notice,
+      errors,
+      otherLangHref: otherLang(path, lang, notice !== undefined),
+    });
   }
 
   /**
@@ -581,25 +566,11 @@ ${errorBlock(errors.delete, "delete-error")}
     await withCafe(db, card.cafe_id, (trx) => deleteCard(trx, card));
     request.log.info({ cafeId: card.cafe_id }, "customer card deleted");
     await atLeast(started, MIN_DELETE_MS);
-    return sendPage(reply, 200, page(lang, t(lang, "deletedTitle"), html`<h1>${t(lang, "deletedTitle")}</h1><p role="status">${t(lang, "deletedText")}</p>`, otherLang("/recover", lang)));
+    return sendPage(reply, 200, deletedView(lang, otherLang("/recover", lang)));
   });
 
   function recoverPage(lang: Lang, sent: boolean, error?: string): string {
-    return page(
-      lang,
-      t(lang, "recoverTitle"),
-      html`<h1>${t(lang, "recoverTitle")}</h1>
-${sent ? html`<p class="notice" role="status">${t(lang, "recoverSent")}</p>` : null}
-<p>${t(lang, "recoverText")}</p>
-<form method="post" action="/recover" novalidate>
-<input type="hidden" name="lang" value="${lang}">
-<label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr" required${error === undefined ? "" : html` aria-invalid="true" aria-describedby="email-error"`}>
-${errorBlock(error, "email-error")}
-<button type="submit">${t(lang, "recoverButton")}</button>
-</form>`,
-      otherLang("/recover", lang),
-    );
+    return recoverView(lang, sent, error, otherLang("/recover", lang));
   }
 
   app.get("/recover", async (request, reply) => sendPage(reply, 200, recoverPage(langOf(request), false)));
@@ -676,20 +647,7 @@ ${errorBlock(error, "email-error")}
       throw new PageError(410, "linkExpired");
     }
     const path = `/r/${token}`;
-    return sendPage(
-      reply,
-      200,
-      page(
-        lang,
-        t(lang, "restoreTitle"),
-        html`<h1>${t(lang, "restoreTitle")}</h1>
-<p>${t(lang, "restoreText")}</p>
-<form method="post" action="${path}"><input type="hidden" name="lang" value="${lang}"><input type="hidden" name="action" value="restore"><button type="submit">${t(lang, "restoreButton")}</button></form>
-<p>${t(lang, "restoreDeleteText")}</p>
-<form method="post" action="${path}"><input type="hidden" name="lang" value="${lang}"><input type="hidden" name="action" value="delete"><button type="submit" class="danger">${t(lang, "restoreDeleteButton")}</button></form>`,
-        otherLang(path, lang),
-      ),
-    );
+    return sendPage(reply, 200, restoreView(lang, path, otherLang(path, lang)));
   });
 
   /**
@@ -753,7 +711,7 @@ ${errorBlock(error, "email-error")}
     );
     request.log.info({ cafeIds: restored.cafeIds, action }, action === "delete" ? "customer cards deleted by recovery link" : "customer cards restored");
     if (action === "delete") {
-      return sendPage(reply, 200, page(lang, t(lang, "deletedTitle"), html`<h1>${t(lang, "deletedTitle")}</h1><p role="status">${t(lang, "deletedText")}</p>`, otherLang("/recover", lang)));
+      return sendPage(reply, 200, deletedView(lang, otherLang("/recover", lang)));
     }
     const [only] = restored.results;
     if (restored.results.length === 1 && only !== undefined) {
@@ -771,13 +729,9 @@ ${errorBlock(error, "email-error")}
     return sendPage(
       reply,
       200,
-      page(
+      restoredView(
         lang,
-        t(lang, "restoredTitle"),
-        html`<h1>${t(lang, "restoredTitle")}</h1>
-<p>${t(lang, "restoredText")}</p>
-<ul>${labelled.map((result) => html`<li><a href="/c/${result.secret}?lang=${lang}"><bdi>${result.label}</bdi></a></li>`)}</ul>`,
-        null,
+        labelled.map((result) => ({ href: `/c/${result.secret}?lang=${lang}`, label: result.label })),
       ),
     );
   });

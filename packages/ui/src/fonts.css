@@ -1,0 +1,8 @@
+/*
+ * IBM Plex Sans Arabic (SIL OFL 1.1), one family for Arabic and Latin, self-hosted: regular, semibold and bold. Each
+ * subset has its unicode-range, so a page downloads only the subsets its text uses; font-display: swap shows the
+ * system font until it has loaded. The server reads this list to serve the same files to the customer pages.
+ */
+@import "@fontsource/ibm-plex-sans-arabic/400.css";
+@import "@fontsource/ibm-plex-sans-arabic/600.css";
+@import "@fontsource/ibm-plex-sans-arabic/700.css";
