@@ -31,8 +31,54 @@ export const winBackSettingsSchema = z.object({
     .max(WIN_BACK_MAX_COOLDOWN_DAYS, `Use at most ${String(WIN_BACK_MAX_COOLDOWN_DAYS)} days.`),
 });
 
+/** A path segment of a Maps place link (a name with + for spaces, percent-encoded when not ASCII, or "@33.89,35.50,17z"). */
+const PLACE_SEGMENT = String.raw`[\w@,.!=+:;~%-]+`;
+const MAPS_PLACE = new RegExp(String.raw`^/maps/place(/${PLACE_SEGMENT})+/?$`);
+/**
+ * Where Google Business Profile's review links point, and the paths they take there: its short link, the
+ * write-a-review page, and a Maps place. Exact hosts and an allowed path shape only, so no site that serves other
+ * people's content (Sites, Forms), lookalike domain or other Google page (its /url and /amp/s/ redirectors) passes.
+ */
+const GOOGLE_REVIEW_PATHS = new Map<string, RegExp>([
+  ["g.page", /^\/(r\/)?[\w-]+(\/review)?\/?$/],
+  ["search.google.com", /^\/local\/writereview\/?$/],
+  ["maps.app.goo.gl", /^\/[\w-]+\/?$/],
+  ["www.google.com", MAPS_PLACE],
+  ["google.com", MAPS_PLACE],
+  ["maps.google.com", MAPS_PLACE],
+]);
+
+/**
+ * The café's Google review link (AC 37), as Google Business Profile gives it ("Ask for reviews"): an https link on a
+ * Google host. An empty value removes it (null).
+ */
+export const googleReviewUrlSchema = z
+  .string()
+  .trim()
+  .max(500, "Use at most 500 characters.")
+  .transform((value, context) => {
+    if (value === "") {
+      return null;
+    }
+    // https, a bare host (no user name or other port), then an optional path, query or fragment without spaces.
+    const parts = /^https:\/\/([a-z0-9.-]+)(?::443)?([/?#]\S*)?$/i.exec(value);
+    const host = parts?.[1]?.toLowerCase();
+    const rest = parts?.[2] ?? "";
+    // Browsers resolve dot segments in a path before they send it, a backslash counting as a slash and %2e as a dot
+    // (/x/../url, /.\url and /%2e%2e/url reach Google's /url redirector), and review links use none of them, so a
+    // path with any is refused: the path checked against the host's shape is then the one the browser requests.
+    const path = rest.split(/[?#]/, 1)[0] ?? "";
+    const plainPath = !/\\|%2e/i.test(path) && !path.split("/").some((segment) => segment === "." || segment === "..");
+    if (host !== undefined && plainPath && GOOGLE_REVIEW_PATHS.get(host)?.test(path) === true) {
+      // The scheme and host in lower case, as the database's check expects.
+      return `https://${host}${rest}`;
+    }
+    context.addIssue({ code: "custom", message: "Paste the review link from your Google Business Profile, such as https://g.page/r/…/review." });
+    return z.NEVER;
+  });
+
 export const cafeUpdateSchema = z
-  .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional() })
+  .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional(), googleReviewUrl: googleReviewUrlSchema.optional() })
   .refine(atLeastOneField, "Change at least one field.");
 
 export const loyaltyProgramSchema = z.object({
@@ -57,7 +103,15 @@ export const orderTypeSchema = z.object({ id: z.uuid(), ...orderTypeFields });
 
 /** Everything the dashboard's café setup screen shows. */
 export const cafeSetupSchema = z.object({
-  cafe: z.object({ id: z.uuid(), name: z.string(), catalogVersion: z.int(), minMarginPercent: z.int(), winBack: winBackSettingsSchema }),
+  cafe: z.object({
+    id: z.uuid(),
+    name: z.string(),
+    catalogVersion: z.int(),
+    minMarginPercent: z.int(),
+    winBack: winBackSettingsSchema,
+    // Defaults for a server from before Step 14 (a rollback), which sends none.
+    googleReviewUrl: z.string().nullable().default(null),
+  }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),
 });

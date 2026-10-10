@@ -239,6 +239,12 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .execute(),
   campaign_announcements: (trx, cafeId) =>
     trx.insertInto("campaign_announcements").values({ cafe_id: cafeId, campaign_id: idOf("campaign", cafeId), card_id: idOf("card", cafeId) }).execute(),
+  feedback_requests: (trx, cafeId) =>
+    trx
+      .insertInto("feedback_requests")
+      .values({ id: idOf("feedbackRequest", cafeId), cafe_id: cafeId, card_id: idOf("card", cafeId), visit_id: idOf("visit", cafeId) })
+      .execute(),
+  feedback: (trx, cafeId) => trx.insertInto("feedback").values({ cafe_id: cafeId, request_id: idOf("feedbackRequest", cafeId), message: "Fake feedback for the tenancy test." }).execute(),
 };
 
 const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];

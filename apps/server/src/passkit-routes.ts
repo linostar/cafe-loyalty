@@ -1,4 +1,4 @@
-import { loadCardOffer, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
+import { feedbackUrl, loadCardOffer, loadFeedbackRequest, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Kysely } from "kysely";
 import { APPLE_PASS_LAYOUT_VERSION, buildApplePass, type ApplePassConfig } from "./apple-pass.js";
@@ -188,7 +188,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       const card = await trx.selectFrom("cards").select(["epoch", "stamps"]).where("id", "=", pass.card_id).executeTakeFirstOrThrow();
       const cafe = await trx.selectFrom("cafes").select("name").where("id", "=", pass.cafe_id).executeTakeFirstOrThrow();
       const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
-      return { modifiedAt: row.modified_at, card, cafeName: cafe.name, program, offers: await loadCardOffer(trx, pass.card_id) };
+      return { modifiedAt: row.modified_at, card, cafeName: cafe.name, program, offers: await loadCardOffer(trx, pass.card_id), feedback: await loadFeedbackRequest(trx, pass.card_id) };
     });
     if (found === undefined) {
       return reply.code(304).send();
@@ -205,6 +205,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
           : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
       qr: current ? signCardQr(options.secrets, { cardId: pass.card_id, cafeId: pass.cafe_id, epoch: pass.epoch }) : null,
       offers: found.offers,
+      feedbackUrl: current && found.feedback !== undefined ? feedbackUrl(options.publicUrl, options.secrets, found.feedback) : undefined,
     });
     request.log.info({ cafeId: pass.cafe_id, voided: !current }, "apple pass sent");
     return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("last-modified", found.modifiedAt.toUTCString()).send(pkpass);

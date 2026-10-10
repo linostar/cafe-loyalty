@@ -3,6 +3,7 @@ import {
   PAIRING_CODE_ALPHABET,
   deviceCatalogSchema,
   devicePairProofPayload,
+  googleReviewUrlSchema,
   deviceTokenSigningPayload,
   formatPairingCode,
   normalizePairingCode,
@@ -118,6 +119,51 @@ describe("win-back settings (AC 36)", () => {
       { cooldownDays: 30 },
     ]) {
       expect(winBackSettingsSchema.safeParse(wrong).success).toBe(false);
+    }
+  });
+});
+
+describe("googleReviewUrlSchema", () => {
+  it("takes an https link on a Google host, and empty for none (AC 37)", () => {
+    for (const link of ["https://g.page/r/FakeReviewLink/review", "https://search.google.com/local/writereview?placeid=FakePlace", "https://www.google.com/maps/place/Fake", "https://www.google.com/maps/place/Fake+Cafe/@33.89,35.50,17z/data=!4m6!3m5", "https://maps.app.goo.gl/Fake", "https://g.page/FakeCafe/review?rc", "https://www.google.com/maps/place/%D9%85%D9%82%D9%87%D9%89/@33.89,35.50,17z"]) {
+      expect(googleReviewUrlSchema.parse(` ${link} `)).toBe(link);
+    }
+    expect(googleReviewUrlSchema.parse("HTTPS://G.Page/r/FakeReviewLink/review")).toBe("https://g.page/r/FakeReviewLink/review");
+    expect(googleReviewUrlSchema.parse("  ")).toBeNull();
+  });
+
+  it("refuses other sites, plain http, user names, ports and look-alikes", () => {
+    for (const link of [
+      "https://example.com/review",
+      "http://g.page/r/FakeReviewLink/review",
+      "https://user@g.page/r/Fake",
+      "https://g.page:8443/r/Fake",
+      "https://g.page.example.com/r/Fake",
+      "https://google.com.example.com/",
+      "https://notgoogle.com/",
+      "https://www.google.xyz/review",
+      "https://sites.google.com/view/fake",
+      "https://docs.google.com/forms/d/fake",
+      "https://www.google.com/url?q=https://example.com",
+      // Spellings a browser turns into the redirector's path.
+      "https://www.google.com/./url?q=https://example.com",
+      "https://www.google.com/%2e/url?q=https://example.com",
+      "https://google.com/x/../url?q=https://example.com",
+      "https://maps.google.com/.\\url?q=https://example.com",
+      "https://www.google.com//url?q=https://example.com",
+      "https://www.google.com/maps/place/%2E%2e/%2e%2E/url?q=https://example.com",
+      "https://g.page/r/%46ake/review",
+      // Other Google pages: only review link shapes pass.
+      "https://www.google.com/amp/s/example.com",
+      "https://www.google.com/search?q=fake",
+      "https://www.google.com/maps/place//url",
+      "https://g.page/r/Fake/../../url",
+      "https://search.google.com/local/reviews?placeid=FakePlace",
+      "https://goo.gl/fake",
+      "javascript:alert(1)",
+      "https://g.page/r/Fake review",
+    ]) {
+      expect(googleReviewUrlSchema.safeParse(link).success).toBe(false);
     }
   });
 });

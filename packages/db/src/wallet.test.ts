@@ -12,6 +12,7 @@ const CONTENT = {
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "qr-token",
   offer: undefined,
+  feedbackUrl: undefined,
 };
 
 const OFFER: CardOffer = {
@@ -122,6 +123,20 @@ describe("Google Wallet objects", () => {
     });
     // Google's message ids: letters, digits, '.', '_' or '-'.
     expect(googleOfferMessage(OFFER).id).toMatch(/^[A-Za-z0-9._-]+$/);
+  });
+
+  it("links to the latest visit's feedback page, in Arabic and English, without notifying (AC 37)", () => {
+    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, feedbackUrl: "https://card.example.test/f/fake-token" });
+    expect(object.state === "ACTIVE" ? object.linksModuleData?.uris : undefined).toEqual([
+      {
+        id: "feedback",
+        uri: "https://card.example.test/f/fake-token",
+        description: "How was your visit? Tell us",
+        localizedDescription: { defaultValue: { language: "en", value: "How was your visit? Tell us" }, translatedValues: [{ language: "ar", value: "كيف كانت زيارتك؟ أخبرنا" }] },
+      },
+    ]);
+    expect(JSON.stringify(object)).not.toContain("notifyPreference");
+    expect(googleLoyaltyObject(ISSUER, CONTENT)).not.toHaveProperty("linksModuleData");
   });
 
   it("builds an earlier epoch's object INACTIVE, without the QR or stamps (AC 8)", () => {

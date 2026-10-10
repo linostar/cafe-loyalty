@@ -39,6 +39,8 @@ export interface ApplePassContent {
   qr: string | null;
   /** What the card shows of offers (loadCardOffer). */
   offers: { optedIn: boolean; offer: CardOffer | undefined };
+  /** The feedback page of the card's latest feedback request (feedbackUrl, AC 37), if it has one. */
+  feedbackUrl: string | undefined;
 }
 
 /**
@@ -98,6 +100,7 @@ function passStrings(lang: Lang, content: ApplePassContent): Record<string, stri
     // The stamps it takes show above, as "4 of 9 stamps".
     ...(reward === undefined ? {} : { reward_label: t(lang, "passRewardLabel"), reward_value: reward }),
     ...offerStrings(lang, content.offers.offer),
+    ...(content.feedbackUrl === undefined ? {} : { feedback_label: t(lang, "passFeedbackLabel"), feedback_value: `${t(lang, "passFeedbackText")}\n${content.feedbackUrl}` }),
   };
   return Object.fromEntries(Object.entries(strings).map(([key, value]) => [key, stringsValue(value)]));
 }
@@ -155,7 +158,12 @@ export function buildApplePass(config: ApplePassConfig, publicUrl: string, conte
       primaryFields: [{ key: "stamps", label: "stamps_label", value: "stamps_value" }],
       secondaryFields: content.program === undefined || content.qr === null ? [] : [{ key: "reward", label: "reward_label", value: "reward_value" }],
       auxiliaryFields: offer.auxiliaryFields,
-      backFields: [...offer.backFields, { key: "about", label: "about_label", value: "about_value" }],
+      // The feedback link is on the back, silently (AC 37): Wallet makes the URL in its text a link.
+      backFields: [
+        ...offer.backFields,
+        ...(content.feedbackUrl === undefined || content.qr === null ? [] : [{ key: "feedback", label: "feedback_label", value: "feedback_value" }]),
+        { key: "about", label: "about_label", value: "about_value" },
+      ],
     },
   };
   const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...ICONS }, config.certificates);

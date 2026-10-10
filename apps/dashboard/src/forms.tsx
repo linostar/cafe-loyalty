@@ -6,7 +6,7 @@ import { SessionEndedContext } from "./session.js";
 interface FieldProps {
   label: string;
   name: string;
-  type: "email" | "password" | "text";
+  type: "email" | "password" | "text" | "url";
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;
@@ -19,10 +19,12 @@ interface FieldProps {
   inputMode?: "numeric" | "decimal";
   /** For Arabic text: lang "ar" and right-to-left. */
   lang?: "ar";
+  /** May be left empty (fields are required otherwise). */
+  optional?: boolean;
 }
 
 /** A labelled input whose hint and error are announced with it. */
-export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang }: FieldProps) {
+export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false }: FieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -35,7 +37,7 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
         name={name}
         type={type}
         autoComplete={autoComplete}
-        required
+        required={!optional}
         minLength={minLength}
         maxLength={maxLength}
         inputMode={inputMode}

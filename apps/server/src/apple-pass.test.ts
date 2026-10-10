@@ -15,6 +15,7 @@ const content: ApplePassContent = {
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "CL1.card-qr-token",
   offers: { optedIn: false, offer: undefined },
+  feedbackUrl: undefined,
 };
 
 const offer = {
@@ -88,6 +89,18 @@ describe("buildApplePass", () => {
     // A voided pass shows no offer.
     const voided = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null, offers: { optedIn: true, offer } })).json;
     expect(voided).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "about" }] } });
+  });
+
+  it("links to the latest visit's feedback page on its back, silently, the link on a line of its own (AC 37)", () => {
+    const url = "https://card.example.test/f/fake-feedback-token";
+    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, feedbackUrl: url }));
+    expect(json).toMatchObject({ storeCard: { backFields: [{ key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
+    expect(JSON.stringify(json)).not.toContain("changeMessage");
+    expect(text("en.lproj/pass.strings")).toContain(`"feedback_value" = "Tell the café privately how your visit went.\\n${url}";`);
+    expect(text("ar.lproj/pass.strings")).toContain('"feedback_label" = "كيف كانت زيارتك؟";');
+    // A voided pass has no link.
+    const voided = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null, feedbackUrl: url })).json;
+    expect(voided).toMatchObject({ storeCard: { backFields: [{ key: "about" }] } });
   });
 
   it("has every text in Arabic and English (AC 10)", () => {

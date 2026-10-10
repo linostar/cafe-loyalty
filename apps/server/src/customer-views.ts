@@ -68,6 +68,8 @@ export interface CardView {
   qr: string;
   /** The offer the card holds now (offerText), if any. */
   offer: { headline: string; details: string } | undefined;
+  /** The feedback page of the card's latest visit (AC 37), if it was asked about one. */
+  feedbackHref: string | undefined;
   wallet: WalletLink;
   email: string | null;
   offersOptedIn: boolean;
@@ -120,6 +122,12 @@ ${view.wallet === null
     ? html`<p class="wallet-row"><a class="wallet" href="${view.wallet.href}">${t(lang, "addToAppleWallet")}</a></p>`
     : html`<p class="wallet-row"><a class="google-wallet" href="${view.wallet.href}"><img src="${view.wallet.badge}" alt="${t(lang, "addToGoogleWallet")}" width="199" height="55"></a></p>`}
 <p class="aside">${t(lang, "keepLink")}</p>
+${view.feedbackHref === undefined
+  ? null
+  : html`<section aria-labelledby="feedback-title" class="card">
+<h2 id="feedback-title">${t(lang, "cardFeedbackTitle")}</h2>
+<p><a href="${view.feedbackHref}">${t(lang, "cardFeedbackLink")}</a></p>
+</section>`}
 <section aria-labelledby="email-title" class="card">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
 <p>${t(lang, "emailText")}</p>
@@ -215,4 +223,50 @@ export function deletedView(lang: Lang, otherLangHref: string): string {
 /** An error page: the message as its heading. */
 export function errorView(lang: Lang, message: string, otherLangHref: string): string {
   return page(lang, t(lang, "siteTitle"), html`<div class="card"><h1 role="alert">${message}</h1></div>`, otherLangHref);
+}
+
+export interface FeedbackView {
+  path: string;
+  cafeName: string;
+  /** The café's Google review link, or null for none. */
+  reviewUrl: string | null;
+  /** The form, the thanks after sending, or a request already answered. */
+  state: "form" | "sent" | "done";
+  message: string;
+  error: string | undefined;
+  otherLangHref: string;
+}
+
+/**
+ * A visit's feedback page (AC 37): a private message to the owner and the café's Google review link, both offered to
+ * every customer. No rating is asked, so nothing decides who sees the review link (no review gating).
+ */
+export function feedbackView(lang: Lang, view: FeedbackView): string {
+  const { error } = view;
+  const review =
+    view.reviewUrl === null
+      ? null
+      : html`<section aria-labelledby="review-title" class="card">
+<h2 id="review-title">${t(lang, "reviewTitle", { cafe: view.cafeName })}</h2>
+<p>${t(lang, "reviewText")}</p>
+<p class="wallet-row"><a class="wallet" href="${view.reviewUrl}" rel="noreferrer">${t(lang, "reviewButton")}</a></p>
+</section>`;
+  const body =
+    view.state === "form"
+      ? html`<form method="post" action="${view.path}" novalidate class="card">
+<h1>${t(lang, "feedbackTitle", { cafe: view.cafeName })}</h1>
+<p>${t(lang, "feedbackText")}</p>
+<input type="hidden" name="lang" value="${lang}">
+<label for="message">${t(lang, "feedbackLabel")}</label>
+<textarea id="message" name="message" rows="6" maxlength="2000" required aria-describedby="message-hint${error === undefined ? "" : " message-error"}"${error === undefined ? "" : html` aria-invalid="true"`}>${view.message}</textarea>
+<p id="message-hint" class="hint">${t(lang, "feedbackHint")}</p>
+${errorBlock(error, "message-error")}
+<button type="submit">${t(lang, "feedbackSend")}</button>
+</form>`
+      : html`<div class="card">
+<h1>${t(lang, "feedbackTitle", { cafe: view.cafeName })}</h1>
+<p class="notice" role="status">${t(lang, view.state === "sent" ? "feedbackSent" : "feedbackDone")}</p>
+</div>`;
+  return page(lang, t(lang, "feedbackTitle", { cafe: view.cafeName }), html`${body}
+${review}`, view.otherLangHref);
 }

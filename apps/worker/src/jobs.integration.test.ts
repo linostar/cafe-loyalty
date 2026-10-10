@@ -5,6 +5,7 @@ import {
   createJobQueue,
   loadCardOffer,
   verifyCardQr,
+  verifyFeedbackToken,
   withCafe,
   type GoogleLoyaltyClass,
   type GoogleLoyaltyObject,
@@ -21,6 +22,7 @@ import { writeGooglePass, type GooglePassSettings } from "./google-passes.js";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
 import { PURGE_QUEUE, RESEND_QUEUE, jobQueueTask } from "./jobs.js";
 import { ANNOUNCE_QUEUE, announceCampaigns } from "./offers.js";
+import { FEEDBACK_QUEUE } from "./feedback.js";
 import { WIN_BACK_QUEUE, runWinBack } from "./win-back.js";
 
 let db: TestDatabase;
@@ -289,6 +291,7 @@ describe("job queue", () => {
       ).toEqual([
         { name: ANNOUNCE_QUEUE, cron: "*/5 * * * *" },
         { name: PURGE_QUEUE, cron: "17 * * * *" },
+        { name: FEEDBACK_QUEUE, cron: "9,24,39,54 * * * *" },
         { name: RESEND_QUEUE, cron: "4,19,34,49 * * * *" },
         { name: WIN_BACK_QUEUE, cron: "41 * * * *" },
       ]);
@@ -993,5 +996,75 @@ describe("job queue", () => {
     expect(
       await codeOf(sql`INSERT INTO pgboss.bam (name, version, status, table_name, command) VALUES ('planted', 1, 'pending', 'job_common', 'SELECT 1')`.execute(db.app.db)),
     ).toBe("42501");
+  });
+});
+
+describe("feedback requests", () => {
+  const HOUR = 1 / 24;
+  const requests = async (cafeId: string): Promise<{ id: string; card_id: string; visit_id: string }[]> =>
+    (await admin.query<{ id: string; card_id: string; visit_id: string }>("SELECT id, card_id, visit_id FROM app.feedback_requests WHERE cafe_id = $1", [cafeId])).rows;
+  const latestVisit = async (cardId: string): Promise<string | undefined> =>
+    (await admin.query<{ id: string }>("SELECT id FROM app.visits WHERE card_id = $1 ORDER BY occurred_at DESC LIMIT 1", [cardId])).rows[0]?.id;
+
+  it("asks about each card's latest visit 2 hours on, at most once a day, and puts the link on its passes silently (AC 37)", async () => {
+    const cafeId = await cafeAtHour(15);
+    const recent = await offerCard(cafeId, { passes: true });
+    const twice = await offerCard(cafeId);
+    const tooSoon = await offerCard(cafeId);
+    const waiting = await offerCard(cafeId);
+    const tooOld = await offerCard(cafeId);
+    const held = await offerCard(cafeId);
+    const askedToday = await offerCard(cafeId);
+    await visited(cafeId, recent.cardId, [3 * HOUR]);
+    // Two visits: the latest is asked about.
+    await visited(cafeId, twice.cardId, [5 * HOUR, 3 * HOUR]);
+    await visited(cafeId, tooSoon.cardId, [1 * HOUR]);
+    // Back an hour ago: its newer visit is asked about once that is 2 hours old, not the earlier one now.
+    await visited(cafeId, waiting.cardId, [3 * HOUR, 1 * HOUR]);
+    await visited(cafeId, tooOld.cardId, [30 * HOUR]);
+    await visited(cafeId, held.cardId, [3 * HOUR], "held");
+    await visited(cafeId, held.cardId, [4 * HOUR], "discarded");
+    // Asked 10 hours ago about an earlier visit: not again today.
+    await visited(cafeId, askedToday.cardId, [12 * HOUR]);
+    await admin.query("INSERT INTO app.feedback_requests (cafe_id, card_id, visit_id, created_at) VALUES ($1, $2, $3, now() - interval '10 hours')", [
+      cafeId,
+      askedToday.cardId,
+      await latestVisit(askedToday.cardId),
+    ]);
+    await visited(cafeId, askedToday.cardId, [3 * HOUR]);
+    const { boss, task, wallet, pusher } = jobQueue();
+    const run = async () => {
+      const id = (await boss.send(FEEDBACK_QUEUE)) ?? "";
+      return (await finished(boss, FEEDBACK_QUEUE, id, "completed"))?.output;
+    };
+    await task.start();
+    try {
+      await run();
+      const asked = await requests(cafeId);
+      expect(asked.map((request) => request.card_id).sort()).toEqual([recent.cardId, twice.cardId, askedToday.cardId].sort());
+      expect(asked.find((request) => request.card_id === twice.cardId)?.visit_id).toBe(await latestVisit(twice.cardId));
+      // The passes show the link: Google's object links to the request's page; the Apple device is told to fetch it.
+      await vi.waitFor(
+        async () => {
+          expect(await deliveryState("google_passes", recent.googlePassId)).toMatchObject({ delivered: true });
+          expect(await deliveryState("apple_passes", recent.applePassId)).toMatchObject({ delivered: true });
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      expect(pusher.pushed).toContain(recent.token);
+      const write = wallet.saved.find((save) => save.object.id.includes(recent.cardId));
+      const uri = write?.object.state === "ACTIVE" ? write.object.linksModuleData?.uris[0]?.uri : undefined;
+      expect(uri).toMatch(/^https:\/\/card\.example\.test\/f\//);
+      const request = asked.find((entry) => entry.card_id === recent.cardId);
+      expect(verifyFeedbackToken(GOOGLE, (uri ?? "").split("/f/")[1] ?? "")).toEqual({ cafeId, requestId: request?.id });
+      // Silently (AC 14 keeps notifications for offers).
+      expect(write?.message).toBeUndefined();
+
+      // Once: a second run asks nothing more.
+      await run();
+      expect(await requests(cafeId)).toHaveLength(3);
+    } finally {
+      await task.stop();
+    }
   });
 });

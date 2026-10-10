@@ -16,6 +16,7 @@ import { CafePage } from "./cafe-page.js";
 import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
+import { InboxPage } from "./inbox-page.js";
 import { ReviewPage } from "./review-page.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
@@ -34,6 +35,7 @@ const OWNER_PAGES = [
   { path: "/staff", label: "Staff" },
   { path: "/devices", label: "Devices" },
   { path: "/review", label: "Review" },
+  { path: "/inbox", label: "Inbox" },
   { path: "/account", label: "Account" },
 ] as const;
 
@@ -273,6 +275,10 @@ function HomePage({ session }: { session: OwnerSession }) {
           <p>What removed phones and baristas recorded.</p>
         </li>
         <li>
+          <a href="/inbox">Inbox</a>
+          <p>Private feedback from your customers.</p>
+        </li>
+        <li>
           <a href="/account">Account</a>
           <p>Password and signing out.</p>
         </li>
@@ -471,6 +477,9 @@ function OwnerArea({ path }: { path: OwnerPath }) {
           break;
         case "/review":
           content = <ReviewPage />;
+          break;
+        case "/inbox":
+          content = <InboxPage />;
           break;
         case "/account":
           content = <AccountPage onSignedOut={signOut} />;
