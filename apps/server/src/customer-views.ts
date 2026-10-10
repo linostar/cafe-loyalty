@@ -8,7 +8,7 @@ import { count, html, page, t, type Lang, type SafeHtml } from "./customer-html.
 
 /** A form field's error, tied to its field by id. */
 const errorBlock = (message: string | undefined, id: string): SafeHtml | false =>
-  message !== undefined && html`<p class="error" id="${id}" role="alert">${message}</p>`;
+  message !== undefined && html`<p class="field-error" id="${id}" role="alert">${message}</p>`;
 
 /** The café's program as the customer reads it, in the page's language. */
 export interface ProgramView {

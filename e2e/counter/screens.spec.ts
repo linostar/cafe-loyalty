@@ -1,5 +1,6 @@
 import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expectFocusNeverHidden } from "../focus.js";
 import { mockApi, reply } from "../dashboard/api-mock.js";
 import { CAMERA_CAFE_ID } from "./camera.js";
 
@@ -74,7 +75,7 @@ const WIDTHS = [
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
-  // From the top, so a sticky header is drawn where it belongs in the full-page image.
+  // From the top, so the sticky parts (the nav column, the order summary) are drawn where they belong in the image.
   await page.evaluate(() => {
     window.scrollTo(0, 0);
   });
@@ -139,6 +140,8 @@ for (const { width, height } of WIDTHS) {
       await context.setOffline(true);
       await expect(page.getByRole("status").first()).toHaveText(/^Offline/);
       await capture(page, testInfo, `counter-offline-${String(width)}`);
+      // Offline, the header is at its tallest (the pills wrap under the brand on narrow screens).
+      await expectFocusNeverHidden(page);
     });
 
     test("a PIN typed wrong", async ({ page }, testInfo) => {

@@ -4,6 +4,7 @@ import { App } from "./App.js";
 import "@cafe-loyalty/ui/fonts.css";
 import "@cafe-loyalty/ui/tokens.css";
 import "@cafe-loyalty/ui/base.css";
+import "@cafe-loyalty/ui/app.css";
 import "./styles.css";
 
 const container = document.getElementById("root");

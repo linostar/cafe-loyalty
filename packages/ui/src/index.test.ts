@@ -25,10 +25,13 @@ describe("selfHostedFonts", () => {
 });
 
 describe("stylesheets", () => {
-  it("joins the named stylesheets in order", () => {
+  it("joins the named stylesheets in order, without their comments", () => {
     const css = stylesheets(["tokens", "base"]);
     expect(css.indexOf("--color-page")).toBeGreaterThanOrEqual(0);
-    expect(css.indexOf("--color-page")).toBeLessThan(css.indexOf(".visually-hidden"));
+    expect(css.indexOf("--color-page")).toBeLessThan(css.indexOf(".card {"));
+    expect(css).not.toContain("/*");
+    // The apps' own components (app.css) are not part of the base.
+    expect(css).not.toContain(".topbar");
   });
 });
 

@@ -271,18 +271,17 @@ main {
   font-size: var(--text-lg);
 }
 
-/* A checkbox with its label beside it, not a full-width input. */
+/* The shared checkbox label (base.css) at the touch height, with a larger box centred on its one-line label. */
 .check {
-  display: flex;
   align-items: center;
   gap: var(--space-3);
   min-block-size: var(--control-height-touch);
-  font-weight: var(--weight-regular);
 }
 
 .check input {
   inline-size: 1.5rem;
   block-size: 1.5rem;
+  margin-block-start: 0;
 }
 
 .scanner {
@@ -337,6 +336,6 @@ main {
   .visit > .order-summary {
     grid-area: summary;
     position: sticky;
-    inset-block-start: 5.5rem;
+    inset-block-start: var(--space-4);
   }
 }

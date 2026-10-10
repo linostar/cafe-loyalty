@@ -228,7 +228,7 @@ describe("web card", () => {
     expect(card.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
   });
 
-  it("shows the program's stamps as a grid with the stamps left, and the offer the card holds (AC 14)", async () => {
+  it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {
     const { app, code, owner } = await cafeWithJoinCode();
     const as = (method: "POST" | "PUT", url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers: withCookie(owner.session), payload });
     await as("PUT", "/api/cafe/program", { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" });
@@ -261,6 +261,16 @@ describe("web card", () => {
     expect(withOffer).toContain('<section class="offer" aria-labelledby="offer-title">');
     expect(withOffer).toContain("Afternoon · 20% off");
     expect(withOffer).toContain("Every day, all day, on Coffee.");
+
+    // A full card, and one past full (stamps keep counting): every slot filled and the reward ready, no stamps to go.
+    for (const stamps of [9, 10]) {
+      await context.admin.query("UPDATE app.cards SET stamps = $2 WHERE id = $1", [card?.id, stamps]);
+      const full = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
+      expect(full.match(/<li class="stamp is-filled">/g)).toHaveLength(9);
+      expect(full).not.toContain('<li class="stamp"></li>');
+      expect(full).toContain("Your reward is ready: \u2068Free coffee\u2069. Show this card to the barista.");
+      expect(full).not.toContain("to go for");
+    }
   });
 
   it("sets and removes a recovery email, and opts in and out of offers", async () => {

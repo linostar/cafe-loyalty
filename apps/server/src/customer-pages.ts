@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { GOOGLE_PASS_UPDATE_QUEUE, loadCardOffer, offerText, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
@@ -102,6 +102,10 @@ function errorPage(lang: Lang, message: string, url: string): string {
 
 /** Fonts and the logo change only with a release, and hold no secret: browsers keep them for a week. */
 const ASSET_CACHE = "public, max-age=604800";
+
+/** Read once at startup, so a missing file stops the server instead of failing a request (about 0.5 MB in all). */
+const FONT_BYTES = new Map([...FONT_FILES].map(([file, path]) => [file, readFileSync(path)]));
+const LOGO_SVG = readFileSync(LOGO_SVG_PATH);
 
 export function recoveryEmail(to: string, link: string): EmailMessage {
   return {
@@ -255,20 +259,19 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
 
   /** The customer pages' fonts (named in their stylesheet) and logo (their favicon and footer): public, no secrets. */
   app.get(`${FONT_PATH}:file`, async (request, reply) => {
-    const path = FONT_FILES.get((request.params as { file: string }).file);
-    if (path === undefined) {
+    const { file } = request.params as { file: string };
+    const bytes = FONT_BYTES.get(file);
+    if (bytes === undefined) {
       throw new PageError(404, "notFound");
     }
     return reply
       .code(200)
-      .header("content-type", path.endsWith(".woff2") ? "font/woff2" : "font/woff")
+      .header("content-type", file.endsWith(".woff2") ? "font/woff2" : "font/woff")
       .header("cache-control", ASSET_CACHE)
-      .send(await readFile(path));
+      .send(bytes);
   });
 
-  app.get(LOGO_PATH, async (_request, reply) =>
-    reply.code(200).header("content-type", "image/svg+xml").header("cache-control", ASSET_CACHE).send(await readFile(LOGO_SVG_PATH)),
-  );
+  app.get(LOGO_PATH, async (_request, reply) => reply.code(200).header("content-type", "image/svg+xml").header("cache-control", ASSET_CACHE).send(LOGO_SVG));
 
   // Bare or truncated paths get a page in the visitor's language rather than the API's JSON 404.
   for (const bare of ["/join", "/c", "/r"]) {

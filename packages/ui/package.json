@@ -11,6 +11,7 @@
     "./fonts.css": "./src/fonts.css",
     "./tokens.css": "./src/tokens.css",
     "./base.css": "./src/base.css",
+    "./app.css": "./src/app.css",
     "./logo.svg": "./assets/logo.svg",
     "./icon-192.png": "./assets/icon-192.png",
     "./icon-512.png": "./assets/icon-512.png"

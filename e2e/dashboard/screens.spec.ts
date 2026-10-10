@@ -1,4 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expectFocusNeverHidden } from "../focus.js";
 import { FAKE_TOKEN, SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
 /**
@@ -85,7 +86,7 @@ const WIDTHS = [1440, 1024, 390] as const;
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
-  // From the top, so a sticky header is drawn where it belongs in the full-page image.
+  // From the top, so the sticky parts (the nav column, the order summary) are drawn where they belong in the image.
   await page.evaluate(() => {
     window.scrollTo(0, 0);
   });
@@ -105,6 +106,7 @@ for (const width of WIDTHS) {
         await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
         await expect(page.getByRole("status")).toHaveCount(0);
         await capture(page, testInfo, `dashboard${path === "/" ? "-home" : path.replace("/", "-")}-${String(width)}`);
+        await expectFocusNeverHidden(page);
       });
     }
 

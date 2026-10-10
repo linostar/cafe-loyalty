@@ -14,9 +14,9 @@ const require = createRequire(import.meta.url);
 /** This package's stylesheets, by name (src/<name>.css). */
 export type Stylesheet = "tokens" | "base" | "customer";
 
-/** The stylesheets joined in the order given, as one text to inline. */
+/** The stylesheets joined in the order given, as one text to inline, without their comments. */
 export function stylesheets(names: readonly Stylesheet[]): string {
-  return names.map((name) => readFileSync(ownFile(`src/${name}.css`), "utf8")).join("\n");
+  return names.map((name) => readFileSync(ownFile(`src/${name}.css`), "utf8").replace(/\/\*[\s\S]*?\*\//g, "")).join("\n");
 }
 
 export interface SelfHostedFonts {

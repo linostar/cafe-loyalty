@@ -3,7 +3,7 @@
  * only, never new colour values; logical properties only (packages/ui/src/styles.test.ts).
  */
 
-/* Signed in: top bar, navigation (a bar on phones, a column from 60rem), the page and the footer. */
+/* Signed in: top bar, navigation (a wrapping row on phones, a column from 60rem), the page and the footer. */
 .owner-layout {
   display: grid;
   grid-template-areas: "top" "nav" "main" "foot";
@@ -60,12 +60,13 @@
   background: var(--color-surface);
 }
 
+/* Wrapping rather than scrolling, so every link, the current page's included, is always in view (no script). */
 .sidenav ul {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-1);
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  overflow-x: auto;
   list-style: none;
 }
 
@@ -79,18 +80,18 @@
   white-space: nowrap;
 }
 
-/* Inside the scrolling bar, so the ring is drawn within it rather than cut off. */
-.sidenav a:focus-visible {
-  outline-offset: -3px;
-}
-
 .sidenav a:hover {
   background: var(--color-surface-sunken);
 }
 
+/* The current page: underlined and bold as well as tinted, so it does not rest on colour alone. */
 .sidenav a[aria-current="page"] {
   background: var(--color-accent-soft);
   color: var(--color-accent-strong);
+  font-weight: var(--weight-bold);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.3em;
 }
 
 .owner-main {
@@ -132,10 +133,10 @@
 
   .sidenav ul {
     position: sticky;
-    inset-block-start: 4.5rem;
+    inset-block-start: 0;
     flex-direction: column;
+    flex-wrap: nowrap;
     padding: var(--space-5) var(--space-3);
-    overflow: visible;
   }
 }
 
@@ -286,17 +287,6 @@ form > .actions {
 
 .choices + .field {
   margin-block: var(--space-4) 0;
-}
-
-label.check {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  font-weight: var(--weight-regular);
-}
-
-label.check input {
-  margin-block-start: 0.15rem;
 }
 
 .choices-list {
