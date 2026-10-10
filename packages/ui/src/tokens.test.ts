@@ -24,7 +24,7 @@ const BODY = 4.5;
 const UI = 3;
 
 /**
- * Every colour drawn on another in the styles (base.css, customer.css and the apps' stylesheets), with its minimum:
+ * Every colour drawn on another in the styles (base.css, app.css, customer.css and the apps' stylesheets), with its minimum:
  * 4.5:1 for text, 3:1 for the borders of controls and the focus ring. A new colour token must be added here.
  */
 const PAIRS: readonly [foreground: string, background: string, minimum: number][] = [

@@ -1,5 +1,5 @@
 /*
- * The dashboard's layout and page styles, on the shared design system (@cafe-loyalty/ui: fonts, tokens, base). Tokens
+ * The dashboard's layout and page styles, on the shared design system (@cafe-loyalty/ui: fonts, tokens, base, app). Tokens
  * only, never new colour values; logical properties only (packages/ui/src/styles.test.ts).
  */
 
@@ -43,6 +43,13 @@
 .topbar-email:hover,
 .topbar-email[aria-current="page"] {
   border-color: var(--color-on-espresso);
+}
+
+/* On the account page: underlined too, like the nav's current page, so it does not rest on colour alone. */
+.topbar-email[aria-current="page"] {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.3em;
 }
 
 .topbar {

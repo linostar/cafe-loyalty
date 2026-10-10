@@ -1,7 +1,7 @@
 /*
  * Components of the dashboard and the counter, which the customer pages do not use (so the server does not inline
- * them): badges, pills, row lists, the app chrome and empty states. Logical properties only (styles.test.ts). Comes
- * after base.css.
+ * them): badges, pills, row lists, row actions, the app chrome (brand, top bar, footer), empty states and visually
+ * hidden text. Logical properties only (styles.test.ts). Comes after base.css.
  */
 .badge {
   display: inline-flex;

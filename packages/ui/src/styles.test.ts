@@ -36,7 +36,7 @@ const declarations = (css: string): string[] =>
 
 describe("stylesheets", () => {
   it("are all found", () => {
-    expect(STYLESHEETS).toEqual(expect.arrayContaining(["packages/ui/src/base.css", "packages/ui/src/customer.css", "apps/dashboard/src/styles.css", "apps/counter/src/styles.css"]));
+    expect(STYLESHEETS).toEqual(expect.arrayContaining(["packages/ui/src/base.css", "packages/ui/src/app.css", "packages/ui/src/customer.css", "apps/dashboard/src/styles.css", "apps/counter/src/styles.css"]));
   });
 
   it.each(STYLESHEETS)("%s uses logical properties only", (file) => {

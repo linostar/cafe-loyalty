@@ -75,7 +75,7 @@ const WIDTHS = [
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
-  // From the top, so the sticky parts (the nav column, the order summary) are drawn where they belong in the image.
+  // From the top, so the sticky order summary is drawn where they belong in the image.
   await page.evaluate(() => {
     window.scrollTo(0, 0);
   });

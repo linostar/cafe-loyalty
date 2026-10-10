@@ -1,5 +1,5 @@
 /*
- * The counter's layout and screen styles, on the shared design system (@cafe-loyalty/ui: fonts, tokens, base). Built
+ * The counter's layout and screen styles, on the shared design system (@cafe-loyalty/ui: fonts, tokens, base, app). Built
  * for a tablet at the counter first (landscape and portrait), and still usable on a phone: every control at least
  * the touch height. Tokens only; logical properties only (packages/ui/src/styles.test.ts).
  */
