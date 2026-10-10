@@ -68,6 +68,7 @@ const CATALOG = {
 const WIDTHS = [
   { width: 1440, height: 900 },
   { width: 1024, height: 768 },
+  { width: 768, height: 1024 },
   { width: 390, height: 844 },
 ] as const;
 
@@ -124,10 +125,15 @@ for (const { width, height } of WIDTHS) {
       await page.getByRole("button", { name: "One more Croissant" }).click();
       await page.getByLabel("Or the customer's mobile number").fill("70 123 456");
       await expect(page.getByText("Total $7.60 · 2 stamps")).toBeVisible();
-      if (width === 1024) {
-        // A landscape tablet: the order stays beside the menu, its total and button in view without scrolling.
+      if (width === 1024 || width === 768) {
+        // A tablet, landscape or portrait: the menu lines, the card scan, the total and the button in view without scrolling.
+        await page.evaluate(() => {
+          window.scrollTo(0, 0);
+        });
+        for (const line of ["One more Espresso", "One more Cheesecake", "Scan card", "Record visit"]) {
+          await expect(page.getByRole("button", { name: line, exact: true })).toBeInViewport();
+        }
         await expect(page.getByText("Total $7.60 · 2 stamps")).toBeInViewport();
-        await expect(page.getByRole("button", { name: "Record visit" })).toBeInViewport();
       }
       await capture(page, testInfo, `counter-order-${String(width)}`);
       await context.setOffline(true);

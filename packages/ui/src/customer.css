@@ -82,6 +82,11 @@ html[lang="en"] .kicker {
   color: var(--color-on-espresso);
 }
 
+/* The glow sits at the inline end's top corner, on the other side in right-to-left pages. */
+[dir="rtl"] .card-face {
+  background: radial-gradient(circle at 0 0, color-mix(in srgb, var(--color-accent) 45%, transparent), transparent 60%), var(--color-espresso);
+}
+
 .card-face .kicker,
 .card-face .reward {
   color: var(--color-on-espresso-muted);

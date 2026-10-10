@@ -110,7 +110,7 @@ export function ReviewPage() {
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />
       {shown.length === 0 ? (
-        <p className="empty">Nothing to review.</p>
+        <p className="empty">Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.</p>
       ) : (
         <ul className="items" ref={list}>
           {shown.map((item) => (

@@ -262,13 +262,13 @@ export function CampaignsPage() {
       <FormError message={ending.error} />
       <h3>Running</h3>
       {state.data.running.length === 0 ? (
-        <p className="empty">No campaigns running.</p>
+        <p className="empty">No campaigns running. Start one below for the hours the busy and quiet hours show as quiet.</p>
       ) : (
         <ul className="items">
           {state.data.running.map((campaign) => (
             <li key={campaign.id} className="row">
               <span className="row-main">
-                <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)}
+                <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)} <span className="badge badge-success">running</span>
               </span>
               <ConfirmButton
                 label={`End ${campaign.nameEn}`}
@@ -294,7 +294,7 @@ export function CampaignsPage() {
             {state.data.ended.map((campaign) => (
               <li key={campaign.id} className="row">
                 <span className="row-main">
-                  <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)}
+                  <strong>{campaign.nameEn}</strong>: {describe(campaign, orderTypes)} <span className="badge">ended</span>
                 </span>
               </li>
             ))}

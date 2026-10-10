@@ -416,7 +416,7 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
           aria-describedby={shown === null ? undefined : messageId}
         />
         {shown === null ? null : (
-          <p id={messageId} role="alert" className="field-error">
+          <p id={messageId} role="alert" className={locked ? "warning-box" : "field-error"}>
             {shown}
           </p>
         )}
