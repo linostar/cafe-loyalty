@@ -90,9 +90,9 @@ describe("visits", () => {
     });
   });
 
-  it("gives a running campaign's discount, priced and timed at the moment the visit is recorded (AC 35)", async () => {
-    // Monday 12 October 2026, 16:30 in Beirut (UTC+3).
-    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:30:00Z") });
+  it("gives a running campaign's discount, and records the visit as priced on screen even if the campaign ends before the tap (AC 35)", async () => {
+    // Monday 12 October 2026, 16:59:50 in Beirut (UTC+3): ten seconds before the campaign ends.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:59:50Z") });
     try {
       await counter({ catalog: { ...CATALOG, campaigns: [QUIET] } });
       expect(screen.getByText("$1.50 (Quiet hours)", { exact: false })).toBeInTheDocument();
@@ -101,12 +101,14 @@ describe("visits", () => {
       fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
       expect(screen.getByText("Total $7.50 · 2 stamps")).toBeInTheDocument();
       fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+      // The campaign ends before the barista taps Record: the total read out and charged stands.
+      vi.setSystemTime(new Date("2026-10-12T14:00:10Z"));
       fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
       await screen.findByText(/^Visit saved/);
       const [queued] = await listQueued(10);
       expect(queued?.event).toMatchObject({
         schemaVersion: 2,
-        occurredAt: "2026-10-12T13:30:00.000Z",
+        occurredAt: "2026-10-12T13:59:50.000Z",
         payload: {
           items: [
             { orderTypeId: COFFEE.id, quantity: 2, unitPriceCents: 300, campaignId: QUIET.id, unitDiscountCents: 150 },
@@ -115,6 +117,20 @@ describe("visits", () => {
           totalCents: 750,
         },
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a fixed amount off, and says which price was and which is now", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-12T13:30:00Z") });
+    try {
+      await counter({ catalog: { ...CATALOG, campaigns: [{ ...QUIET, discount: { kind: "amount", value: 50 } }] } });
+      expect(screen.getByText("was", { exact: false, selector: ".visually-hidden" })).toBeInTheDocument();
+      expect(screen.getByText("now", { exact: false, selector: ".visually-hidden" })).toBeInTheDocument();
+      expect(screen.getByText("$2.50 (Quiet hours)", { exact: false })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      expect(screen.getByText("Total $2.50 · 1 stamp")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

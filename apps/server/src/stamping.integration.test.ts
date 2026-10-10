@@ -12,7 +12,7 @@ import {
 } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { memberVisitHours } from "./cafe-routes.js";
-import { CAMPAIGN_END_GRACE_MINUTES } from "./campaign-routes.js";
+import { CAMPAIGN_END_GRACE_MINUTES, CAMPAIGN_START_GRACE_MINUTES } from "./campaign-routes.js";
 import { signCardQr } from "./customer-crypto.js";
 import { DAILY_STAMP_CAP, STAMP_COOLDOWN_MINUTES } from "./stamping.js";
 import { TEST_SECRETS, signedEvent, useApiHarness, withBearer, withCookie, type PairedDevice } from "./testing/api-harness.js";
@@ -538,25 +538,36 @@ describe("quiet-hour campaigns", () => {
     expect(await send([{ ...cake, campaignId: id, unitDiscountCents: 225 }])).toEqual(held);
     expect(await send([coffee(app, { unitCostCents: 120, campaignId: id, unitDiscountCents: 150 })])).toEqual(held);
     expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })], new Date(Date.now() - 60 * MINUTE))).toEqual(held);
+    // Inside the start grace: a counter clock a few minutes behind the server's.
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })], new Date(Date.now() - (CAMPAIGN_START_GRACE_MINUTES - 1) * MINUTE))).toEqual({
+      status: "applied",
+      code: "STAMP_COOLDOWN",
+    });
     // A campaign this café does not have is refused outright: no counter of this café could have offered it.
     expect(await send([coffee(app, { campaignId: randomUUID(), unitDiscountCents: 150 })])).toEqual({ status: "rejected", code: "CAMPAIGN_REFUSED" });
-    // Ended just now, within the grace counters get to hear of it; and long enough ago that they have.
+    // Ended a little less than the grace before the visit, while counters hear of it; and longer ago, after they have.
     await app.as("POST", `/api/campaigns/${id}/end`);
+    const endedAgo = (minutes: number) =>
+      context.admin.query("UPDATE app.campaigns SET created_at = now() - interval '1 day', ended_at = now() - make_interval(mins => $2) WHERE id = $1", [id, minutes]);
+    await endedAgo(CAMPAIGN_END_GRACE_MINUTES - 1);
     expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })])).toEqual({ status: "applied", code: "STAMP_COOLDOWN" });
-    await context.admin.query("UPDATE app.campaigns SET created_at = created_at - interval '1 day', ended_at = now() - make_interval(mins => $2) WHERE id = $1", [
-      id,
-      CAMPAIGN_END_GRACE_MINUTES + 1,
-    ]);
+    await endedAgo(CAMPAIGN_END_GRACE_MINUTES + 1);
     expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })])).toEqual(held);
     // The owner sees why, and an accepted one counts with its discount kept on record.
-    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string }[] }>().items;
-    expect(queue.map((item) => item.reason)).toEqual(Array.from({ length: 5 }, () => "campaign_check"));
+    // Late as well as refused: held as late, and the owner still sees the discount failed.
+    expect(await send([coffee(app, { campaignId: id, unitDiscountCents: 150 })], new Date(Date.now() - 3 * 24 * 60 * MINUTE))).toEqual(held);
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string; discountRefused: boolean }[] }>().items;
+    expect(queue.map((item) => [item.reason, item.discountRefused])).toEqual([
+      ...Array.from({ length: 5 }, () => ["campaign_check", true]),
+      ["late_sync", true],
+    ]);
     expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).statusCode).toBe(200);
     const { rows: discounted } = await context.admin.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM app.visit_items JOIN app.visits ON visits.id = visit_items.visit_id WHERE visits.cafe_id = $1 AND visits.outcome NOT IN ('held', 'discarded') AND visit_items.campaign_id IS NOT NULL",
       [app.owner.cafeId],
     );
-    expect(discounted[0]?.n).toBe(3);
+    // The first visit, the one within the start grace, the one within the end grace, and the accepted one.
+    expect(discounted[0]?.n).toBe(4);
   });
 
   it("holds a discount on a weekday or at an hour its campaign does not run, by the café's clock (AC 35)", async () => {
@@ -567,11 +578,19 @@ describe("quiet-hour campaigns", () => {
     const otherDays = await runningId(app);
     await campaign(app, { startsMinute: ((hour + 2) % 22) * 60, endsMinute: ((hour + 2) % 22) * 60 + 60 });
     const otherHours = campaignsSchema.parse((await app.as("GET", "/api/campaigns")).json()).running.find((entry) => entry.id !== otherDays)?.id ?? "missing";
+    // Made well before the visit, so only its weekday or hour can hold it.
+    await context.admin.query("UPDATE app.campaigns SET created_at = now() - interval '1 day' WHERE cafe_id = $1", [app.owner.cafeId]);
     const card = await issueCard(app.owner.cafeId);
     for (const campaignId of [otherDays, otherHours]) {
       const [result] = await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: happened, version: 2, items: [coffee(app, { campaignId, unitDiscountCents: 150 })] })]);
       expect(result).toEqual({ status: "applied", code: "HELD_FOR_REVIEW" });
     }
+    // The control: a campaign that runs at that hour, made as long before, lets the same visit through.
+    await campaign(app);
+    const always = campaignsSchema.parse((await app.as("GET", "/api/campaigns")).json()).running.find((entry) => ![otherDays, otherHours].includes(entry.id))?.id ?? "missing";
+    await context.admin.query("UPDATE app.campaigns SET created_at = now() - interval '1 day' WHERE id = $1", [always]);
+    const [allowed] = await sync(app, [await visit(app, { kind: "qr", token: card.qr }, { at: happened, version: 2, items: [coffee(app, { campaignId: always, unitDiscountCents: 150 })] })]);
+    expect(allowed).toEqual({ status: "applied", code: "OK" });
   });
 
   it("caps the campaigns running at once", async () => {

@@ -172,6 +172,7 @@ export async function insertVisit(
       occurred_at: visit.occurredAt,
       total_cents: visit.totalCents,
       stamps_earned: plan.stampsEarned,
+      discount_refused: plan.discountRefused,
       outcome: "held",
     })
     .returning("id")

@@ -88,3 +88,47 @@ test("explains what is missing without calling the server", async ({ page }) => 
   await expect(form.getByText("Enter a whole percentage from 1 to 100.")).toBeVisible();
   await expect(form.getByText("Pick at least one order type.")).toBeVisible();
 });
+
+test("starts a fixed-amount campaign running until midnight, and announces each order type the server refuses (AC 35)", async ({ page }) => {
+  let attempts = 0;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [] }),
+    "POST /api/campaigns": async (route: Route) => {
+      attempts += 1;
+      expect(route.request().postDataJSON()).toMatchObject({ weekdays: [5], startsMinute: 1200, endsMinute: 1440, discount: { kind: "amount", value: 50 } });
+      // As if the margin changed meanwhile: the server's floors are the ones that count.
+      await route.fulfill({
+        status: 400,
+        json: {
+          code: "VALIDATION_FAILED",
+          message: "This discount takes some order types below your minimum margin. Lower the discount, or leave those order types out.",
+          retryable: false,
+          details: [
+            { path: "orderTypeIds", issue: "Espresso would sell for $2.00, below its floor of $2.10 (cost $0.70 plus 200%)." },
+            { path: "orderTypeIds", issue: "Latte would sell for $2.50, below its floor of $6.00 (cost $2.00 plus 200%)." },
+          ],
+        },
+      });
+    },
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await form.getByLabel("Name (English)").fill("Late evenings");
+  await form.getByLabel("Name (Arabic)").fill("سهرة");
+  await form.getByLabel("Friday").check();
+  await form.getByLabel("Starts at").fill("20:00");
+  await form.getByLabel("Ends at").fill("00:00");
+  await form.getByLabel("Amount off each item").check();
+  await form.getByRole("textbox", { name: "Amount off (USD)" }).fill("0.50");
+  await expect(form.getByText("Espresso: $2.50, $2.00 with the discount (floor $0.91)")).toBeVisible();
+  await form.getByRole("checkbox", { name: /^Espresso/ }).check();
+  await form.getByRole("checkbox", { name: /^Latte/ }).check();
+  // The latte's $2.50 is under its $2.60 floor: flagged, and tied to its checkbox.
+  await expect(form.getByRole("checkbox", { name: /^Latte/ })).toHaveAccessibleDescription("Below its floor: lower the discount or leave it out.");
+  await form.getByRole("button", { name: "Start campaign" }).click();
+  await expect(page.getByRole("alert")).toContainText("below your minimum margin");
+  await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/Espresso would sell for \$2\.00.*Latte would sell for \$2\.50/);
+  expect(attempts).toBe(1);
+});

@@ -113,6 +113,9 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         .select(["id", "name_en", "price_cents", "cost_cents"])
         .where("id", "in", body.orderTypeIds)
         .where("active", "=", true)
+        // In the menu's order, so the refusals read as the Café page lists them.
+        .orderBy("sort_order")
+        .orderBy("name_en")
         .execute();
       if (types.length !== body.orderTypeIds.length) {
         throw new ApiError("VALIDATION_FAILED", "Pick order types that are on sale. Reload the page to see the current list.", [

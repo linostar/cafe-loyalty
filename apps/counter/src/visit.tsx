@@ -101,8 +101,9 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         unitDiscountCents: offer?.unitDiscountCents ?? 0,
       };
     });
-  // Discounts start and stop with the clock: the open menu is priced again every 30 seconds, so the price shown is
-  // the one recorded (the visit is priced once more at the moment it is recorded).
+  // Discounts start and stop with the clock: the open menu is priced again every 30 seconds, and a visit is recorded
+  // as priced on screen, at that moment (at most 30 seconds before it is recorded), so it keeps the total the
+  // barista read out and charged.
   const [, setTick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => {
@@ -146,8 +147,8 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       }
       card = { kind: "phone", phone: e164 };
     }
-    // Priced again now, at the moment the visit is recorded, so its discounts match its time.
-    const at = new Date();
+    // As shown: the lines and the time they were priced at, so the recorded total is the one on screen.
+    const at = shownAt;
     const lines = linesAt(at);
     const payload = visitRecordedV2PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1 });
     if (!payload.success) {
@@ -217,7 +218,12 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                   formatUsd(type.priceCents, "en")
                 ) : (
                   <>
-                    <s>{formatUsd(type.priceCents, "en")}</s> {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign.nameEn})
+                    <s>
+                      <span className="visually-hidden">was </span>
+                      {formatUsd(type.priceCents, "en")}
+                    </s>{" "}
+                    <span className="visually-hidden">now </span>
+                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign.nameEn})
                   </>
                 )}
                 {type.stampsEarned > 0 ? ` · ${plural(type.stampsEarned, "stamp", "stamps")}` : ""}

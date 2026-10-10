@@ -238,6 +238,8 @@ export interface VisitsTable {
   stamps_earned: ColumnType<number, number, never>;
   stamps_added: ColumnType<number, number | undefined, number>;
   outcome: ColumnType<VisitOutcome, VisitOutcome, VisitOutcome>;
+  /** Its discount failed the campaign re-check (AC 35), whatever else it was held for. */
+  discount_refused: ColumnType<boolean, boolean | undefined, never>;
   created_at: CreatedAt;
 }
 
@@ -468,6 +470,7 @@ export const TABLE_COLUMNS = {
     "stamps_earned",
     "stamps_added",
     "outcome",
+    "discount_refused",
     "created_at",
   ],
   visit_items: [

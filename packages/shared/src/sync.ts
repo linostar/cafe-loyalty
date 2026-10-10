@@ -400,6 +400,9 @@ export const reviewItemSchema = z.object({
   deviceName: z.string(),
   staffName: z.string(),
   reason: z.enum(SYNC_HOLD_REASONS),
+  /** A visit whose discount its campaign did not allow at that time (AC 35), whatever it was held for. */
+  // Defaults for a server from before Step 12 (a rollback), which sends none.
+  discountRefused: z.boolean().default(false),
   occurredAt: timestamp,
   receivedAt: timestamp,
 });

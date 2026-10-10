@@ -315,6 +315,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         .selectFrom("sync_events")
         .innerJoin("devices", "devices.id", "sync_events.device_id")
         .innerJoin("staff", "staff.id", "sync_events.staff_id")
+        .leftJoin("visits", "visits.sync_event_id", "sync_events.id")
         .select([
           "sync_events.id",
           "sync_events.type",
@@ -324,6 +325,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
           sql<string>`to_char(sync_events.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("position"),
           "devices.name as deviceName",
           "staff.name as staffName",
+          "visits.discount_refused",
         ])
         .where("sync_events.status", "=", "held");
       if (cursor !== undefined) {
@@ -340,6 +342,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         deviceName: row.deviceName,
         staffName: row.staffName,
         reason: holdReasonOf(row.hold_reason),
+        discountRefused: row.discount_refused === true,
         occurredAt: row.occurred_at.toISOString(),
         receivedAt: row.received_at.toISOString(),
       })),

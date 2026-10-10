@@ -178,11 +178,11 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           inputMode={kind === "percent" ? "numeric" : "decimal"}
           value={value}
           onChange={setValue}
-          hint={kind === "percent" ? "A whole number, such as 20. Prices round down to the cent." : "Such as 0.50."}
+          hint={kind === "percent" ? "A whole number, such as 20. The discount rounds down to the cent, in your favour." : "Such as 0.50."}
           error={problems.discount ?? fieldErrors["discount.value"]}
         />
       </fieldset>
-      <fieldset aria-describedby="campaign-types-hint">
+      <fieldset aria-describedby={(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? "campaign-types-hint" : "campaign-types-hint campaign-types-error"}>
         <legend>Order types</legend>
         <p id="campaign-types-hint" className="hint">
           Your minimum margin is {minMarginPercent}% over cost (Café page): a campaign that takes a picked order type below its floor is refused.
@@ -198,6 +198,8 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
                 <label>
                   <input
                     type="checkbox"
+                    aria-invalid={kept || !chosen.includes(type.id) ? undefined : true}
+                    aria-describedby={kept || !chosen.includes(type.id) ? undefined : `campaign-type-${type.id}-error`}
                     checked={chosen.includes(type.id)}
                     onChange={(event) => {
                       setChosen(event.target.checked ? [...chosen, type.id] : chosen.filter((id) => id !== type.id));
@@ -206,12 +208,20 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
                   {type.nameEn}: {formatUsd(type.priceCents, "en")}
                   {after === null ? "" : `, ${formatUsd(after, "en")} with the discount`} (floor {formatUsd(floor, "en")})
                 </label>
-                {kept || !chosen.includes(type.id) ? null : <p className="field-error">Below its floor: lower the discount or leave it out.</p>}
+                {kept || !chosen.includes(type.id) ? null : (
+                  <p id={`campaign-type-${type.id}-error`} className="field-error">
+                    Below its floor: lower the discount or leave it out.
+                  </p>
+                )}
               </li>
             );
           })}
         </ul>
-        {(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? null : <p className="field-error">{problems.orderTypeIds ?? fieldErrors.orderTypeIds}</p>}
+        {(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? null : (
+          <p id="campaign-types-error" className="field-error">
+            {problems.orderTypeIds ?? fieldErrors.orderTypeIds}
+          </p>
+        )}
       </fieldset>
       <button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Start campaign"}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PAIRING_CODE_ALPHABET,
+  deviceCatalogSchema,
   devicePairProofPayload,
   deviceTokenSigningPayload,
   formatPairingCode,
@@ -87,5 +88,17 @@ describe("orderTypeUpdateSchema", () => {
   it("needs at least one field", () => {
     expect(orderTypeUpdateSchema.safeParse({}).success).toBe(false);
     expect(orderTypeUpdateSchema.safeParse({ active: false }).success).toBe(true);
+  });
+});
+
+describe("device catalog", () => {
+  it("reads a catalog from a server before campaigns as one with none (a rollback)", () => {
+    expect(deviceCatalogSchema.parse({ catalogVersion: 3, orderTypes: [], program: null })).toEqual({
+      catalogVersion: 3,
+      timeZone: "UTC",
+      campaigns: [],
+      orderTypes: [],
+      program: null,
+    });
   });
 });
