@@ -299,8 +299,9 @@ export interface CampaignAnnouncementsTable {
 }
 
 /**
- * A card's lapse (AC 36), one per card and last visit, with the win-back offer it got, if any: the café's terms and
- * margin at the time, until expires_at; closed when used (by used_visit_id) or expired. Deleted with the card.
+ * A card's lapse (AC 36), one per card and last visit, with the win-back offer it got, if any, when it got it: the
+ * café's terms and margin at that time, until expires_at; closed when used (by used_visit_id), expired or withdrawn.
+ * Deleted with the card.
  */
 export interface CardLapsesTable {
   id: ColumnType<string, string | undefined, never>;
@@ -308,10 +309,12 @@ export interface CardLapsesTable {
   card_id: ColumnType<string, string, never>;
   last_visit_at: ColumnType<Date, Date, never>;
   created_at: CreatedAt;
-  discount_kind: ColumnType<"percent" | "amount" | null, "percent" | "amount" | null | undefined, never>;
-  discount_value: ColumnType<number | null, number | null | undefined, never>;
-  min_margin_percent: ColumnType<number | null, number | null | undefined, never>;
-  expires_at: ColumnType<Date | null, Date | null | undefined, never>;
+  /** Set once, with the terms below, when the lapse gets the offer (on its insert or a later run). */
+  offered_at: ColumnType<Date | null, Date | null | undefined, Date>;
+  discount_kind: ColumnType<"percent" | "amount" | null, "percent" | "amount" | null | undefined, "percent" | "amount">;
+  discount_value: ColumnType<number | null, number | null | undefined, number>;
+  min_margin_percent: ColumnType<number | null, number | null | undefined, number>;
+  expires_at: ColumnType<Date | null, Date | null | undefined, Date>;
   closed_at: ColumnType<Date | null, never, Date>;
   used_visit_id: ColumnType<string | null, never, string>;
 }
@@ -558,6 +561,7 @@ export const TABLE_COLUMNS = {
     "card_id",
     "last_visit_at",
     "created_at",
+    "offered_at",
     "discount_kind",
     "discount_value",
     "min_margin_percent",

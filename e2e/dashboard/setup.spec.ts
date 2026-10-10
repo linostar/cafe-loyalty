@@ -202,13 +202,13 @@ test("saves the win-back offer, checking the discount and the cool-down first (A
   const form = page.getByRole("form", { name: "Win-back offer" });
   await expect(form.getByRole("radio", { name: "No offer" })).toBeChecked();
   await form.getByRole("radio", { name: "Percent off" }).check();
-  await form.getByRole("textbox", { name: "Percent off" }).fill("150");
+  await form.getByLabel("Percentage").fill("150");
   await form.getByLabel("Days before the same card can get it again").fill("7");
   await form.getByRole("button", { name: "Save win-back offer" }).click();
   await expect(form.getByText("Enter a whole percentage from 1 to 100.")).toBeVisible();
   await expect(form.getByText("Enter a whole number of days from 14 to 365.")).toBeVisible();
   expect(saved).toEqual([]);
-  await form.getByRole("textbox", { name: "Percent off" }).fill("15");
+  await form.getByLabel("Percentage").fill("15");
   await form.getByLabel("Days before the same card can get it again").fill("45");
   await form.getByRole("button", { name: "Save win-back offer" }).click();
   await expect.poll(() => saved).toEqual([{ discount: { kind: "percent", value: 15 }, cooldownDays: 45 }]);

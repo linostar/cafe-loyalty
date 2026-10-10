@@ -8,6 +8,7 @@ import {
   visitRecordedV3PayloadSchema,
   winBackUnitDiscountCents,
   type DeviceCatalog,
+  type WinBackOffer,
 } from "@cafe-loyalty/shared";
 import { useEffect, useId, useRef, useState } from "react";
 import { DeviceUnpairedError, RequestError, deviceRequest } from "./device.js";
@@ -58,12 +59,12 @@ export function campaignFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTy
 }
 
 /**
- * One order type's discount at `at`: its best running campaign's (AC 35), or the café's win-back offer's when the
- * barista applied it (`winBack`) and it gives more (AC 36). Null without a discount.
+ * One order type's discount at `at`: its best running campaign's (AC 35), or the card's win-back offer's when the
+ * barista applied it (`winBack`, the offer's own terms) and it gives more (AC 36). Null without a discount.
  */
-export function discountFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTypes"][number], at: Date, winBack: boolean) {
+export function discountFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTypes"][number], at: Date, winBack: WinBackOffer | null) {
   const campaign = campaignFor(catalog, type, at);
-  const offer = winBack && catalog.winBack !== null ? winBackUnitDiscountCents(type, catalog.winBack) : 0;
+  const offer = winBack === null ? 0 : winBackUnitDiscountCents(type, winBack);
   if (offer > 0 && offer > (campaign?.unitDiscountCents ?? 0)) {
     return { campaignId: null, unitDiscountCents: offer, label: "Win-back offer" };
   }
@@ -89,8 +90,8 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   /** The name of everything put in the order, to name it if the owner takes it off sale meanwhile. */
   const [names, setNames] = useState<Record<string, string>>({});
   const [scanned, setScanned] = useState<string | null>(null);
-  /** The barista applied the card's win-back offer, which the customer's card shows (AC 36). */
-  const [winBack, setWinBack] = useState(false);
+  /** The barista applied the scanned card's win-back offer (AC 36). */
+  const [applyWinBack, setApplyWinBack] = useState(false);
   const [phone, setPhone] = useState("");
   /** What is wrong, and whether it is the phone number (then tied to that field). */
   const [problem, setProblem] = useState<{ text: string; phone: boolean } | null>(null);
@@ -107,6 +108,10 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     .filter(([id, quantity]) => quantity > 0 && !catalog.orderTypes.some((type) => type.id === id))
     .map(([id]) => names[id] ?? "An item");
   const stamps = items.reduce((sum, item) => sum + item.quantity * item.type.stampsEarned, 0);
+  /** The scanned card's open win-back offer, from the catalog (a card typed in by phone cannot be matched offline). */
+  const scannedCardId = scanned === null ? null : parseCardQr(scanned)?.cardId;
+  const offer = catalog.winBackOffers.find((entry) => entry.cardId === scannedCardId) ?? null;
+  const winBack = applyWinBack ? offer : null;
   /** The order priced at `at`, with any campaign's or the win-back offer's discount per line (AC 35, 36). */
   const linesAt = (at: Date) =>
     items.map(({ type, quantity }) => {
@@ -136,7 +141,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   const shownAt = new Date();
   const total = visitItemsTotalCents(linesAt(shownAt));
   // An order in progress: the app must not update under it (AC 29).
-  const open = items.length > 0 || scanned !== null || phone !== "" || winBack || scanner === "visit";
+  const open = items.length > 0 || scanned !== null || phone !== "" || scanner === "visit";
   useEffect(() => {
     onBusy(open || saving);
   }, [open, saving, onBusy]);
@@ -170,7 +175,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     // As shown: the lines and the time they were priced at, so the recorded total is the one on screen.
     const at = shownAt;
     const lines = linesAt(at);
-    const payload = visitRecordedV3PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1, winBack });
+    const payload = visitRecordedV3PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1, winBack: winBack !== null });
     if (!payload.success) {
       setProblem({ text: items.length === 0 ? "Add what the customer ordered first." : "This order is too large to record. Split it into two visits.", phone: false });
       return;
@@ -182,7 +187,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         setQuantities({});
         setScanned(null);
         setPhone("");
-        setWinBack(false);
+        setApplyWinBack(false);
         // The server decides the stamps (cooldown, daily cap), so the counter promises no more than the order earns.
         setNotice(`Visit saved${stamps > 0 ? `, earning up to ${plural(stamps, "stamp", "stamps")}` : ""}. It is sent as soon as the phone is online.`);
       },
@@ -213,6 +218,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
               requestAnimationFrame(() => scanButton.current?.focus());
             } else {
               setScanned(read.token);
+              setApplyWinBack(false);
               setPhone("");
               setProblem(null);
               // The next step: recording the visit.
@@ -281,18 +287,25 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           No longer on sale, so left out of this order: {dropped.join(", ")}. The total does not include {dropped.length === 1 ? "it" : "them"}.
         </p>
       )}
-      {catalog.winBack === null ? null : (
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={winBack}
-            onChange={(event) => {
-              setWinBack(event.target.checked);
-              setNotice("");
-            }}
-          />{" "}
-          Win-back offer, {discountText(catalog.winBack.discount)}: only when the customer&apos;s card shows it
-        </label>
+      {offer === null ? null : (
+        <>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={applyWinBack}
+              onChange={(event) => {
+                setApplyWinBack(event.target.checked);
+                setNotice("");
+              }}
+            />{" "}
+            This card has a win-back offer, {discountText(offer.discount)}: apply it
+          </label>
+          {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
+            <p role="status">
+              The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.
+            </p>
+          ) : null}
+        </>
       )}
       <p aria-live="polite">
         Total {formatUsd(total ?? 0, "en")} · {plural(stamps, "stamp", "stamps")}
@@ -316,6 +329,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
               type="button"
               onClick={() => {
                 setScanned(null);
+                setApplyWinBack(false);
                 // The button that replaces this one keeps the keyboard where it was.
                 requestAnimationFrame(() => scanButton.current?.focus());
               }}

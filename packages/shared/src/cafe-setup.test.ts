@@ -98,7 +98,7 @@ describe("device catalog", () => {
       catalogVersion: 3,
       timeZone: "UTC",
       campaigns: [],
-      winBack: null,
+      winBackOffers: [],
       orderTypes: [],
       program: null,
     });

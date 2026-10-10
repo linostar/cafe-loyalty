@@ -215,7 +215,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         const closed = await trx
           .updateTable("card_lapses")
           .set({ closed_at: sql<Date>`now()` })
-          .where("discount_kind", "is not", null)
+          .where("offered_at", "is not", null)
           .where("closed_at", "is", null)
           .returning("card_id")
           .execute();

@@ -50,7 +50,7 @@ export async function loadCardOffer(trx: Transaction<Database>, cardId: string):
     return { optedIn: false, offer: undefined };
   }
   const optedInAt = card.offers_opt_in_at;
-  const mayNotify = (column: "campaign_announcements.announced_at" | "card_lapses.created_at") =>
+  const mayNotify = (column: "campaign_announcements.announced_at" | "card_lapses.offered_at") =>
     sql<boolean>`${sql.ref(column)} >= date_trunc('day', now() AT TIME ZONE cafes.time_zone) AT TIME ZONE cafes.time_zone
       AND ${optedInAt} <= ${sql.ref(column)}`.as("may_notify");
   const campaign = await trx
@@ -82,17 +82,17 @@ export async function loadCardOffer(trx: Transaction<Database>, cardId: string):
       "card_lapses.id",
       "card_lapses.discount_kind",
       "card_lapses.discount_value",
-      "card_lapses.created_at",
+      "card_lapses.offered_at",
       sql<boolean>`card_lapses.closed_at IS NULL AND card_lapses.expires_at > now()`.as("open"),
       sql<string>`to_char((card_lapses.expires_at AT TIME ZONE cafes.time_zone)::date, 'YYYY-MM-DD')`.as("last_day"),
-      mayNotify("card_lapses.created_at"),
+      mayNotify("card_lapses.offered_at"),
     ])
     .where("card_lapses.card_id", "=", cardId)
-    .where("card_lapses.discount_kind", "is not", null)
-    .orderBy("card_lapses.created_at", "desc")
+    .where("card_lapses.offered_at", "is not", null)
+    .orderBy("card_lapses.offered_at", "desc")
     .limit(1)
     .executeTakeFirst();
-  if (winBack !== undefined && (campaign === undefined || winBack.created_at > campaign.announced_at)) {
+  if (winBack?.offered_at != null && (campaign === undefined || winBack.offered_at > campaign.announced_at)) {
     if (!winBack.open || winBack.discount_kind === null || winBack.discount_value === null) {
       return { optedIn: true, offer: undefined };
     }
@@ -103,7 +103,7 @@ export async function loadCardOffer(trx: Transaction<Database>, cardId: string):
         offerId: winBack.id,
         discount: discountOf(winBack.discount_kind, winBack.discount_value),
         lastDay: winBack.last_day,
-        announcedAt: winBack.created_at,
+        announcedAt: winBack.offered_at,
         mayNotify: winBack.may_notify,
       },
     };

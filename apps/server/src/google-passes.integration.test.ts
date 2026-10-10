@@ -204,8 +204,8 @@ describe("Google pass updates", () => {
     const card = await issueCard(app.owner.cafeId);
     await openSaveLink(app, card.webSecret);
     await context.admin.query(
-      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, discount_kind, discount_value, min_margin_percent, expires_at)
-       VALUES ($1, $2, now() - interval '40 days', 'percent', 20, 30, now() + interval '14 days')`,
+      `INSERT INTO app.card_lapses (cafe_id, card_id, last_visit_at, offered_at, discount_kind, discount_value, min_margin_percent, expires_at)
+       VALUES ($1, $2, now() - interval '40 days', now(), 'percent', 20, 30, now() + interval '14 days')`,
       [app.owner.cafeId, card.cardId],
     );
     const deleted = await app.app.inject({ method: "POST", url: `/c/${card.webSecret}/delete`, ...formBody({ confirm: "yes", lang: "en" }) });

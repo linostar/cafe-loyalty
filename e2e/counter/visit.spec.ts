@@ -29,7 +29,7 @@ const CATALOG = {
   catalogVersion: 4,
   timeZone: "Asia/Beirut",
   campaigns: [] as unknown[],
-  winBack: null as unknown,
+  winBackOffers: [] as unknown[],
   orderTypes: [COFFEE],
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
 };

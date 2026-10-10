@@ -252,20 +252,26 @@ export const campaignSchema = campaignTermsSchema.extend({ createdAt: timestamp,
 /** The café's running campaigns and the most recently ended ones. */
 export const campaignsSchema = z.object({ running: z.array(campaignSchema), ended: z.array(campaignSchema) });
 
-/** A win-back offer's terms as the counter applies them: the discount and the café's minimum margin. */
+/** A win-back offer's terms as the counter applies them: the discount and the café's minimum margin when it was given. */
 export const winBackTermsSchema = z.object({ discount: discountSchema, minMarginPercent: z.int().min(0) });
+
+/** A card's open win-back offer as the counter applies it (AC 36): the card it is for, by id, and its own terms. */
+export const winBackOfferSchema = winBackTermsSchema.extend({ cardId: z.uuid() });
 
 /**
  * What a counter needs to record visits offline: the order types on sale, priced at a catalog version (AC 32), and the
- * campaigns running now with the time zone they run in (AC 35), and the win-back terms (AC 36). They default for a
- * server from before Steps 12 and 13 (a rollback): no campaigns, no win-back offer.
+ * campaigns running now with the time zone they run in (AC 35), and the open win-back offers (AC 36). They default for
+ * a server from before Steps 12 and 13 (a rollback): no campaigns, no win-back offers.
  */
 export const deviceCatalogSchema = z.object({
   catalogVersion: z.int().min(1),
   timeZone: z.string().default("UTC"),
   campaigns: z.array(campaignTermsSchema).default([]),
-  /** The café's win-back terms, applied when the barista says the card shows the offer (AC 36); null without. */
-  winBack: winBackTermsSchema.nullable().default(null),
+  /**
+   * The open win-back offers (AC 36): a scanned card with one may be given it, with its own terms, which its passes
+   * show. A card typed in by phone number cannot be matched offline, so it gets none.
+   */
+  winBackOffers: z.array(winBackOfferSchema).default([]),
   orderTypes: z.array(z.object({ id: z.uuid(), nameAr: z.string(), nameEn: z.string(), priceCents: centsSchema, costCents: centsSchema, stampsEarned: z.int() })),
   program: loyaltyProgramSchema.nullable(),
 });
@@ -337,3 +343,4 @@ export type Campaigns = z.output<typeof campaignsSchema>;
 export type Redemption = z.output<typeof redemptionSchema>;
 export type WinBackSettings = z.output<typeof winBackSettingsSchema>;
 export type WinBackTerms = z.output<typeof winBackTermsSchema>;
+export type WinBackOffer = z.output<typeof winBackOfferSchema>;

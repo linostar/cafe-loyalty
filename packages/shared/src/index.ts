@@ -49,6 +49,7 @@ export {
   staffUpdateSchema,
   tokenRenewalRequestSchema,
   tokenRenewalResponseSchema,
+  winBackOfferSchema,
   winBackSettingsSchema,
   winBackTermsSchema,
   type CafeSetup,
@@ -68,6 +69,7 @@ export {
   type TokenRenewalRequest,
   type WalletDeliveries,
   type VisitHours,
+  type WinBackOffer,
   type WinBackSettings,
   type WinBackTerms,
 } from "./cafe-setup.js";

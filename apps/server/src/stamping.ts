@@ -17,7 +17,6 @@ import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { deviceOf } from "./access.js";
 import { phoneLookup, verifyCardQr, type CustomerSecrets } from "./customer-crypto.js";
-import { winBackDiscountOf } from "./cafe-routes.js";
 import { CAMPAIGN_END_GRACE_MINUTES, CAMPAIGN_START_GRACE_MINUTES, loadCampaigns } from "./campaign-routes.js";
 import { audit, isUniqueViolation, now } from "./db-helpers.js";
 import { requireSupportedBuild } from "./device-routes.js";
@@ -159,7 +158,7 @@ export async function planVisit(trx: Transaction<Database>, secrets: CustomerSec
   if (discounts === "unknown") {
     return { status: "refused", code: "CAMPAIGN_REFUSED" };
   }
-  const winBack = await winBackAllows(trx, cafeId, card.cardId, lines, occurredAt);
+  const winBack = await winBackAllows(trx, card.cardId, lines, occurredAt);
   const stampsEach = new Map(types.map((type) => [type.id, type.stamps_earned]));
   const stampsEarned = payload.items.reduce((sum, item) => sum + item.quantity * (stampsEach.get(item.orderTypeId) ?? 0), 0);
   return {
@@ -174,15 +173,14 @@ export async function planVisit(trx: Transaction<Database>, secrets: CustomerSec
 }
 
 /**
- * Whether a visit's win-back lines (discounts without a campaign, AC 36) match an offer of the card that was open at
- * the visit's time (made by then, not expired before it, each within the campaigns' grace periods, and not used),
- * giving each line exactly the offer's discount, or the café's current one (the counter's catalog may be newer than
- * the offer), and keeping the margin floor it was given with. The offer row is locked, so two visits cannot both use
- * it. "none" when the visit has no win-back line.
+ * Whether a visit's win-back lines (discounts without a campaign, AC 36) match the card's offer as it stood at the
+ * visit's time: given by then, neither expired nor closed (used up, or withdrawn by the owner) before it, each within the
+ * campaigns' grace periods, and not used, giving each line exactly the offer's own discount, the one its passes show,
+ * and keeping the margin floor it was given with. The offer row is locked, so two visits cannot both use it. "none"
+ * when the visit has no win-back line.
  */
 async function winBackAllows(
   trx: Transaction<Database>,
-  cafeId: string,
   cardId: string,
   lines: readonly PlannedLine[],
   occurredAt: Date,
@@ -192,33 +190,23 @@ async function winBackAllows(
     return { status: "none" };
   }
   const at = occurredAt.getTime();
+  const ended = new Date(at - CAMPAIGN_END_GRACE_MINUTES * MINUTE_MS);
   const offer = await trx
     .selectFrom("card_lapses")
     .select(["id", "discount_kind", "discount_value", "min_margin_percent"])
     .where("card_id", "=", cardId)
-    .where("discount_kind", "is not", null)
+    .where("offered_at", "<=", new Date(at + CAMPAIGN_START_GRACE_MINUTES * MINUTE_MS))
     .where("used_visit_id", "is", null)
-    .where("created_at", "<=", new Date(at + CAMPAIGN_START_GRACE_MINUTES * MINUTE_MS))
-    .where("expires_at", ">", new Date(at - CAMPAIGN_END_GRACE_MINUTES * MINUTE_MS))
-    .orderBy("created_at", "desc")
+    .where("expires_at", ">", ended)
+    .where((eb) => eb.or([eb("closed_at", "is", null), eb("closed_at", ">", ended)]))
+    .orderBy("offered_at", "desc")
     .forNoKeyUpdate()
     .executeTakeFirst();
   if (offer?.discount_kind == null || offer.discount_value === null || offer.min_margin_percent === null) {
     return { status: "refused" };
   }
-  const cafe = await trx
-    .selectFrom("cafes")
-    .select(["win_back_discount_kind", "win_back_discount_value", "min_margin_percent"])
-    .where("id", "=", cafeId)
-    .executeTakeFirstOrThrow();
-  const current = winBackDiscountOf(cafe);
-  const terms = [
-    { discount: { kind: offer.discount_kind, value: offer.discount_value }, minMarginPercent: offer.min_margin_percent },
-    ...(current === null ? [] : [{ discount: current, minMarginPercent: cafe.min_margin_percent }]),
-  ];
-  const allowed = terms.some((term) =>
-    winBackLines.every((line) => winBackUnitDiscountCents({ priceCents: line.unitPriceCents, costCents: line.unitCostCents }, term) === line.unitDiscountCents),
-  );
+  const terms = { discount: { kind: offer.discount_kind, value: offer.discount_value }, minMarginPercent: offer.min_margin_percent };
+  const allowed = winBackLines.every((line) => winBackUnitDiscountCents({ priceCents: line.unitPriceCents, costCents: line.unitCostCents }, terms) === line.unitDiscountCents);
   return allowed ? { status: "allowed", offerId: offer.id } : { status: "refused" };
 }
 
@@ -374,12 +362,16 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
     requireSupportedBuild(request, options.releaseBuiltAt);
     const device = deviceOf(request);
     return withCafe(db, device.cafeId, async (trx) => {
-      const cafe = await trx
-        .selectFrom("cafes")
-        .select(["catalog_version", "time_zone", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value"])
-        .where("id", "=", device.cafeId)
-        .executeTakeFirstOrThrow();
-      const winBack = winBackDiscountOf(cafe);
+      const cafe = await trx.selectFrom("cafes").select(["catalog_version", "time_zone"]).where("id", "=", device.cafeId).executeTakeFirstOrThrow();
+      // ponytail: every open offer, a few hundred at most for a café (each lasts WIN_BACK_OFFER_DAYS); paged if that grows.
+      const offers = await trx
+        .selectFrom("card_lapses")
+        .select(["card_id", "discount_kind", "discount_value", "min_margin_percent"])
+        .where("offered_at", "is not", null)
+        .where("used_visit_id", "is", null)
+        .where("closed_at", "is", null)
+        .where("expires_at", ">", sql<Date>`now()`)
+        .execute();
       const types = await trx
         .selectFrom("order_types")
         .select(["id", "name_ar", "name_en", "price_cents", "cost_cents", "stamps_earned"])
@@ -391,7 +383,11 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
         catalogVersion: cafe.catalog_version,
         timeZone: cafe.time_zone,
         campaigns: await loadCampaigns(trx, { runningNow: true }),
-        winBack: winBack === null ? null : { discount: winBack, minMarginPercent: cafe.min_margin_percent },
+        winBackOffers: offers.flatMap((offer) =>
+          offer.discount_kind === null || offer.discount_value === null || offer.min_margin_percent === null
+            ? []
+            : [{ cardId: offer.card_id, discount: { kind: offer.discount_kind, value: offer.discount_value }, minMarginPercent: offer.min_margin_percent }],
+        ),
         orderTypes: types.map((type) => ({
           id: type.id,
           nameAr: type.name_ar,

@@ -179,7 +179,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         </div>
         {kind === "none" ? null : (
           <Field
-            label={kind === "percent" ? "Percent off" : "Amount off (USD)"}
+            label={kind === "percent" ? "Percentage" : "Amount (USD)"}
             name="winBackDiscount"
             type="text"
             inputMode={kind === "percent" ? "numeric" : "decimal"}

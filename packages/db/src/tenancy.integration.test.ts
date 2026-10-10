@@ -230,6 +230,7 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
         cafe_id: cafeId,
         card_id: idOf("card", cafeId),
         last_visit_at: new Date("2026-09-01T10:00:00Z"),
+        offered_at: new Date(),
         discount_kind: "percent",
         discount_value: 15,
         min_margin_percent: 30,
