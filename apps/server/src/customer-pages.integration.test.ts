@@ -1,4 +1,5 @@
 import { createHmac, randomInt, randomUUID } from "node:crypto";
+import { signFeedbackToken } from "@cafe-loyalty/db";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
@@ -496,5 +497,122 @@ describe("logs", () => {
     for (const leaked of ["70123456", "70 123 456", "rana@example.com", secret, token, code]) {
       expect(output).not.toContain(leaked);
     }
+  });
+});
+
+describe("feedback", () => {
+  /** A card of a new café with a visit 3 hours ago and its feedback request, as the worker gives it; returns its page. */
+  async function askedCard() {
+    const h = await cafeWithJoinCode();
+    const secret = secretOf(await join(h.app, h.code, uniquePhone(), { lang: "en" }));
+    const card = await cardRow(secret);
+    // A bare visit row (no device, staff or signed event behind it), as the worker's tests make them.
+    await context.admin.query("SET session_replication_role = replica");
+    let visitId: string | undefined;
+    try {
+      visitId = (
+        await context.admin.query<{ id: string }>(
+          `INSERT INTO app.visits (cafe_id, sync_event_id, card_id, identified_by, device_id, staff_id, occurred_at, total_cents, stamps_earned, stamps_added, outcome)
+           VALUES ($1, gen_random_uuid(), $2, 'qr', gen_random_uuid(), gen_random_uuid(), now() - interval '3 hours', 300, 1, 1, 'stamped') RETURNING id`,
+          [h.owner.cafeId, card?.id],
+        )
+      ).rows[0]?.id;
+    } finally {
+      await context.admin.query("SET session_replication_role = DEFAULT");
+    }
+    const requestId =
+      (await context.admin.query<{ id: string }>("INSERT INTO app.feedback_requests (cafe_id, card_id, visit_id) VALUES ($1, $2, $3) RETURNING id", [h.owner.cafeId, card?.id, visitId]))
+        .rows[0]?.id ?? "missing";
+    const path = `/f/${signFeedbackToken(TEST_SECRETS, { cafeId: h.owner.cafeId, requestId })}`;
+    const as = (method: "GET" | "POST" | "PATCH", url: string, payload: Record<string, unknown> = {}) =>
+      h.app.inject({ method, url, headers: withCookie(h.owner.session), ...(method === "GET" ? {} : { payload }) });
+    return { ...h, secret, card, path, as };
+  }
+
+  it("offers every customer a private message and the café's Google review link, with no rating asked (AC 37)", async () => {
+    const { app, path, as, secret } = await askedCard();
+    // Without a review link: the message form only.
+    const plain = await app.inject({ method: "GET", url: `${path}?lang=en` });
+    expect(plain.statusCode).toBe(200);
+    expect(plain.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+    expect(plain.body).toContain("How was your visit to \u2068Café Test\u2069?");
+    expect(plain.body).toContain('<textarea id="message" name="message"');
+    expect(plain.body).not.toContain("Write a Google review");
+    // No review gating: the form asks for nothing but the message (no rating or score decides who sees the review link).
+    expect([...(/<form[\s\S]*<\/form>/.exec(plain.body)?.[0] ?? "").matchAll(/ name="([^"]+)"/g)].map((match) => match[1])).toEqual(["lang", "message"]);
+    // The owner sets a link; it must be a Google one.
+    expect((await as("PATCH", "/api/cafe", { googleReviewUrl: "https://example.com/review" })).statusCode).toBe(400);
+    const saved = await as("PATCH", "/api/cafe", { googleReviewUrl: " https://g.page/r/FakeReviewLink/review " });
+    expect(saved.json<{ cafe: { googleReviewUrl: string | null } }>().cafe.googleReviewUrl).toBe("https://g.page/r/FakeReviewLink/review");
+    const withLink = await app.inject({ method: "GET", url: `${path}?lang=en` });
+    expect(withLink.body).toContain('<a class="wallet" href="https://g.page/r/FakeReviewLink/review" rel="noreferrer">Write a Google review</a>');
+    expect(withLink.body).toContain('<textarea id="message"');
+    // Arabic too.
+    expect((await app.inject({ method: "GET", url: path, headers: { "accept-language": "ar" } })).body).toContain("اكتب تقييماً على Google");
+    // The web card links to the latest visit's page.
+    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).toContain(`<a href="${path}?lang=en">Tell the café</a>`);
+    // Emptied: no link again.
+    expect((await as("PATCH", "/api/cafe", { googleReviewUrl: "" })).json<{ cafe: { googleReviewUrl: string | null } }>().cafe.googleReviewUrl).toBeNull();
+  });
+
+  it("sends one private message per visit to the owner's inbox, which marks it read (AC 37)", async () => {
+    const { app, path, as } = await askedCard();
+    const send = (message: string) => app.inject({ method: "POST", url: path, ...formBody({ message, lang: "en" }) });
+    const empty = await send("   ");
+    expect(empty.statusCode).toBe(400);
+    expect(empty.body).toContain("Write a message before you send it.");
+    const tooLong = await send("a".repeat(2001));
+    expect(tooLong.statusCode).toBe(400);
+    expect(tooLong.body).toContain("Keep your message to 2,000 characters.");
+    // Kept as written, the text escaped on the page it is shown on.
+    expect(tooLong.body).toContain(`>${"a".repeat(2001)}</textarea>`);
+
+    const sent = await send("The croissant was cold.\r\nThe latte was great <3");
+    expect(sent.statusCode).toBe(303);
+    expect(sent.headers.location).toBe(`${path}?lang=en&sent=1`);
+    expect((await app.inject({ method: "GET", url: String(sent.headers.location) })).body).toContain("Thank you. Your message is with the café.");
+    // Once per visit: a second message is not taken.
+    const again = await send("Another one");
+    expect(again.statusCode).toBe(200);
+    expect(again.body).toContain("You already sent a message about this visit.");
+
+    const inbox = await as("GET", "/api/feedback");
+    expect(inbox.statusCode).toBe(200);
+    const body = inbox.json<{ items: { id: string; message: string; read: boolean; visitedAt: string }[]; unread: number; more: boolean }>();
+    expect(body).toMatchObject({ unread: 1, more: false, items: [{ message: "The croissant was cold.\nThe latte was great <3", read: false }] });
+    const [item] = body.items;
+    expect(new Date(item?.visitedAt ?? 0).getTime()).toBeLessThan(Date.now() - 2 * 60 * 60 * 1000);
+    // The visit's hour only, so the message cannot be matched to who came in when.
+    expect(item?.visitedAt).toMatch(/T\d{2}:00:00\.000Z$/);
+    expect((await as("POST", `/api/feedback/${item?.id ?? ""}/read`)).json()).toEqual({ read: true });
+    expect((await as("GET", "/api/feedback")).json<{ unread: number; items: { read: boolean }[] }>()).toMatchObject({ unread: 0, items: [{ read: true }] });
+    expect((await as("POST", `/api/feedback/${randomUUID()}/read`)).statusCode).toBe(404);
+  });
+
+  it("takes a message of the longest length in Arabic", async () => {
+    const { app, path, as } = await askedCard();
+    const sent = await app.inject({ method: "POST", url: path, ...formBody({ message: "ق".repeat(2000), lang: "ar" }) });
+    expect(sent.statusCode).toBe(303);
+    expect((await as("GET", "/api/feedback")).json<{ items: { message: string }[] }>().items[0]?.message).toHaveLength(2000);
+  });
+
+  it("refuses a link that does not verify or another café's request, and deletes feedback with the card (AC 9)", async () => {
+    const first = await askedCard();
+    const second = await askedCard();
+    const [cafe = "", request = "", keyId = "", mac = ""] = first.path.slice(3).split(".");
+    // Another café's id with this request's signature, a changed signature, nonsense.
+    for (const token of [`${second.path.slice(3).split(".")[0] ?? ""}.${request}.${keyId}.${mac}`, `${cafe}.${request}.${keyId}.${"A".repeat(22)}`, "nope"]) {
+      const response = await first.app.inject({ method: "GET", url: `/f/${token}?lang=en` });
+      expect(response.statusCode).toBe(404);
+    }
+    // The second café's owner sees none of the first café's messages.
+    await first.app.inject({ method: "POST", url: first.path, ...formBody({ message: "Fake feedback", lang: "en" }) });
+    expect((await second.as("GET", "/api/feedback")).json<{ items: unknown[] }>().items).toEqual([]);
+    // Deleting the card deletes its request and message; the link then finds nothing.
+    await first.app.inject({ method: "POST", url: `/c/${first.secret}/delete`, ...formBody({ confirm: "yes", lang: "en" }) });
+    const left = await context.admin.query("SELECT 1 FROM app.feedback_requests WHERE card_id = $1 UNION ALL SELECT 1 FROM app.feedback WHERE cafe_id = $2", [first.card?.id, first.owner.cafeId]);
+    expect(left.rowCount).toBe(0);
+    expect((await first.app.inject({ method: "GET", url: `${first.path}?lang=en` })).statusCode).toBe(404);
+    expect((await first.as("GET", "/api/feedback")).json<{ items: unknown[] }>().items).toEqual([]);
   });
 });

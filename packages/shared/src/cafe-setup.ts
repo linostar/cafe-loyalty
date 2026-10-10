@@ -31,8 +31,39 @@ export const winBackSettingsSchema = z.object({
     .max(WIN_BACK_MAX_COOLDOWN_DAYS, `Use at most ${String(WIN_BACK_MAX_COOLDOWN_DAYS)} days.`),
 });
 
+/**
+ * Where Google Business Profile's review links point: its short link, the write-a-review page, Search and Maps. Exact
+ * hosts only, so no site that serves other people's content (Sites, Forms) or lookalike domain passes.
+ */
+const GOOGLE_REVIEW_HOSTS = new Set(["g.page", "search.google.com", "www.google.com", "google.com", "maps.google.com", "maps.app.goo.gl"]);
+
+/**
+ * The café's Google review link (AC 37), as Google Business Profile gives it ("Ask for reviews"): an https link on a
+ * Google host. An empty value removes it (null).
+ */
+export const googleReviewUrlSchema = z
+  .string()
+  .trim()
+  .max(500, "Use at most 500 characters.")
+  .transform((value, context) => {
+    if (value === "") {
+      return null;
+    }
+    // https, a bare host (no user name or other port), then an optional path, query or fragment without spaces.
+    const parts = /^https:\/\/([a-z0-9.-]+)(?::443)?([/?#]\S*)?$/i.exec(value);
+    const host = parts?.[1]?.toLowerCase();
+    const rest = parts?.[2] ?? "";
+    // Not Google's redirector, which would send customers anywhere.
+    if (host !== undefined && GOOGLE_REVIEW_HOSTS.has(host) && !rest.startsWith("/url")) {
+      // The scheme and host in lower case, as the database's check expects.
+      return `https://${host}${rest}`;
+    }
+    context.addIssue({ code: "custom", message: "Paste the review link from your Google Business Profile, such as https://g.page/r/…/review." });
+    return z.NEVER;
+  });
+
 export const cafeUpdateSchema = z
-  .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional() })
+  .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional(), googleReviewUrl: googleReviewUrlSchema.optional() })
   .refine(atLeastOneField, "Change at least one field.");
 
 export const loyaltyProgramSchema = z.object({
@@ -57,7 +88,15 @@ export const orderTypeSchema = z.object({ id: z.uuid(), ...orderTypeFields });
 
 /** Everything the dashboard's café setup screen shows. */
 export const cafeSetupSchema = z.object({
-  cafe: z.object({ id: z.uuid(), name: z.string(), catalogVersion: z.int(), minMarginPercent: z.int(), winBack: winBackSettingsSchema }),
+  cafe: z.object({
+    id: z.uuid(),
+    name: z.string(),
+    catalogVersion: z.int(),
+    minMarginPercent: z.int(),
+    winBack: winBackSettingsSchema,
+    // Defaults for a server from before Step 14 (a rollback), which sends none.
+    googleReviewUrl: z.string().nullable().default(null),
+  }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),
 });

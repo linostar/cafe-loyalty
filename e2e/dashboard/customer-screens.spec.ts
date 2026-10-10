@@ -3,7 +3,18 @@ import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { renderSVG } from "uqr";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, type Lang } from "../../apps/server/src/customer-html.js";
-import { cardView, deletedView, errorView, joinView, recoverView, restoreView, restoredView, type CardView } from "../../apps/server/src/customer-views.js";
+import {
+  cardView,
+  deletedView,
+  errorView,
+  feedbackView,
+  joinView,
+  recoverView,
+  restoreView,
+  restoredView,
+  type CardView,
+  type FeedbackView,
+} from "../../apps/server/src/customer-views.js";
 import { GOOGLE_WALLET_BADGES } from "../../apps/server/src/google-pass.js";
 
 /**
@@ -34,6 +45,7 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     notice: undefined,
     errors: {},
     otherLangHref: "/c/fake?lang=ar",
+    feedbackHref: "/f/fake?lang=en",
     ...overrides,
   });
 
@@ -48,6 +60,18 @@ const join = (lang: Lang, errors: { phone?: string; privacy?: string } = {}) =>
     otherLangHref: "/join/fake?lang=ar",
   });
 
+const feedback = (lang: Lang, overrides: Partial<FeedbackView> = {}) =>
+  feedbackView(lang, {
+    path: "/f/fake",
+    cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
+    reviewUrl: "https://g.page/r/FakeReviewLink/review",
+    state: "form",
+    message: "",
+    error: undefined,
+    otherLangHref: "/f/fake?lang=ar",
+    ...overrides,
+  });
+
 const PAGES: readonly [name: string, html: string][] = [
   ["join-en", join("en")],
   ["join-ar", join("ar")],
@@ -60,6 +84,10 @@ const PAGES: readonly [name: string, html: string][] = [
   ["restore-en", restoreView("en", "/r/fake", "/r/fake?lang=ar")],
   ["restored-en", restoredView("en", [{ href: "/c/one", label: "Café Najjar" }, { href: "/c/two", label: "Bean There" }])],
   ["deleted-ar", deletedView("ar", "/recover?lang=en")],
+  ["feedback-en", feedback("en")],
+  ["feedback-ar", feedback("ar")],
+  ["feedback-no-review-en", feedback("en", { reviewUrl: null, message: "", error: "Write a message before you send it." })],
+  ["feedback-sent-en", feedback("en", { state: "sent" })],
   ["error-en", errorView("en", "This card link no longer works. If you restored your card on another phone, use the new link there.", "/c/fake?lang=ar")],
 ];
 

@@ -29,6 +29,9 @@ export const PASS_TEXT = {
     passOfferAllDay: "all day",
     passWinBackHeadline: "Welcome back · {discount} off",
     passWinBackDetails: "On your next visit, until {date}.",
+    passFeedbackLabel: "How was your visit?",
+    passFeedbackLink: "Tell us",
+    passFeedbackText: "Send the café a private message, or review it on Google.",
   },
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
@@ -51,6 +54,9 @@ export const PASS_TEXT = {
     passOfferAllDay: "طوال اليوم",
     passWinBackHeadline: "أهلاً بعودتك · خصم {discount}",
     passWinBackDetails: "في زيارتك القادمة، حتى {date}.",
+    passFeedbackLabel: "كيف كانت زيارتك؟",
+    passFeedbackLink: "أخبرنا",
+    passFeedbackText: "أرسل إلى المقهى رسالة خاصة، أو قيّمه على Google.",
   },
 } as const satisfies Record<"ar" | "en", Record<string, string>>;
 
@@ -183,6 +189,8 @@ export interface GooglePassContent {
   qr: string | null;
   /** The offer the card shows (loadCardOffer), if any. */
   offer: CardOffer | undefined;
+  /** The feedback page of the card's latest feedback request (feedbackUrl, AC 37), if it has one. */
+  feedbackUrl: string | undefined;
 }
 
 /** An offer's text in both languages, as a header and body of a Google object. */
@@ -236,6 +244,24 @@ export function googleLoyaltyObject(issuerId: string, content: GooglePassContent
       ...(program === undefined ? [] : [textModule("reward", passText("passRewardLabel"), localized(program.rewardNameEn, program.rewardNameAr))]),
       textModule("about", passText("passAboutLabel"), passText("passAboutText")),
     ],
+    // The feedback link, silently (AC 37; only an offer's message notifies, AC 14).
+    ...(content.feedbackUrl === undefined
+      ? {}
+      : {
+          linksModuleData: {
+            uris: [
+              {
+                id: "feedback",
+                uri: content.feedbackUrl,
+                description: `${PASS_TEXT.en.passFeedbackLabel} ${PASS_TEXT.en.passFeedbackLink}`,
+                localizedDescription: localized(
+                  `${PASS_TEXT.en.passFeedbackLabel} ${PASS_TEXT.en.passFeedbackLink}`,
+                  `${PASS_TEXT.ar.passFeedbackLabel} ${PASS_TEXT.ar.passFeedbackLink}`,
+                ),
+              },
+            ],
+          },
+        }),
   };
 }
 

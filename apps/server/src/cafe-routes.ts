@@ -37,7 +37,7 @@ export const winBackDiscountOf = (cafe: { win_back_discount_kind: "percent" | "a
 async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<CafeSetup> {
   const cafe = await trx
     .selectFrom("cafes")
-    .select(["id", "name", "catalog_version", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value", "win_back_cooldown_days"])
+    .select(["id", "name", "catalog_version", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value", "win_back_cooldown_days", "google_review_url"])
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
@@ -54,6 +54,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       catalogVersion: cafe.catalog_version,
       minMarginPercent: cafe.min_margin_percent,
       winBack: { discount: winBackDiscountOf(cafe), cooldownDays: cafe.win_back_cooldown_days },
+      googleReviewUrl: cafe.google_review_url,
     },
     program:
       program === undefined
@@ -176,7 +177,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     const owner = ownerOf(request);
     const body = parseInput(cafeUpdateSchema, request.body);
     return withCafe(db, owner.cafeId, async (trx) => {
-      const changes = { name: body.name, min_margin_percent: body.minMarginPercent };
+      const changes = { name: body.name, min_margin_percent: body.minMarginPercent, google_review_url: body.googleReviewUrl };
       await trx.updateTable("cafes").set(changes).where("id", "=", owner.cafeId).execute();
       await audit(trx, {
         cafeId: owner.cafeId,
@@ -185,7 +186,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         action: "cafe.updated",
         entityType: "cafe",
         entityId: owner.cafeId,
-        changes: { name: body.name, minMarginPercent: body.minMarginPercent },
+        changes: { name: body.name, minMarginPercent: body.minMarginPercent, googleReviewUrl: body.googleReviewUrl },
       });
       request.log.info({ cafeId: owner.cafeId }, "cafe updated");
       return loadSetup(trx, owner.cafeId);

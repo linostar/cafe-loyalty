@@ -7,6 +7,7 @@ import type { CustomerSecrets } from "./customer-crypto.js";
 import { cafeRoutes } from "./cafe-routes.js";
 import { campaignRoutes } from "./campaign-routes.js";
 import { deviceRoutes } from "./device-routes.js";
+import { feedbackRoutes } from "./feedback-routes.js";
 import type { Mailer } from "./mailer.js";
 import { ownerAuthRoutes } from "./owner-auth.js";
 import { stampingRoutes } from "./stamping.js";
@@ -38,6 +39,7 @@ export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (erro
   void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl, jobs: options.jobs });
   void app.register(campaignRoutes, { db: options.db, jobs: options.jobs });
   void app.register(staffRoutes, { db: options.db });
+  void app.register(feedbackRoutes, { db: options.db });
   void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl, releaseBuiltAt: options.releaseBuiltAt });
   void app.register(syncRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs });
   void app.register(stampingRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs, releaseBuiltAt: options.releaseBuiltAt });

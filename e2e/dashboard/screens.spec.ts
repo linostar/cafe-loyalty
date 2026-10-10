@@ -80,6 +80,14 @@ const SIGNED_IN = {
     pairingCodes: [{ id: "be1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", deviceName: "Back bar", expiresAt: "2026-10-09T09:00:00.000Z" }],
   }),
   "GET /api/review-queue": reply(200, { items: [held(1, "device_revoked"), { ...held(2, "campaign_check"), discountRefused: true }], nextCursor: null }),
+  "GET /api/feedback": reply(200, {
+    items: [
+      { id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", message: "The croissant was cold, but the latte was great.", receivedAt: "2026-10-08T11:30:00.000Z", visitedAt: "2026-10-08T09:00:00.000Z", read: false },
+      { id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", message: "Lovely music this morning.", receivedAt: "2026-10-07T12:10:00.000Z", visitedAt: "2026-10-07T10:00:00.000Z", read: true },
+    ],
+    unread: 1,
+    more: false,
+  }),
 };
 
 const WIDTHS = [1440, 1024, 390] as const;
@@ -99,7 +107,7 @@ for (const width of WIDTHS) {
   test.describe(`at ${String(width)} px`, () => {
     test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
 
-    for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/account"]) {
+    for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/account"]) {
       test(`signed in at ${path}`, async ({ page }, testInfo) => {
         await mockApi(page, SIGNED_IN);
         await page.goto(path);

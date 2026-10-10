@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { GOOGLE_PASS_UPDATE_QUEUE, loadCardOffer, offerText, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, feedbackUrl, loadCardOffer, loadFeedbackRequest, offerText, signFeedbackToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -11,7 +11,7 @@ import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
-import { cardView, deletedView, errorView, joinView, recoverView, restoreView, restoredView } from "./customer-views.js";
+import { cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, type FeedbackView } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
@@ -19,6 +19,8 @@ import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 const MINUTE = 60;
+/** A feedback message's longest length, in characters (the column's check, migration 0015). */
+export const FEEDBACK_MAX_LENGTH = 2000;
 const HOUR = 60 * MINUTE;
 /** A recovery link works for this long (AC 8). */
 export const RECOVERY_TOKEN_TTL_SECONDS = 30 * MINUTE;
@@ -124,8 +126,9 @@ export function recoveryEmail(to: string, link: string): EmailMessage {
 }
 
 /**
- * Deletes a card, with its Apple and Google passes and the Apple registrations (foreign key cascades), and, if that was its
- * customer's last card anywhere, the customer (the phone number) too (AC 9).
+ * Deletes a card, with its Apple and Google passes, the Apple registrations, and its feedback requests and messages
+ * (foreign key cascades), and, if that was its customer's last card anywhere, the customer (the phone number) too
+ * (AC 9).
  * The customer's ON DELETE RESTRICT foreign key decides "anywhere", since this café's view cannot see other cafés'
  * cards; its refusal (restrict_violation, 23001) is rolled back to a savepoint and leaves the customer for those cards.
  */
@@ -168,6 +171,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     recoverPerIp: new RateLimiter(5, HOUR * 1000),
     recoverPerEmail: new RateLimiter(3, HOUR * 1000),
     restorePerIp: new RateLimiter(10, 15 * MINUTE * 1000),
+    feedbackPerIp: new RateLimiter(20, HOUR * 1000),
   };
 
   function enforce(limiter: RateLimiter, key: string): void {
@@ -223,7 +227,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     });
   }
 
-  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string", bodyLimit: 8 * 1024 }, (_request, body, next) => {
+  // 32 KB: a feedback message's 2,000 Arabic characters take about 12 KB once percent-encoded; every other form is far smaller.
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string", bodyLimit: 32 * 1024 }, (_request, body, next) => {
     next(null, Object.fromEntries(new URLSearchParams(typeof body === "string" ? body : body.toString("utf8"))));
   });
 
@@ -386,10 +391,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     notice: string | undefined,
     errors: { email?: string; delete?: string },
   ): Promise<string> {
-    const { cafe, program, offers } = await withCafe(db, card.cafe_id, async (trx) => ({
+    const { cafe, program, offers, feedback } = await withCafe(db, card.cafe_id, async (trx) => ({
       cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, card.id),
+      feedback: await loadFeedbackRequest(trx, card.id),
     }));
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4 }))}`;
     const path = `/c/${secret}`;
@@ -402,6 +408,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       qr,
       // The offer its passes show (AC 14), for a card opted in to offers.
       offer: offers.offer === undefined ? undefined : offerText(lang, offers.offer),
+      // The latest visit's feedback page, as on its passes (AC 37).
+      feedbackHref: feedback === undefined ? undefined : `${FEEDBACK_PATH}${signFeedbackToken(secrets, feedback)}?lang=${lang}`,
       wallet:
         apple && options.apple !== undefined
           ? { kind: "apple", href: `${path}/apple-pass?lang=${lang}` }
@@ -440,6 +448,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
         program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
         offers: await loadCardOffer(trx, card.id),
+        feedback: await loadFeedbackRequest(trx, card.id),
       };
     });
     const pkpass = buildApplePass(apple, options.publicUrl, {
@@ -453,6 +462,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
       offers: found.offers,
+      feedbackUrl: found.feedback === undefined ? undefined : feedbackUrl(options.publicUrl, secrets, found.feedback),
     });
     request.log.info({ cafeId: card.cafe_id }, "apple pass downloaded");
     return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("content-disposition", 'attachment; filename="card.pkpass"').send(pkpass);
@@ -497,8 +507,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           ? undefined
           : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
-      // Texts are left out of the link (googleSaveUrl); the write queued above adds the offer.
+      // Texts are left out of the link (googleSaveUrl); the write queued above adds the offer and the feedback link.
       offer: undefined,
+      feedbackUrl: undefined,
     });
     request.log.info({ cafeId: card.cafe_id }, "google pass save link opened");
     return reply.code(303).header("location", location).send();
@@ -555,6 +566,71 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       await queuePassUpdate(trx, options.jobs, card.cafe_id, card.id);
     });
     return reply.code(303).header("location", `/c/${secret}?lang=${lang}&saved=1`).send();
+  });
+
+  /**
+   * A visit's feedback request from its signed link (AC 37), with its café's name and Google review link and whether it
+   * was answered; a link that does not verify, or whose card was deleted since (the request went with it), is not found.
+   */
+  async function feedbackRequest(token: string) {
+    const ids = verifyFeedbackToken(secrets, token);
+    const found =
+      ids === null
+        ? undefined
+        : await withCafe(db, ids.cafeId, async (trx) => {
+            const request = await trx.selectFrom("feedback_requests").select("id").where("id", "=", ids.requestId).executeTakeFirst();
+            if (request === undefined) {
+              return undefined;
+            }
+            return {
+              cafe: await trx.selectFrom("cafes").select(["name", "google_review_url"]).where("id", "=", ids.cafeId).executeTakeFirstOrThrow(),
+              answered: (await trx.selectFrom("feedback").select("id").where("request_id", "=", request.id).executeTakeFirst()) !== undefined,
+            };
+          });
+    if (ids === null || found === undefined) {
+      throw new PageError(404, "notFound");
+    }
+    return { ...ids, ...found };
+  }
+
+  const feedbackPage = (lang: Lang, token: string, found: Awaited<ReturnType<typeof feedbackRequest>>, state: FeedbackView["state"], message = "", error?: string) => {
+    const path = `${FEEDBACK_PATH}${token}`;
+    return feedbackView(lang, { path, cafeName: found.cafe.name, reviewUrl: found.cafe.google_review_url, state, message, error, otherLangHref: otherLang(path, lang) });
+  };
+
+  app.get(`${FEEDBACK_PATH}:token`, async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const lang = langOf(request);
+    const found = await feedbackRequest(token);
+    const sent = (request.query as { sent?: unknown } | undefined)?.sent === "1";
+    return sendPage(reply, 200, feedbackPage(lang, token, found, found.answered ? (sent ? "sent" : "done") : "form"));
+  });
+
+  /** Sends the customer's private message to the café's inbox, once per request (AC 37). */
+  app.post(`${FEEDBACK_PATH}:token`, async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const lang = langOf(request);
+    enforce(limits.feedbackPerIp, clientKey(request.ip));
+    const found = await feedbackRequest(token);
+    if (found.answered) {
+      return sendPage(reply, 200, feedbackPage(lang, token, found, "done"));
+    }
+    // One line ending, and no NUL (which a text column refuses).
+    const message = (formOf(request).message ?? "").replace(/\r\n?/g, "\n").replaceAll("\0", "").trim();
+    // Counted in code points, as the column's check counts them.
+    const error = message === "" ? t(lang, "feedbackEmpty") : Array.from(message).length > FEEDBACK_MAX_LENGTH ? t(lang, "feedbackTooLong") : undefined;
+    if (error !== undefined) {
+      return sendPage(reply, 400, feedbackPage(lang, token, found, "form", message, error));
+    }
+    await withCafe(db, found.cafeId, (trx) =>
+      trx
+        .insertInto("feedback")
+        .values({ cafe_id: found.cafeId, request_id: found.requestId, message })
+        .onConflict((conflict) => conflict.column("request_id").doNothing())
+        .execute(),
+    );
+    request.log.info({ cafeId: found.cafeId }, "feedback received");
+    return reply.code(303).header("location", `${FEEDBACK_PATH}${token}?lang=${lang}&sent=1`).send();
   });
 
   /** Deletes the card, and the phone number with it if no café has another card for it (AC 9). */

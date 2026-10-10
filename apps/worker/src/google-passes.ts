@@ -1,9 +1,11 @@
 import {
+  feedbackUrl,
   googleLogoUrl,
   googleLoyaltyClass,
   googleLoyaltyObject,
   googleOfferMessage,
   loadCardOffer,
+  loadFeedbackRequest,
   offerKey,
   signCardQr,
   withCafe,
@@ -15,7 +17,7 @@ import { sql, type Kysely } from "kysely";
 import type { Logger } from "pino";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
 
-/** What the worker needs to build Google objects as the server does: the issuer, the logo's site and the QR keys. */
+/** What the worker needs to build Google objects as the server does: the issuer, the site (logo, feedback links) and the QR keys. */
 export interface GooglePassSettings {
   issuerId: string;
   publicUrl: string;
@@ -54,6 +56,7 @@ export async function writeGooglePass(
       cafe: await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", job.cafeId).executeTakeFirstOrThrow(),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, pass.card_id),
+      feedback: await loadFeedbackRequest(trx, pass.card_id),
       appleOnDevice:
         (await trx
           .selectFrom("apple_pass_registrations")
@@ -91,6 +94,7 @@ export async function writeGooglePass(
     program: program === undefined ? undefined : { stampsRequired: program.stamps_required, rewardNameAr: program.reward_name_ar, rewardNameEn: program.reward_name_en },
     qr: current ? signCardQr(settings, { cardId: pass.card_id, cafeId: job.cafeId, epoch: pass.epoch }) : null,
     offer,
+    feedbackUrl: current && found.feedback !== undefined ? feedbackUrl(settings.publicUrl, settings, found.feedback) : undefined,
   });
   let result: SaveResult;
   try {

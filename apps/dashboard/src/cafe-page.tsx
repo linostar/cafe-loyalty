@@ -39,6 +39,43 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
   );
 }
 
+/** The café's Google review link, offered to every customer on the feedback page (AC 37); empty removes it. */
+function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | null; save: Save }) {
+  const [value, setValue] = useState(googleReviewUrl ?? "");
+  const { pending, error, fieldErrors, submit } = useSubmit();
+  return (
+    <form
+      aria-labelledby="review-link-title"
+      className="card"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(() => save("PATCH", "/api/cafe", { googleReviewUrl: value }));
+      }}
+    >
+      <h3 id="review-link-title">Google review link</h3>
+      <p className="hint">
+        About two hours after a visit, each customer&apos;s card links to a feedback page. Every customer sees this link there, beside a private message to
+        you. Find it in your Google Business Profile under &quot;Ask for reviews&quot;.
+      </p>
+      <FormError message={error} />
+      <Field
+        label="Review link"
+        name="googleReviewUrl"
+        type="url"
+        value={value}
+        onChange={setValue}
+        maxLength={500}
+        optional
+        hint="Leave it empty to show no review link."
+        error={fieldErrors.googleReviewUrl}
+      />
+      <button type="submit" disabled={pending}>
+        {pending ? "Saving…" : "Save review link"}
+      </button>
+    </form>
+  );
+}
+
 function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: Save }) {
   const [stamps, setStamps] = useState(program === null ? "" : String(program.stampsRequired));
   const [rewardEn, setRewardEn] = useState(program?.rewardNameEn ?? "");
@@ -418,7 +455,7 @@ export function CafePage() {
   return (
     <section aria-labelledby="cafe-page-title">
       <h2 id="cafe-page-title">Café</h2>
-      <p className="page-intro">Your café&apos;s name, loyalty program, margin, win-back offer and menu.</p>
+      <p className="page-intro">Your café&apos;s name, loyalty program, margin, win-back offer, Google review link and menu.</p>
       {saved === null ? null : <Notice>{saved}</Notice>}
       <div className="card-grid">
         <CafeNameForm name={setup.cafe.name} save={save} />
@@ -426,6 +463,7 @@ export function CafePage() {
         <ProgramForm program={setup.program} save={save} />
         <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
         <WinBackForm winBack={setup.cafe.winBack} save={save} />
+        <ReviewLinkForm googleReviewUrl={setup.cafe.googleReviewUrl} save={save} />
       </div>
       <section aria-labelledby="order-types-title" className="card">
         <h3 id="order-types-title">Order types</h3>

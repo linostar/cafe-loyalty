@@ -189,3 +189,4 @@ export {
   type DiscountKind,
 } from "./campaigns.js";
 export { PRODUCT_NAME } from "./brand.js";
+export { FEEDBACK_INBOX_LIMIT, feedbackInboxSchema, feedbackItemSchema, feedbackReadSchema, type FeedbackInbox, type FeedbackItem } from "./feedback.js";

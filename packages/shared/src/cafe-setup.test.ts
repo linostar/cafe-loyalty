@@ -3,6 +3,7 @@ import {
   PAIRING_CODE_ALPHABET,
   deviceCatalogSchema,
   devicePairProofPayload,
+  googleReviewUrlSchema,
   deviceTokenSigningPayload,
   formatPairingCode,
   normalizePairingCode,
@@ -118,6 +119,37 @@ describe("win-back settings (AC 36)", () => {
       { cooldownDays: 30 },
     ]) {
       expect(winBackSettingsSchema.safeParse(wrong).success).toBe(false);
+    }
+  });
+});
+
+describe("googleReviewUrlSchema", () => {
+  it("takes an https link on a Google host, and empty for none (AC 37)", () => {
+    for (const link of ["https://g.page/r/FakeReviewLink/review", "https://search.google.com/local/writereview?placeid=FakePlace", "https://www.google.com/maps/place/Fake", "https://maps.app.goo.gl/Fake"]) {
+      expect(googleReviewUrlSchema.parse(` ${link} `)).toBe(link);
+    }
+    expect(googleReviewUrlSchema.parse("HTTPS://G.Page/r/FakeReviewLink/review")).toBe("https://g.page/r/FakeReviewLink/review");
+    expect(googleReviewUrlSchema.parse("  ")).toBeNull();
+  });
+
+  it("refuses other sites, plain http, user names, ports and look-alikes", () => {
+    for (const link of [
+      "https://example.com/review",
+      "http://g.page/r/FakeReviewLink/review",
+      "https://user@g.page/r/Fake",
+      "https://g.page:8443/r/Fake",
+      "https://g.page.example.com/r/Fake",
+      "https://google.com.example.com/",
+      "https://notgoogle.com/",
+      "https://www.google.xyz/review",
+      "https://sites.google.com/view/fake",
+      "https://docs.google.com/forms/d/fake",
+      "https://www.google.com/url?q=https://example.com",
+      "https://goo.gl/fake",
+      "javascript:alert(1)",
+      "https://g.page/r/Fake review",
+    ]) {
+      expect(googleReviewUrlSchema.safeParse(link).success).toBe(false);
     }
   });
 });
