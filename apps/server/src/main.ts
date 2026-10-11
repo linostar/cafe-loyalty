@@ -5,6 +5,7 @@ import { buildApp } from "./app.js";
 import { BackgroundTasks } from "./background.js";
 import { loadServerConfig, type ServerConfig } from "./config.js";
 import { customerPages } from "./customer-pages.js";
+import { registerReadiness } from "./health.js";
 import { createSmtpMailer } from "./mailer.js";
 import { passkitRoutes } from "./passkit-routes.js";
 
@@ -71,6 +72,7 @@ if (config.googlePasses === undefined) {
   app.log.warn("Google Wallet is off: no GOOGLE_WALLET_* variables are set, so web cards offer no Google pass");
 }
 
+registerReadiness(app, { db: database.db, jobs: startedJobs });
 await app.register(apiRoutes, {
   prefix: "/api",
   db: database.db,

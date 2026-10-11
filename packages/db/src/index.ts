@@ -27,7 +27,7 @@ export {
   type PassUpdateJob,
 } from "./job-queue.js";
 export type { Job, PgBoss } from "pg-boss";
-export { MigrationStateError, migrate, type MigrationLog, type MigrationOutcome } from "./migrate.js";
+export { MigrationStateError, migrate, type MigrateOptions, type MigrationLog, type MigrationOutcome } from "./migrate.js";
 export { MIGRATIONS_DIR, MigrationFileError, loadMigrations, parseMigration, type MigrationFile, type MigrationKind } from "./migrations.js";
 export { FEEDBACK_PATH, feedbackUrl, loadFeedbackRequest, signFeedbackToken, verifyFeedbackToken } from "./feedback.js";
 export { loadCardOffer, offerKey, type CardOffer } from "./offers.js";

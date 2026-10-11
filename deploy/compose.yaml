@@ -1,0 +1,73 @@
+# One environment of Cafe Loyalty on the VPS (README, Deploying): the Compose project in /srv/cafe-loyalty/<environment>,
+# whose .env (from provision.sh) names the project and the loopback port Caddy proxies to. Installed by provision.sh
+# as /opt/cafe-loyalty/compose.yaml and run only by deploy.sh and rollback.sh, which set APP_IMAGE to the release
+# image by digest. The backup scripts find the database as the service `postgres` of the project, with its named
+# volume, so keep both names.
+x-app: &app
+  image: ${APP_IMAGE:?run through deploy.sh or rollback.sh, which set APP_IMAGE}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  postgres:
+    # Same as CI and development (compose.dev.yaml): the tests run on this server.
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 # 18-alpine, multi-arch index
+    # POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB; no port is published (AC 50).
+    env_file: database.env
+    volumes:
+      - pgdata:/var/lib/postgresql
+    restart: unless-stopped
+    stop_grace_period: 1m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -U \"$${POSTGRES_USER}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 2m
+      start_interval: 1s
+
+  # One-off containers (docker compose run --rm): roles and database, then the release's migrations.
+  bootstrap:
+    <<: *app
+    profiles: [tools]
+    command: [node, packages/db/dist/bootstrap-cli.js]
+    env_file: database.env
+  migrate:
+    <<: *app
+    profiles: [tools]
+    command: [node, packages/db/dist/migrate-cli.js]
+    env_file: database.env
+
+  server:
+    <<: *app
+    command: [node, apps/server/dist/main.js]
+    env_file: app.env
+    ports:
+      - "127.0.0.1:${PROXY_PORT:?set PROXY_PORT in the environment's .env}:3000"
+    restart: unless-stopped
+    # Longer than the server's own SHUTDOWN_TIMEOUT_MS (10 seconds by default), so it finishes what it can.
+    stop_grace_period: 15s
+    # The readiness the deploy waits for (AC 44, 52): the database and the job queue answer.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+      start_interval: 1s
+
+  worker:
+    <<: *app
+    command: [node, apps/worker/dist/main.js]
+    env_file: app.env
+    restart: unless-stopped
+    # Longer than the worker's SHUTDOWN_TIMEOUT_MS (15 seconds by default).
+    stop_grace_period: 20s
+
+volumes:
+  pgdata:

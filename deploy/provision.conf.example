@@ -3,8 +3,14 @@
 
 # The account CI logs in as to deploy: key login only, no password, no sudo except the scripts in /opt/cafe-loyalty/bin.
 DEPLOY_USER=deploy
-# Its SSH public key (one line of a .pub file), whose private key is a GitHub secret.
-DEPLOY_SSH_PUBLIC_KEY="ssh-ed25519 AAAA... deploy@cafe-loyalty"
+# Its SSH public keys (one line of a .pub file each), one per environment, whose private keys are each GitHub
+# environment's DEPLOY_SSH_KEY secret: a key deploys and rolls back only its own environment (README, Deploying).
+PRODUCTION_DEPLOY_SSH_PUBLIC_KEY="ssh-ed25519 AAAA... deploy-production@cafe-loyalty"
+STAGING_DEPLOY_SSH_PUBLIC_KEY="ssh-ed25519 AAAA... deploy-staging@cafe-loyalty"
+
+# The release images' repository on GHCR (lowercase, no tag): ghcr.io/<owner>/<repository>. Make the package public
+# after the first release (README, Deploying): the VPS pulls it without credentials.
+IMAGE_REPOSITORY=ghcr.io/owner/cafe-loyalty
 
 # Each app of each environment on its own domain, all pointing at this VPS (Caddy gets their certificates).
 PRODUCTION_DASHBOARD_DOMAIN=dashboard.example.com
