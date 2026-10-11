@@ -22,8 +22,9 @@ env_value() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 
 env=${1:-}
 name=${2:-}
-[[ $# -le 2 && ($env == production || $env == staging) ]] && [[ -z $name || $name =~ ^[0-9]{8}T[0-9]{6}Z-(nightly|predeploy)$ ]] ||
+if ! [[ $# -le 2 && ($env == production || $env == staging) && (-z $name || $name =~ ^[0-9]{8}T[0-9]{6}Z-(nightly|predeploy)$) ]]; then
   fail "usage: restore-test.sh <production|staging> [<backup name, such as 20261011T013000Z-nightly>]"
+fi
 [[ $EUID -eq 0 ]] || fail "run as root."
 
 dir=$SRV_DIR/$env

@@ -39,7 +39,7 @@ pnpm --filter @cafe-loyalty/server create-invite --cafe-name "Test Café"   # pr
 | `pnpm test:unit` | Vitest unit tests for every package |
 | `pnpm test:db` | Integration tests against PostgreSQL (`TEST_DATABASE_ADMIN_URL`): the database package and the server's API, including the sync contract test that replays the frozen counter fixtures; each test file creates and drops its own database and roles |
 | `pnpm check:migrations` | Static migration check: expand migrations never drop or rename tables or columns, contract migrations name a release in history, and (with `MIGRATIONS_BASE_REF`) existing migrations are unchanged |
-| `pnpm test:deploy` | Runs the Caddy configuration `deploy/provision.sh` generates in the pinned Caddy image (Docker): routing, cache and security headers, and that no card, recovery or feedback secret reaches a log (`deploy/test/caddy.sh`); then the backup and restore test scripts against a migrated PostgreSQL, as root in an Ubuntu 24.04 container (`deploy/test/backup.sh`; see Backups) |
+| `pnpm test:deploy` | Runs the Caddy configuration `deploy/provision.sh` generates in the pinned Caddy image (Docker): routing, cache and security headers, and that no card, recovery or feedback secret reaches a log (`deploy/test/caddy.sh`); then the backup and restore test scripts against a migrated PostgreSQL, as root in an Ubuntu 24.04 container, and the generated failure alert against a local HTTPS listener (`deploy/test/backup.sh`; see Backups) |
 | `pnpm test:e2e` | Builds the apps and runs the Playwright browser tests at phone width, under the dashboard's and counter's Content-Security-Policy (`deploy/spa-csp.txt`, which their preview servers send as Caddy does) |
 | `pnpm db:up` / `pnpm db:down` | Starts or stops the local PostgreSQL container |
 | `pnpm db:bootstrap` | Creates or corrects the roles, the application database and its schemas (idempotent; needs `DATABASE_ADMIN_URL` and the role settings) |
@@ -206,7 +206,7 @@ It sets up:
 - **Updates.** Unattended upgrades install Ubuntu's security updates daily and reboot for a kernel update at 02:00 UTC; the clock is set to UTC.
 - **Backups.** age and rclone, `/etc/cafe-loyalty/backup.conf` (mode 0600) from the age and remote settings, `/etc/cafe-loyalty/alert.curlrc` (mode 0600, so the address never shows in a process list) from `ALERT_URL`, and the timers `cafe-loyalty-backup@<environment>.timer` nightly at 01:30 UTC and `cafe-loyalty-restore-test@<environment>.timer` on the first of each month, running `backup.sh` and `restore-test.sh` from `/opt/cafe-loyalty/bin` (`systemctl list-timers 'cafe-loyalty-*'` lists them). Either one failing POSTs the failed unit's name to `ALERT_URL` (`cafe-loyalty-alert@.service`). See Backups.
 
-The generated files are tested without a VPS: `provision.sh caddyfile` prints the Caddy configuration and `provision.sh env-files <dir>` writes a production `database.env` and `app.env` (both from the `*_DOMAIN` settings, no root needed); `pnpm test:deploy` runs the first in Caddy, and unit tests in `packages/db` and `apps/server` check the second against the bootstrap, migration and server settings schemas.
+The generated files are tested without a VPS: `provision.sh caddyfile` prints the Caddy configuration and `provision.sh env-files <dir>` writes a production `database.env` and `app.env` (both from the `*_DOMAIN` settings, no root needed), and `provision.sh units <dir>` writes the backup, restore test and alert units and `alert.curlrc` (from the backup settings); `pnpm test:deploy` runs the first in Caddy and sends the alert the last ones define, and unit tests in `packages/db` and `apps/server` check the second against the bootstrap, migration and server settings schemas.
 
 ## Backups
 
@@ -234,7 +234,7 @@ docker exec "$pg" dropdb -U postgres --force cafe_loyalty
 docker exec -i "$pg" pg_restore -U postgres --create --exit-on-error -d postgres </srv/cafe-loyalty/production/backups/<name>/database.dump
 ```
 
-Then start the server and worker. `pnpm test:deploy` runs both scripts and this recovery against a migrated database (`deploy/test/backup.sh`).
+Then start the server and worker. `pnpm test:deploy` runs both scripts and this recovery against a migrated database, and the generated alert against a local listener (`deploy/test/backup.sh`).
 
 ## Configuration
 

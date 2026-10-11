@@ -6,7 +6,8 @@
 #
 # For tests (no root, any machine with bash): `provision.sh caddyfile` prints the Caddy configuration and
 # `provision.sh env-files <dir>` writes a production environment's database.env and app.env into <dir>, both from the
-# *_DOMAIN settings.
+# *_DOMAIN settings; `provision.sh units <dir>` writes the backup, restore test and alert units and alert.curlrc into
+# <dir>, from the backup settings.
 set -euo pipefail
 
 readonly APP=cafe-loyalty
@@ -85,14 +86,7 @@ check_input() {
   [[ $DEPLOY_SSH_PUBLIC_KEY != *$'\n'* ]] || fail "$key_help"
   ssh-keygen -l -f - <<<"$DEPLOY_SSH_PUBLIC_KEY" >/dev/null 2>&1 || fail "$key_help"
   check_domains
-  # Written to backup.conf and alert.curlrc: plain values only (no quotes, backslashes or spaces).
-  [[ $BACKUP_AGE_RECIPIENT =~ ^age1[02-9ac-hj-np-z]{58}$ ]] ||
-    fail "BACKUP_AGE_RECIPIENT must be an age public key (age1…), from age-keygen on a machine other than this VPS."
-  [[ $BACKUP_REMOTE =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_./-]*$ ]] ||
-    fail "BACKUP_REMOTE must be an rclone remote and path, such as offsite:cafe-loyalty-backups."
-  local url_pattern='^https://[A-Za-z0-9._~:/?#@!&+,;=%-]+$'
-  [[ $ALERT_URL =~ $url_pattern ]] ||
-    fail "ALERT_URL must be an https:// address that takes a POST with a plain-text body, such as an ntfy topic."
+  check_backup_settings
 
   # Password logins end below, so whoever runs this must already be able to log in with a key.
   local admin=${SUDO_USER:-root} admin_home
@@ -111,6 +105,17 @@ check_domains() {
   done
   [[ $(printf '%s\n' "${domains[@]}" | sort -u | wc -l) -eq ${#domains[@]} ]] ||
     fail "the six *_DOMAIN settings must all differ: each app of each environment has its own domain."
+}
+
+# Written to backup.conf and alert.curlrc: plain values only (no quotes, backslashes or spaces).
+check_backup_settings() {
+  [[ ${BACKUP_AGE_RECIPIENT:-} =~ ^age1[02-9ac-hj-np-z]{58}$ ]] ||
+    fail "BACKUP_AGE_RECIPIENT must be an age public key (age1…), from age-keygen on a machine other than this VPS."
+  [[ ${BACKUP_REMOTE:-} =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_./-]*$ ]] ||
+    fail "BACKUP_REMOTE must be an rclone remote and path, such as offsite:cafe-loyalty-backups."
+  local url_pattern='^https://[A-Za-z0-9._~:/?#@!&+,;=%-]+$'
+  [[ ${ALERT_URL:-} =~ $url_pattern ]] ||
+    fail "ALERT_URL must be an https:// address that takes a POST with a plain-text body, such as an ntfy topic."
 }
 
 install_packages() {
@@ -603,13 +608,19 @@ configure_backups() {
 BACKUP_AGE_RECIPIENT=$BACKUP_AGE_RECIPIENT
 BACKUP_REMOTE=$BACKUP_REMOTE
 EOF
-  # The failure alert's address (an ntfy topic is a secret), as a curl config file.
-  put_file "$CONF_DIR/alert.curlrc" 600 <<<"url = \"$ALERT_URL\"" || true
+  write_alert_config "$CONF_DIR"
 }
 
-configure_timers() {
-  local changed=0
-  put_file /etc/systemd/system/$APP-backup@.service 644 <<EOF && changed=1
+# The failure alert's address (an ntfy topic is a secret) in directory $1, as a curl config file.
+write_alert_config() {
+  put_file "$1/alert.curlrc" 600 <<<"url = \"$ALERT_URL\"" || true
+}
+
+# Writes the backup, restore test and alert units into directory $1, setting units_changed to 1 when any changed.
+write_units() {
+  local dir=$1
+  units_changed=0
+  put_file "$dir/$APP-backup@.service" 644 <<EOF && units_changed=1
 [Unit]
 Description=Cafe Loyalty backup (%i)
 # Skipped until deploy/backup.sh exists and this script has installed it.
@@ -622,7 +633,7 @@ OnFailure=$APP-alert@%n.service
 Type=oneshot
 ExecStart=$BIN_DIR/backup.sh %i
 EOF
-  put_file /etc/systemd/system/$APP-backup@.timer 644 <<'EOF' && changed=1
+  put_file "$dir/$APP-backup@.timer" 644 <<'EOF' && units_changed=1
 [Unit]
 Description=Nightly Cafe Loyalty backup (%i)
 
@@ -634,7 +645,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-  put_file /etc/systemd/system/$APP-restore-test@.service 644 <<EOF && changed=1
+  put_file "$dir/$APP-restore-test@.service" 644 <<EOF && units_changed=1
 [Unit]
 Description=Cafe Loyalty restore test (%i)
 # Skipped until deploy/restore-test.sh exists and this script has installed it.
@@ -647,7 +658,7 @@ OnFailure=$APP-alert@%n.service
 Type=oneshot
 ExecStart=$BIN_DIR/restore-test.sh %i
 EOF
-  put_file /etc/systemd/system/$APP-restore-test@.timer 644 <<'EOF' && changed=1
+  put_file "$dir/$APP-restore-test@.timer" 644 <<'EOF' && units_changed=1
 [Unit]
 Description=Monthly Cafe Loyalty restore test (%i)
 
@@ -660,7 +671,7 @@ Persistent=true
 WantedBy=timers.target
 EOF
   # Started by a failed backup or restore test (OnFailure above), with the failed unit as its instance.
-  put_file /etc/systemd/system/$APP-alert@.service 644 <<EOF && changed=1
+  put_file "$dir/$APP-alert@.service" 644 <<EOF && units_changed=1
 [Unit]
 Description=Cafe Loyalty failure alert (%i)
 
@@ -669,7 +680,12 @@ Type=oneshot
 # The address from a root-only file, never in curl's arguments, which every local user can read.
 ExecStart=/usr/bin/curl -fsS -m 30 --retry 3 -o /dev/null -K $CONF_DIR/alert.curlrc --data-binary "%i failed on %H; see journalctl -u %i"
 EOF
-  ((changed == 0)) || systemctl daemon-reload
+  return 0
+}
+
+configure_timers() {
+  write_units /etc/systemd/system
+  ((units_changed == 0)) || systemctl daemon-reload
   local env
   for env in "${ENVIRONMENTS[@]}"; do
     systemctl enable --now "$APP-backup@$env.timer" "$APP-restore-test@$env.timer" 2>/dev/null ||
@@ -701,5 +717,6 @@ case ${1:-} in
 "") main ;;
 caddyfile) check_domains && caddyfile_text ;;
 env-files) [[ -d ${2:-} ]] || fail "usage: $0 env-files <existing directory>"; check_domains && write_env_files "$2" production ;;
-*) fail "usage: $0 [caddyfile | env-files <directory>]" ;;
+units) [[ -d ${2:-} ]] || fail "usage: $0 units <existing directory>"; check_backup_settings && write_units "$2" && write_alert_config "$2" ;;
+*) fail "usage: $0 [caddyfile | env-files <directory> | units <directory>]" ;;
 esac
