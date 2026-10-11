@@ -143,3 +143,22 @@ test("switches to English and keeps the choice after a reload", async ({ page })
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expectLanguageAndFit(page, "en");
 });
+
+test("sends a barista's PIN typed on an Arabic keypad as the digits the server takes", async ({ page }) => {
+  const sent: unknown[] = [];
+  const rami = { id: "9c1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", name: "Rami", revoked: false, createdAt: "2026-10-10T08:00:00.000Z" };
+  await mockApi(page, {
+    ...SIGNED_IN,
+    "GET /api/staff": reply(200, { staff: [] }),
+    "POST /api/staff": async (route: Route) => {
+      sent.push(route.request().postDataJSON());
+      await route.fulfill({ status: 201, json: { staff: [rami] } });
+    },
+  });
+  await page.goto("/staff");
+  await page.getByLabel("الاسم", { exact: true }).fill("Rami");
+  await page.getByLabel("الرمز السري", { exact: true }).fill("٤٨٢٩١٣");
+  await page.getByRole("button", { name: "إضافة الباريستا" }).click();
+  await expect(page.getByRole("status")).toContainText("تم الحفظ");
+  expect(sent).toEqual([{ name: "Rami", pin: "482913" }]);
+});

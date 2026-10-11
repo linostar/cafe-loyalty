@@ -24,7 +24,6 @@ const AR = {
   "Back to sign in": "العودة إلى تسجيل الدخول",
   "This reset link is incomplete. Open it again from the email, or": "رابط إعادة التعيين هذا ناقص. افتحه مجدداً من الرسالة، أو",
   "request a new link": "اطلب رابطاً جديداً",
-  "Your password is changed. Sign in with the new password.": "تغيّرت كلمة مرورك. سجّل الدخول بكلمة المرور الجديدة.",
   "Choose a new password": "اختر كلمة مرور جديدة",
   "Save new password": "حفظ كلمة المرور الجديدة",
 } as const;

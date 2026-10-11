@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FormError } from "./forms.js";
+import { Field, FormError } from "./forms.js";
 import { LangProvider, LanguageSwitch, useT } from "./i18n.js";
 
 const AR = { "Signed in as {email}": "مسجّل الدخول باسم {email}" } as const;
@@ -59,5 +59,26 @@ describe("the dashboard's language", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "العربية" }));
     expect(document.documentElement).toHaveAttribute("lang", "ar");
+  });
+
+  it("translates each of a field's issues on its own, and again after a switch", () => {
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(["ar"]);
+    render(
+      <LangProvider>
+        <LanguageSwitch />
+        <Field
+          label="Order types"
+          name="orderTypeIds"
+          type="text"
+          value=""
+          onChange={() => undefined}
+          error={"Espresso would sell for $2.00, below its floor of $2.10 (cost $0.70 plus 200%).\nLatte would sell for $2.50, below its floor of $6.00 (cost $2.00 plus 200%)."}
+        />
+      </LangProvider>,
+    );
+    const field = screen.getByRole("textbox");
+    expect(field).toHaveAccessibleDescription(/^سيُباع ⁨Espresso⁩ .* سيُباع ⁨Latte⁩ /);
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(field).toHaveAccessibleDescription(/^Espresso would sell for \$2\.00.* Latte would sell for \$2\.50/);
   });
 });

@@ -1,8 +1,8 @@
-import { feedbackInboxSchema, feedbackReadSchema, plural, type FeedbackItem } from "@cafe-loyalty/shared";
+import { feedbackInboxSchema, feedbackReadSchema, plural, type FeedbackItem, type Lang } from "@cafe-loyalty/shared";
 import { apiRequest } from "./api.js";
 import { useState } from "react";
 import { FormError, Notice, useSubmit } from "./forms.js";
-import { dateFormat, useLang, useT } from "./i18n.js";
+import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
 const AR = {
@@ -64,7 +64,7 @@ export function InboxPage() {
   const lang = useLang();
   const [state, setData] = useApiData("/api/feedback", feedbackInboxSchema);
   const { pending, error, submit } = useSubmit();
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
@@ -80,7 +80,7 @@ export function InboxPage() {
         )}
       </p>
       <p>{unread === 0 ? t("No unread messages.") : plural(lang, UNREAD, unread)}</p>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
       <FormError message={error} />
       {items.length === 0 ? (
         <p className="empty">{t("No messages yet. What customers write about their visits arrives here.")}</p>
@@ -97,7 +97,7 @@ export function InboxPage() {
                   if (result.ok) {
                     // The button goes with the unread state, so focus moves to the heading, which stays.
                     document.getElementById("inbox-page-title")?.focus();
-                    setNotice(t("The message of {received} is marked as read.", { received: dateFormat(lang, TIME_OPTIONS).format(new Date(item.receivedAt)) }));
+                    setNotice(() => (say: Translate<typeof AR>, shownIn: Lang) => say("The message of {received} is marked as read.", { received: dateFormat(shownIn, TIME_OPTIONS).format(new Date(item.receivedAt)) }));
                     setData({ items: items.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry)), unread: Math.max(0, unread - 1), more });
                   }
                 });

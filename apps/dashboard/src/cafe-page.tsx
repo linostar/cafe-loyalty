@@ -13,7 +13,7 @@ import { useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
-import { useLang, useT } from "./i18n.js";
+import { useLang, useT, type Later, type Translate } from "./i18n.js";
 import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -563,7 +563,8 @@ function SignupQr() {
 export function CafePage() {
   const t = useT(AR);
   const [state, setSetup] = useApiData("/api/cafe", cafeSetupSchema);
-  const [saved, setSaved] = useState<string | null>(null);
+  const lang = useLang();
+  const [saved, setSaved] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
@@ -572,7 +573,7 @@ export function CafePage() {
   const save: Save = async (method, path, body) => {
     setSaved(null);
     setSetup(await apiRequest(method, path, cafeSetupSchema, body));
-    setSaved(t("Saved."));
+    setSaved(() => (say: Translate<typeof AR>) => say("Saved."));
     return true;
   };
 
@@ -580,7 +581,7 @@ export function CafePage() {
     <section aria-labelledby="cafe-page-title">
       <h2 id="cafe-page-title">{t("Café")}</h2>
       <p className="page-intro">{t("Your café's name, loyalty program, margin, win-back offer, Google review link and menu.")}</p>
-      {saved === null ? null : <Notice>{saved}</Notice>}
+      {saved === null ? null : <Notice>{saved(t, lang)}</Notice>}
       <div className="card-grid">
         <CafeNameForm name={setup.cafe.name} save={save} />
         <SignupQr />

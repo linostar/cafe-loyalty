@@ -87,7 +87,7 @@ describe("Counter App", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Wrong PIN. 4 tries left before a pause.");
     await enterPin("482913");
     expect(await screen.findByRole("heading", { name: CAFE.name })).toBeInTheDocument();
-    expect(screen.getByText("Rami")).toBeInTheDocument();
+    expect(screen.getByText(/^Signed in as Rami on /)).toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
     expect(calls.find((call) => call.path === "/api/device/pair")?.body).toMatchObject({ code: "ABCD1234EFGH" });
 

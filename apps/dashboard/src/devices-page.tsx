@@ -3,7 +3,7 @@ import { useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest, isStale, noContent } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
-import { dateFormat, useLang, useT } from "./i18n.js";
+import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
 const AR = {
@@ -105,7 +105,7 @@ export function DevicesPage() {
   const [reload, setReload] = useState(0);
   const [state, setDevices] = useApiData("/api/devices", devicesSchema, reload);
   const [newCode, setNewCode] = useState<PairingCode | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const { pending, error, submit } = useSubmit();
   const pairing = useFocusOnChange<HTMLDivElement>(newCode === null);
   if (state.status !== "loaded") {
@@ -121,7 +121,7 @@ export function DevicesPage() {
         {t("Devices")}
       </h2>
       <p className="page-intro">{t("The phones and tablets your baristas record visits on. Pair a new one with a one-time code; remove one that is lost.")}</p>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
       <FormError message={error} />
       <div ref={pairing}>
         {newCode === null ? (
@@ -171,7 +171,7 @@ export function DevicesPage() {
                     void submit(() => apiRequest("POST", `/api/devices/${device.id}/revoke`, devicesSchema)).then((result) => {
                       if (result.ok) {
                         setDevices(result.value);
-                        setNotice(t("{name} is removed. It stops working the next time it connects; anything it had not sent waits under Review.", { name: device.name }));
+                        setNotice(() => (say: Translate<typeof AR>) => say("{name} is removed. It stops working the next time it connects; anything it had not sent waits under Review.", { name: device.name }));
                       } else if (isStale(result.error)) {
                         setReload((value) => value + 1);
                       }

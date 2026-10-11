@@ -127,6 +127,11 @@ test("starts a fixed-amount campaign running until midnight, and announces each 
   await form.getByRole("checkbox", { name: /^Latte/ }).check();
   // The latte's $2.50 is under its $2.60 floor: flagged, and tied to its checkbox.
   await expect(form.getByRole("checkbox", { name: /^Latte/ })).toHaveAccessibleDescription("Below its floor: lower the discount or leave it out.");
+  // Refused on the page, before the server is asked.
+  await form.getByRole("button", { name: "Start campaign" }).click();
+  await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/would sell below their floor\. Lower the discount, or leave them out\./);
+  expect(attempts).toBe(0);
+  await form.getByRole("checkbox", { name: /^Latte/ }).uncheck();
   await form.getByRole("button", { name: "Start campaign" }).click();
   await expect(page.getByRole("alert")).toContainText("below your minimum margin");
   await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/Espresso would sell for \$2\.00.*Latte would sell for \$2\.50/);

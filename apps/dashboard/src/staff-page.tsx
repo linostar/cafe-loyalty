@@ -2,7 +2,7 @@ import { STAFF_PIN_MAX_LENGTH, staffListSchema, type StaffMember, toLatinDigits 
 import { useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
-import { useT } from "./i18n.js";
+import { useT, type Later, useLang, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
 const PIN_HINT = "6 to 12 digits; not a repeated digit or a run like 123456. Tell it to the barista in person.";
@@ -175,7 +175,8 @@ export function StaffPage() {
   const reload = () => {
     setReloadKey((value) => value + 1);
   };
-  const [notice, setNotice] = useState<string | null>(null);
+  const lang = useLang();
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
@@ -184,7 +185,7 @@ export function StaffPage() {
   const change: Change = async (method, path, body) => {
     setNotice(null);
     setList(await apiRequest(method, path, staffListSchema, body));
-    setNotice(t("Saved. Counter phones pick up the change when they next sync."));
+    setNotice(() => (say: Translate<typeof AR>) => say("Saved. Counter phones pick up the change when they next sync."));
   };
 
   return (
@@ -193,7 +194,7 @@ export function StaffPage() {
         {t("Staff")}
       </h2>
       <p className="page-intro">{t("Baristas sign in on the counter phones with their PIN, and every stamp they give is recorded under their name.")}</p>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
       {staff.length === 0 ? (
         <p className="empty">{t("No baristas yet. Each one gets a PIN to use at the counter.")}</p>
       ) : (

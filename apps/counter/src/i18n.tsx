@@ -58,6 +58,12 @@ export const useLang = (): Lang => useContext(LangContext).lang;
 export type Translate<C extends Catalog> = (text: Extract<keyof C, string> | CommonText, values?: TemplateValues) => string;
 
 /** `t` for a file's catalog: the text in the page's language with its `{name}` placeholders filled. */
+/**
+ * A message to show later (an answer, a problem), built when shown with the page's `t` and language, so its words,
+ * names and times follow a language switch.
+ */
+export type Later<C extends Catalog> = (t: Translate<C>, lang: Lang) => string;
+
 export function useT<C extends Catalog>(catalog: C): Translate<C> {
   const lang = useLang();
   return useCallback(

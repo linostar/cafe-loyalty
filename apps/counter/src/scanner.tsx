@@ -39,20 +39,18 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
   const video = useRef<HTMLVideoElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const helpId = useId();
-  const [problem, setProblem] = useState<string | null>(null);
+  /** Why the camera failed, put into words when shown, so it follows a language switch. */
+  const [failure, setFailure] = useState<{ error: unknown } | null>(null);
+  const problem = failure === null ? null : cameraProblem(failure.error, noCamera, t);
 
   // The keyboard lands on the way out of the scanner, which is all it can do here.
   useEffect(() => {
     cancel.current?.focus();
   }, []);
   const reported = useRef(onScan);
-  const noCameraText = useRef(noCamera);
-  const translate = useRef(t);
   useEffect(() => {
     reported.current = onScan;
-    noCameraText.current = noCamera;
-    translate.current = t;
-  }, [onScan, noCamera, t]);
+  }, [onScan]);
 
   useEffect(() => {
     let stream: MediaStream | undefined;
@@ -84,7 +82,7 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
             track.stop();
           }
           if (isActive()) {
-            setProblem(cameraProblem(caught, noCameraText.current, translate.current));
+            setFailure({ error: caught });
           }
           return;
         }
@@ -110,7 +108,7 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
       (caught: unknown) => {
         console.error("Opening the camera failed", caught);
         if (isActive()) {
-          setProblem(cameraProblem(caught, noCameraText.current, translate.current));
+          setFailure({ error: caught });
         }
       },
     );

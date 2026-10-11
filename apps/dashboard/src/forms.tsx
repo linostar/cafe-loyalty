@@ -71,7 +71,7 @@ export interface SubmitState {
   pending: boolean;
   /** The message to show for the last failure, if any, in English as the API sent it (FormError translates it). */
   error: string | null;
-  /** Per-field messages from the last failure, by field name, in the page's language. */
+  /** Per-field messages from the last failure, by field name, in English (Field translates them). */
   fieldErrors: Readonly<Record<string, string>>;
   /** Runs `action`, tracking pending and errors. */
   submit: <T>(action: () => Promise<T>) => Promise<SubmitResult<T>>;
@@ -81,7 +81,6 @@ export type SubmitResult<T> = { ok: true; value: T } | { ok: false; error: unkno
 
 export function useSubmit(): SubmitState {
   const onSessionEnded = useContext(SessionEndedContext);
-  const api = useApiText();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -97,12 +96,12 @@ export function useSubmit(): SubmitState {
         onSessionEnded(caught.message);
       } else if (caught instanceof ApiRequestError) {
         setError(caught.message);
-        // Several issues of one field (such as each order type below a campaign's floor) are all shown, each translated
-        // on its own (joined, they would read as one message).
+        // Several issues of one field (such as each order type below a campaign's floor) are all shown: kept in English,
+        // one per line, so each is translated on its own when shown (useSay).
         const byField: Record<string, string> = {};
         for (const detail of caught.details) {
           const earlier = byField[detail.path];
-          byField[detail.path] = earlier === undefined ? api(detail.issue) : `${earlier} ${api(detail.issue)}`;
+          byField[detail.path] = earlier === undefined ? detail.issue : `${earlier}\n${detail.issue}`;
         }
         setFieldErrors(byField);
       } else {

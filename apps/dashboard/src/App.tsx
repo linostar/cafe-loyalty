@@ -84,8 +84,6 @@ const AR = {
   "Sign out": "تسجيل الخروج",
   "Signing out ends your session on every device.": "تسجيل الخروج ينهي جلستك على كل الأجهزة.",
   "Signing out…": "جارٍ تسجيل الخروج…",
-  "You signed out on every device.": "سجّلت خروجك من كل الأجهزة.",
-  "Your password is changed. Sign in with the new password.": "تغيّرت كلمة مرورك. سجّل الدخول بكلمة المرور الجديدة.",
 } as const;
 
 type SessionState =
@@ -404,7 +402,7 @@ function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void })
           onClick={() => {
             void submit(() => apiRequest("POST", "/api/auth/logout", noContent)).then((result) => {
               if (result.ok) {
-                onSignedOut(t("You signed out on every device."));
+                onSignedOut("You signed out on every device.");
               }
             });
           }}
@@ -414,7 +412,7 @@ function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void })
       </section>
       <ChangePasswordForm
         onChanged={() => {
-          onSignedOut(t("Your password is changed. Sign in with the new password."));
+          onSignedOut("Your password is changed. Sign in with the new password.");
         }}
       />
     </>

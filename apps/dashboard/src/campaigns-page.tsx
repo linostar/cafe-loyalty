@@ -14,7 +14,7 @@ import {
 import { useId, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useSubmit } from "./forms.js";
-import { dateFormat, useLang, useT, type Translate } from "./i18n.js";
+import { dateFormat, useLang, useT, type Translate, type Later, useSay } from "./i18n.js";
 import { parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -50,6 +50,8 @@ const AR = {
   "{name}: {price}, {after} with the discount (floor {floor})": "{name}: {price}، و{after} مع الخصم (الحد الأدنى {floor})",
   "Below its floor: lower the discount or leave it out.": "دون حدّه الأدنى: خفّض الخصم أو استبعده.",
   "Start campaign": "بدء الحملة",
+  "Some order types you picked would sell below their floor. Lower the discount, or leave them out.":
+    "بعض أنواع الطلبات التي اخترتها ستُباع دون حدّها الأدنى. خفّض الخصم، أو استبعدها.",
   "Saved. Counter phones pick up the change within 5 minutes.": "تم الحفظ. تلتقط هواتف الكاونتر التغيير خلال 5 دقائق.",
   Campaigns: "الحملات",
   "A campaign takes money off chosen order types at quiet hours. The counter gives the discount to every loyalty card holder.":
@@ -147,6 +149,7 @@ function TimeField({ label, value, onChange, hint, error }: { label: string; val
  */
 function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes: readonly OrderType[]; minMarginPercent: number; change: Change }) {
   const t = useT(AR);
+  const say = useSay(AR);
   const lang = useLang();
   const [nameEn, setNameEn] = useState("");
   const [nameAr, setNameAr] = useState("");
@@ -178,7 +181,11 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           ...(discount === null || (kind === "percent" && discount.value > 100)
             ? { discount: kind === "percent" ? t("Enter a whole percentage from 1 to 100.") : t("Enter an amount in dollars, such as 0.50.") }
             : {}),
-          ...(chosen.length === 0 ? { orderTypeIds: t("Pick at least one order type.") } : {}),
+          ...(chosen.length === 0
+            ? { orderTypeIds: t("Pick at least one order type.") }
+            : discount !== null && onSale.some((type) => chosen.includes(type.id) && !keepsMargin(type.priceCents, type.costCents, discount, minMarginPercent))
+              ? { orderTypeIds: t("Some order types you picked would sell below their floor. Lower the discount, or leave them out.") }
+              : {}),
         };
         setProblems(invalid);
         if (Object.keys(invalid).length > 0 || discount === null || startsMinute === null || endsMinute === null) {
@@ -313,7 +320,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
         </ul>
         {(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? null : (
           <p id="campaign-types-error" className="field-error">
-            {problems.orderTypeIds ?? fieldErrors.orderTypeIds}
+            {problems.orderTypeIds ?? say(fieldErrors.orderTypeIds ?? "")}
           </p>
         )}
       </fieldset>
@@ -331,7 +338,7 @@ export function CampaignsPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setCampaigns] = useApiData("/api/campaigns", campaignsSchema, reloadKey);
   const [setup] = useApiData("/api/cafe", cafeSetupSchema);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const ending = useSubmit();
   if (state.status !== "loaded" || setup.status !== "loaded") {
     return <PageStatus state={state.status === "failed" ? state : setup} />;
@@ -340,7 +347,7 @@ export function CampaignsPage() {
   const change: Change = async (method, path, body) => {
     setNotice(null);
     setCampaigns(await apiRequest(method, path, campaignsSchema, body));
-    setNotice(t("Saved. Counter phones pick up the change within 5 minutes."));
+    setNotice(() => (say: Translate<typeof AR>) => say("Saved. Counter phones pick up the change within 5 minutes."));
   };
 
   return (
@@ -351,7 +358,7 @@ export function CampaignsPage() {
       <p className="page-intro">
         {t("A campaign takes money off chosen order types at quiet hours. The counter gives the discount to every loyalty card holder.")}
       </p>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
       <FormError message={ending.error} />
       <h3>{t("Running")}</h3>
       {state.data.running.length === 0 ? (

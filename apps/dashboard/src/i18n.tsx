@@ -16,6 +16,8 @@ const COMMON_AR = {
   Cancel: "إلغاء",
   Edit: "تعديل",
   "Try again": "حاول مجدداً",
+  "You signed out on every device.": "سجّلت خروجك من كل الأجهزة.",
+  "Your password is changed. Sign in with the new password.": "تغيّرت كلمة مرورك. سجّل الدخول بكلمة المرور الجديدة.",
   "Name (English)": "الاسم (بالإنكليزية)",
   "Name (Arabic)": "الاسم (بالعربية)",
 } as const satisfies Catalog;
@@ -73,11 +75,35 @@ const NO_TEXT = {} as const satisfies Catalog;
 /** `t` for COMMON_AR's text alone. */
 export const useCommonT = (): Translate<typeof NO_TEXT> => useT(NO_TEXT);
 
-/** A message from the API (or the dashboard's own reading of a failure) in the page's language. */
-export function useApiText(): (message: string) => string {
+/**
+ * Text kept in state in English, in the page's language when shown, so a message already on screen follows a language
+ * switch (CLAUDE.md: keep English in state, translate at render): `catalog`'s or COMMON_AR's text, else a message from
+ * the API (or the dashboard's own reading of a failure). Several messages kept together, one per line (a field's
+ * issues), are each translated and shown as one paragraph.
+ */
+export function useSay(catalog: Catalog): (text: string) => string {
   const lang = useLang();
-  return useCallback((message: string) => localiseApiMessage(lang, message), [lang]);
+  return useCallback(
+    (text: string) =>
+      text
+        .split("\n")
+        .map((line) => {
+          const listed = lang === "ar" ? (catalog[line] ?? (COMMON_AR as Catalog)[line]) : undefined;
+          return listed ?? localiseApiMessage(lang, line);
+        })
+        .join(" "),
+    [lang, catalog],
+  );
 }
+
+/** A message from the API, or COMMON_AR's text, kept in English and shown in the page's language. */
+export const useApiText = (): ((message: string) => string) => useSay(NO_TEXT);
+
+/**
+ * A message with values to show later (a notice after a change), built when shown with the page's `t` and language, so
+ * its words, names and dates follow a language switch.
+ */
+export type Later<C extends Catalog> = (t: Translate<C>, lang: Lang) => string;
 
 const LOCALES: Readonly<Record<Lang, string>> = { en: "en-GB", ar: "ar-LB-u-nu-latn" };
 const dateFormats = new Map<string, Intl.DateTimeFormat>();

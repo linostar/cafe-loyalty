@@ -10,11 +10,12 @@ import {
   type CafePlan,
   type OperatorSession,
   type PaymentMethod,
+  type Lang,
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale, noContent } from "./api.js";
 import { Field, FormError, Notice, useSubmit } from "./forms.js";
-import { dateFormat, useApiText, useLang, useT } from "./i18n.js";
+import { dateFormat, type Later, type Translate, useApiText, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 
@@ -63,7 +64,6 @@ const AR = {
   "Sign out": "تسجيل الخروج",
   "Signing out ends your operator session on every device.": "تسجيل الخروج ينهي جلسة المشغّل على كل الأجهزة.",
   "Signing out…": "جارٍ تسجيل الخروج…",
-  "You signed out on every device.": "سجّلت خروجك من كل الأجهزة.",
 } as const;
 
 const PLAN_LABELS = { pilot: "Pilot", active: "Active", suspended: "Suspended" } as const satisfies Record<CafePlan, keyof typeof AR>;
@@ -114,7 +114,7 @@ function AdminLoginForm({ notice, onSignedIn }: { notice: string | null; onSigne
   );
 }
 
-function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: string) => void }) {
+function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
   const [plan, setPlan] = useState<CafePlan>(cafe.plan);
   const { pending, error, submit } = useSubmit();
@@ -124,7 +124,8 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
         event.preventDefault();
         void submit(() => apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { plan })).then((result) => {
           if (result.ok) {
-            onSaved(result.value, t("{name} is now on the {plan} plan.", { name: cafe.name, plan: t(PLAN_LABELS[result.value.plan]).toLowerCase() }));
+            const plan = result.value.plan;
+            onSaved(result.value, (say: Translate<typeof AR>) => say("{name} is now on the {plan} plan.", { name: cafe.name, plan: say(PLAN_LABELS[plan]).toLowerCase() }));
           }
         });
       }}
@@ -157,7 +158,7 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
   );
 }
 
-function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: string) => void }) {
+function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
   const lang = useLang();
   const forThis = forCafe(t("for {name}", { name: cafe.name }));
@@ -188,12 +189,13 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
             setPaymentId(crypto.randomUUID());
             onSaved(
               result.value,
-              t("Recorded {amount} from {name}, paid by {method} on {day}.", {
-                amount: formatUsd(amountCents, "en"),
-                name: cafe.name,
-                method: t(METHOD_LABELS[method]),
-                day: dateFormat(lang, DAY).format(new Date(paidOn)),
-              }),
+              (say: Translate<typeof AR>, shownIn: Lang) =>
+                say("Recorded {amount} from {name}, paid by {method} on {day}.", {
+                  amount: formatUsd(amountCents, "en"),
+                  name: cafe.name,
+                  method: say(METHOD_LABELS[method]),
+                  day: dateFormat(shownIn, DAY).format(new Date(paidOn)),
+                }),
             );
           } else if (isStale(result.error)) {
             // Recorded already with other details (CONFLICT): what is in the form now is a new payment.
@@ -272,7 +274,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   );
 }
 
-function CafeCard({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: string) => void }) {
+function CafeCard({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
   const dayFormat = dateFormat(useLang(), DAY);
   const titleId = `admin-cafe-${cafe.id}`;
@@ -324,7 +326,8 @@ function CafeCard({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
 function CafesPage() {
   const t = useT(AR);
   const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
-  const [notice, setNotice] = useState<string | null>(null);
+  const lang = useLang();
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
@@ -335,7 +338,7 @@ function CafesPage() {
         {t("Cafés")}
       </h2>
       <p className="page-intro">{t("Set each café's plan and record the payments it made. Every change goes in the café's audit log.")}</p>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
       {cafes.length === 0 ? (
         <p className="empty">{t("No cafés yet. Create one with create-invite.")}</p>
       ) : (
@@ -346,7 +349,7 @@ function CafesPage() {
               cafe={cafe}
               onSaved={(saved, message) => {
                 setData({ cafes: cafes.map((entry) => (entry.id === saved.id ? saved : entry)) });
-                setNotice(message);
+                setNotice(() => message);
               }}
             />
           ))}
@@ -445,7 +448,7 @@ export function AdminArea({ layout }: { layout: (children: ReactNode, session: O
                   onClick={() => {
                     void submit(() => apiRequest("POST", "/api/admin/logout", noContent)).then((result) => {
                       if (result.ok) {
-                        signOut(t("You signed out on every device."));
+                        signOut("You signed out on every device.");
                       }
                     });
                   }}

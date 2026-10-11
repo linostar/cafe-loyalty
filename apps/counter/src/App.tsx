@@ -48,7 +48,7 @@ const AR = {
   "Nothing waiting to send.": "لا شيء بانتظار الإرسال.",
   "An update is ready. It installs once everything is sent and nobody is typing.": "تحديث جاهز. يُثبَّت بعد إرسال كل شيء وحين لا يكتب أحد.",
   Visit: "زيارة",
-  "PIN lockout report": "بلاغ قفل الرمز السري",
+  "PIN lockout report": "تقرير قفل الرمز السري",
   "the card is not a card of this café; scan the customer's card again next time": "البطاقة ليست بطاقة لهذا المقهى؛ امسح بطاقة الزبون مجدداً في المرة القادمة",
   "the card was moved to another phone; ask the customer to show the card on their new phone": "نُقلت البطاقة إلى هاتف آخر؛ اطلب من الزبون إظهار البطاقة على هاتفه الجديد",
   "this number is not confirmed yet; scan the customer's card once, then their number works too": "هذا الرقم غير مؤكَّد بعد؛ امسح بطاقة الزبون مرة واحدة، فيعمل رقمه بعدها أيضاً",
@@ -99,8 +99,7 @@ const AR = {
     "تعذّرت قراءة ذاكرة هذا الهاتف. أعد تحميل الصفحة؛ وإذا تكرر الفشل، فتحقق من أن المتصفح يسمح ببيانات المواقع.",
   "Something went wrong on this phone. Reload the page; waiting stamps are kept.": "حدث خطأ على هذا الهاتف. أعد تحميل الصفحة؛ الأختام المنتظرة محفوظة.",
   "Signing in could not be saved on this phone. Reload the page and try again.": "تعذّر حفظ تسجيل الدخول على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
-  "Signed in as": "مسجّل الدخول باسم",
-  "on {device}.": "على {device}.",
+  "Signed in as {name} on {device}.": "مسجّل الدخول باسم {name} على {device}.",
   "Switching barista failed on this phone. Reload the page and try again.": "فشل تبديل الباريستا على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
   "Switch barista": "تبديل الباريستا",
 } as const;
@@ -803,7 +802,7 @@ function Counter() {
           </h2>
           <div className="session-bar">
             <p>
-              {t("Signed in as")} <strong>{barista?.name}</strong> {t("on {device}.", { device: stored?.device?.deviceName ?? "" })}
+              {t("Signed in as {name} on {device}.", { name: barista?.name ?? "", device: stored?.device?.deviceName ?? "" })}
             </p>
             <button
               type="button"
