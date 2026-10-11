@@ -13,3 +13,14 @@ PRODUCTION_PUBLIC_DOMAIN=card.example.com
 STAGING_DASHBOARD_DOMAIN=dashboard.staging.example.com
 STAGING_COUNTER_DOMAIN=counter.staging.example.com
 STAGING_PUBLIC_DOMAIN=card.staging.example.com
+
+# Backups (README, Backups): the age public key every off-site copy is encrypted to. Make the key pair on your own
+# machine (age-keygen -o cafe-loyalty-backups.key) and keep the private key there and in your password manager, never on
+# this VPS: it is the only way to read the backups.
+BACKUP_AGE_RECIPIENT=age1...
+# The rclone remote and path the encrypted copies go to (another provider than this VPS's), set up on the VPS with
+# `sudo rclone config --config /etc/cafe-loyalty/rclone.conf`.
+BACKUP_REMOTE=offsite:cafe-loyalty-backups
+# Where a failed backup or restore test is reported: an https address taking a POST with a plain-text body, such as an
+# ntfy.sh topic (subscribe to it on your phone) or a healthchecks.io ping URL ending in /fail.
+ALERT_URL=https://ntfy.sh/choose-a-long-random-topic-name
