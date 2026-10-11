@@ -72,7 +72,8 @@ check_input() {
   # Sets ID and VERSION_CODENAME, among others.
   # shellcheck source=/dev/null
   . /etc/os-release
-  [[ $ID == ubuntu ]] || fail "this script supports Ubuntu only."
+  # The releases deploy/test runs the scripts on (RUNNER_UBUNTU).
+  [[ $ID == ubuntu && ($VERSION_ID == 24.04 || $VERSION_ID == 26.04) ]] || fail "this script supports Ubuntu 24.04 and 26.04 only."
 
   local missing=() name
   for name in DEPLOY_USER {PRODUCTION,STAGING}_DEPLOY_SSH_PUBLIC_KEY IMAGE_REPOSITORY {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN \

@@ -44,7 +44,8 @@ run() {
 }
 sql() { docker exec -i "$NAME-postgres" psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d cafe_loyalty -c "$1"; }
 
-docker build -q -t cafe-loyalty-deploy-test -f "$DEPLOY_DIR/test/runner.Dockerfile" "$DEPLOY_DIR/test" >/dev/null
+# shellcheck source=deploy/test/runner.sh
+. "$DEPLOY_DIR/test/runner.sh"
 
 docker volume create --label "com.docker.compose.project=$NAME-production" "$NAME-data" >/dev/null
 docker run -d --name "$NAME-postgres" --label "com.docker.compose.project=$NAME-production" \
@@ -65,7 +66,7 @@ sql "INSERT INTO app.cafes (name) VALUES ('Backup Test Cafe'), ('Second Test Caf
 
 docker network create "$NAME-net" >/dev/null
 docker run -d --name "$NAME-runner" --network "$NAME-net" -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$DEPLOY_DIR:/deploy:ro" -v "$NAME-certs:/certs" cafe-loyalty-deploy-test sleep infinity >/dev/null
+  -v "$DEPLOY_DIR:/deploy:ro" -v "$NAME-certs:/certs" "$RUNNER" sleep infinity >/dev/null
 vps "set -e
   install -d -m 0755 /srv/cafe-loyalty /etc/cafe-loyalty /opt/cafe-loyalty/bin
   install -m 0755 /deploy/backup.sh /deploy/restore-test.sh /opt/cafe-loyalty/bin/
@@ -184,6 +185,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         print("received", self.path, self.rfile.read(int(self.headers["Content-Length"])).decode())
         self.send_response(200)
+        # A complete response, as a real service sends: newer curl fails on a TLS stream that just ends.
+        self.send_header("Content-Length", "0")
         self.end_headers()
 server = http.server.HTTPServer(("0.0.0.0", 443), Handler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
