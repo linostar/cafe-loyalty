@@ -41,9 +41,16 @@ load_environment() {
   repo=$(env_value "$CONF_DIR/deploy.conf" IMAGE_REPOSITORY)
   [[ -n $repo ]] || fail "$CONF_DIR/deploy.conf has no IMAGE_REPOSITORY; run provision.sh."
   releases=$dir/releases.log
+  # A run goes on when whoever started it goes away (the release job's SSH session ends on a timeout or a cancel): a
+  # deploy stopped between restarting the containers and recording the outcome would leave releases.log naming a
+  # release that no longer runs. Its output also goes to release-output.log, which tee keeps writing once the session's
+  # end of the pipe is gone.
+  trap '' HUP PIPE
+  exec > >(tee -p -a "$dir/release-output.log") 2>&1
   # One deploy or rollback of an environment at a time.
   exec 8>"$dir/.release.lock"
   flock -w 600 8 || fail "another deploy or rollback of $env is still running."
+  echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) $SCRIPT.sh $env"
 }
 
 # Docker Compose for this environment, with image $1 as APP_IMAGE.
@@ -96,13 +103,19 @@ extract_web() {
 }
 
 # Points web/dashboard and web/counter at release $1's builds, each with one rename: Caddy serves the old or the new.
+# Returns 1 on a failure, after the containers changed, so the caller records it and goes back.
 switch_web() {
   local app
   for app in dashboard counter; do
     # Before the first deploy: the empty directory provision.sh made.
-    if [[ -d $dir/web/$app && ! -L $dir/web/$app ]]; then rmdir "$dir/web/$app" || fail "$dir/web/$app is not empty."; fi
-    ln -sfn "releases/$1/$app" "$dir/web/.$app.new" || fail "cannot link $dir/web/.$app.new."
-    mv -Tf "$dir/web/.$app.new" "$dir/web/$app" || fail "cannot replace $dir/web/$app."
+    if [[ -d $dir/web/$app && ! -L $dir/web/$app ]] && ! rmdir "$dir/web/$app"; then
+      log "$dir/web/$app is not empty."
+      return 1
+    fi
+    if ! ln -sfn "releases/$1/$app" "$dir/web/.$app.new" || ! mv -Tf "$dir/web/.$app.new" "$dir/web/$app"; then
+      log "cannot point $dir/web/$app at release $1."
+      return 1
+    fi
   done
 }
 
@@ -110,8 +123,9 @@ switch_web() {
 # live once the server is ready. Returns 1 (having changed only the containers) when the server is not ready within
 # READY_TIMEOUT seconds or the worker stops.
 start_release() {
-  local image=$repo@$2 started server worker state
+  local image=$repo@$2 started server worker state previous_worker restarts=0
   extract_web "$1" "$image"
+  previous_worker=$(compose "$image" ps -q worker 2>/dev/null) || true
   started=$SECONDS
   if ! compose "$image" up -d --no-deps server worker; then
     log "the $env server and worker of $1 did not start."
@@ -127,17 +141,20 @@ start_release() {
     sleep 1
   done
   local downtime=$((SECONDS - started))
-  # Compose counts a restarting container as up, so the worker must stay up on its own.
+  # Compose counts a restarting container as up, so the worker must stay up on its own: running, and no restart since
+  # now (a worker Compose kept, as on a redeploy of the running release, may have restarted before).
   worker=$(compose "$image" ps -q worker)
+  [[ -n $worker && $worker == "$previous_worker" ]] && restarts=$(docker inspect --format '{{.RestartCount}}' "$worker")
   for _ in $(seq "$WORKER_SETTLE"); do
     sleep 1
-    state=$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' "$worker" 2>/dev/null)
-    if [[ $state != "true 0" ]]; then
+    # Status, not Running: a container waiting to be restarted still counts as running.
+    state=$(docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$worker" 2>/dev/null)
+    if [[ $state != "running $restarts" ]]; then
       log "the $env worker of $1 stopped after it started."
       return 1
     fi
   done
-  switch_web "$1"
+  switch_web "$1" || return 1
   log "$env runs $1 (server restarted and ready in $downtime s)."
 }
 

@@ -1,6 +1,7 @@
 import { createDatabase, createJobQueue, startJobQueue, type PgBoss } from "@cafe-loyalty/db";
 import { createTestDatabase, type TestDatabase } from "@cafe-loyalty/db/testing";
 import type { FastifyInstance } from "fastify";
+import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { registerReadiness, type ReadinessOptions } from "./health.js";
@@ -64,11 +65,15 @@ describe("GET /health/ready (AC 44)", () => {
   });
 
   it("is not ready when the job queue cannot reach its tables", async () => {
-    const stopped = createJobQueue(testDb.appUrl.replace(/@[^/]+\//, "@127.0.0.1:9/"), { error: () => undefined, warn: () => undefined }, {
-      applicationName: "health-test",
-      maxConnections: 1,
-      sendOnly: true,
-    });
-    expect(await ready({ db: testDb.app.db, jobs: stopped })).toMatchObject({ statusCode: 503, body: { status: "not ready", database: "ok", jobQueue: "failed" } });
+    // A started queue whose role loses the pgboss schema (the queue is otherwise as the server runs it).
+    const admin = new pg.Client({ connectionString: testDb.adminUrl });
+    await admin.connect();
+    try {
+      await admin.query("REVOKE USAGE ON SCHEMA pgboss FROM cl_app");
+      expect(await ready({ db: testDb.app.db, jobs })).toMatchObject({ statusCode: 503, body: { status: "not ready", database: "ok", jobQueue: "failed" } });
+    } finally {
+      await admin.query("GRANT USAGE ON SCHEMA pgboss TO cl_app");
+      await admin.end();
+    }
   });
 });

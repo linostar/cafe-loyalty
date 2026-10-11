@@ -7,7 +7,8 @@
 # For tests (no root, any machine with bash): `provision.sh caddyfile` prints the Caddy configuration and
 # `provision.sh env-files <dir>` writes a production environment's database.env and app.env into <dir>, both from the
 # *_DOMAIN settings; `provision.sh units <dir>` writes the backup, restore test and alert units and alert.curlrc into
-# <dir>, from the backup settings.
+# <dir>, from the backup settings; `provision.sh authorized-keys` prints the deploy user's authorized_keys from the
+# *_DEPLOY_SSH_PUBLIC_KEY settings, and `provision.sh deploy-conf <dir>` writes deploy.conf into <dir>.
 set -euo pipefail
 
 readonly APP=cafe-loyalty
@@ -82,17 +83,8 @@ check_input() {
 
   [[ $DEPLOY_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ && $DEPLOY_USER != root ]] ||
     fail "DEPLOY_USER must be a new or existing non-root user name (lowercase letters, digits, - and _)."
-  for name in {PRODUCTION,STAGING}_DEPLOY_SSH_PUBLIC_KEY; do
-    if [[ ${!name} == *$'\n'* ]] || ! ssh-keygen -l -f - <<<"${!name}" >/dev/null 2>&1; then
-      fail "$name must be one OpenSSH public key line (the contents of a .pub file)."
-    fi
-  done
-  # Each key may deploy only its own environment (ssh-command.sh), so the two must differ.
-  [[ $(cut -d ' ' -f 2 <<<"$PRODUCTION_DEPLOY_SSH_PUBLIC_KEY") != $(cut -d ' ' -f 2 <<<"$STAGING_DEPLOY_SSH_PUBLIC_KEY") ]] ||
-    fail "PRODUCTION_DEPLOY_SSH_PUBLIC_KEY and STAGING_DEPLOY_SSH_PUBLIC_KEY must be two different keys."
-  # Written to deploy.conf, which the deploy scripts read: a registry host and repository path only.
-  [[ $IMAGE_REPOSITORY =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] ||
-    fail "IMAGE_REPOSITORY must be the release image's repository without a tag, such as ghcr.io/owner/cafe-loyalty."
+  check_deploy_keys
+  check_image_repository
   check_domains
   check_backup_settings
 
@@ -102,6 +94,32 @@ check_input() {
   [[ $admin != "$DEPLOY_USER" ]] || fail "run this as an administrator, not as $DEPLOY_USER."
   [[ -s $admin_home/.ssh/authorized_keys ]] ||
     fail "$admin has no $admin_home/.ssh/authorized_keys: add your SSH key first, or this would lock you out."
+}
+
+check_deploy_keys() {
+  local name
+  for name in {PRODUCTION,STAGING}_DEPLOY_SSH_PUBLIC_KEY; do
+    if [[ ${!name:-} == *$'\n'* ]] || ! ssh-keygen -l -f - <<<"${!name:-}" >/dev/null 2>&1; then
+      fail "$name must be one OpenSSH public key line (the contents of a .pub file)."
+    fi
+  done
+  # Each key may deploy only its own environment (ssh-command.sh), so the two must differ: with one key, sshd would
+  # take the first line's command.
+  [[ $(cut -d ' ' -f 2 <<<"$PRODUCTION_DEPLOY_SSH_PUBLIC_KEY") != $(cut -d ' ' -f 2 <<<"$STAGING_DEPLOY_SSH_PUBLIC_KEY") ]] ||
+    fail "PRODUCTION_DEPLOY_SSH_PUBLIC_KEY and STAGING_DEPLOY_SSH_PUBLIC_KEY must be two different keys."
+}
+
+# Written to deploy.conf, which the deploy scripts read: a registry host and repository path only.
+check_image_repository() {
+  [[ ${IMAGE_REPOSITORY:-} =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] ||
+    fail "IMAGE_REPOSITORY must be the release image's repository without a tag, such as ghcr.io/owner/cafe-loyalty."
+}
+
+# The deploy user's authorized_keys: each environment's key, whose forced command runs only that environment's deploy
+# and rollback (ssh-command.sh); `restrict` turns off forwarding, terminals and the agent.
+authorized_keys_text() {
+  echo "restrict,command=\"$BIN_DIR/ssh-command.sh production\" $PRODUCTION_DEPLOY_SSH_PUBLIC_KEY"
+  echo "restrict,command=\"$BIN_DIR/ssh-command.sh staging\" $STAGING_DEPLOY_SSH_PUBLIC_KEY"
 }
 
 check_domains() {
@@ -201,15 +219,10 @@ configure_ssh() {
       fail "$DEPLOY_USER is in the $group group, which gives root; remove it (gpasswd -d $DEPLOY_USER $group) and run again."
     fi
   done
-  # The deploy user's only keys, one per environment, in a file only root can change (sshd reads it through the Match
-  # below); root never touches the user's home, where a symlink could turn a write into a takeover. `restrict` turns
-  # off forwarding, terminals and the agent, and each key's forced command runs only that environment's deploy and
-  # rollback (ssh-command.sh).
+  # The deploy user's only keys, one per environment (authorized_keys_text), in a file only root can change (sshd reads
+  # it through the Match below); root never touches the user's home, where a symlink could turn a write into a takeover.
   install -d -m 0755 /etc/ssh/authorized_keys
-  put_file "/etc/ssh/authorized_keys/$DEPLOY_USER" 644 <<EOF || true
-restrict,command="$BIN_DIR/ssh-command.sh production" $PRODUCTION_DEPLOY_SSH_PUBLIC_KEY
-restrict,command="$BIN_DIR/ssh-command.sh staging" $STAGING_DEPLOY_SSH_PUBLIC_KEY
-EOF
+  put_file "/etc/ssh/authorized_keys/$DEPLOY_USER" 644 < <(authorized_keys_text) || true
 
   # The deploy user may run, as root, only the scripts this installs in $BIN_DIR (a directory only root can write).
   local sudoers
@@ -331,8 +344,12 @@ write_env_files() {
   if [[ ! -f $dir/database.env && -f $dir/app.env ]]; then
     fail "$dir/database.env is missing but app.env is there; restore database.env from a backup of the VPS."
   fi
-  # The database keeps the passwords it was made with, and its data needs app.env's keys (not in test modes: no Docker).
-  if [[ ! -f $dir/database.env && $MODE == main ]] && [[ -n $(docker volume ls -q --filter "label=com.docker.compose.project=$APP-$env") ]]; then
+  # The database keeps the passwords it was made with, and its data needs app.env's keys. Its project is the one .env
+  # names (the test modes may run without Docker).
+  local project
+  project=$(env_value "$dir/.env" COMPOSE_PROJECT_NAME 2>/dev/null) || true
+  if [[ ! -f $dir/database.env ]] && command -v docker >/dev/null &&
+    [[ -n $(docker volume ls -q --filter "label=com.docker.compose.project=${project:-$APP-$env}") ]]; then
     fail "$dir/database.env and app.env are missing but the $env database volume is there; restore both from a backup (README, Backups)."
   fi
   if [[ ! -f $dir/database.env ]]; then
@@ -621,7 +638,11 @@ install_scripts() {
 # The deploy scripts' settings (no secrets).
 configure_deploy() {
   install -d -m 0755 "$CONF_DIR"
-  put_file "$CONF_DIR/deploy.conf" 644 <<EOF || true
+  write_deploy_config "$CONF_DIR"
+}
+
+write_deploy_config() {
+  put_file "$1/deploy.conf" 644 <<EOF || true
 # Written by deploy/provision.sh from provision.conf; change it there. Where deploy.sh pulls release images from.
 IMAGE_REPOSITORY=$IMAGE_REPOSITORY
 EOF
@@ -742,11 +763,12 @@ main() {
   log "done."
 }
 
-MODE=${1:-main}
 case ${1:-} in
 "") main ;;
 caddyfile) check_domains && caddyfile_text ;;
 env-files) [[ -d ${2:-} ]] || fail "usage: $0 env-files <existing directory>"; check_domains && write_env_files "$2" production ;;
 units) [[ -d ${2:-} ]] || fail "usage: $0 units <existing directory>"; check_backup_settings && write_units "$2" && write_alert_config "$2" ;;
-*) fail "usage: $0 [caddyfile | env-files <directory> | units <directory>]" ;;
+authorized-keys) check_deploy_keys && authorized_keys_text ;;
+deploy-conf) [[ -d ${2:-} ]] || fail "usage: $0 deploy-conf <existing directory>"; check_image_repository && write_deploy_config "$2" ;;
+*) fail "usage: $0 [caddyfile | env-files <directory> | units <directory> | authorized-keys | deploy-conf <directory>]" ;;
 esac

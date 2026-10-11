@@ -2,7 +2,8 @@
 # Runs the Caddy configuration deploy/provision.sh generates in the pinned Caddy image (`pnpm test:deploy`, part of
 # `pnpm test`; needs Docker): routing, caching and security headers, and that no card, recovery or feedback secret
 # reaches any log, whether in an address, a Referer, a redirect's Location or a 502. Caddy's internal CA stands in for
-# Let's Encrypt, and a second Caddy in the same network namespace stands in for the production API server.
+# Let's Encrypt, and a second Caddy in the same network namespace stands in for the production API server. Then the
+# release workflow's smoke tests (deploy/ci/smoke.sh) run against it from the VPS runner image, trusting that CA.
 set -euo pipefail
 
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -16,12 +17,15 @@ readonly FEEDBACK_TOKEN=FbToKeNfBtOkEnFbToKeNfBtOkEnFbToKeN.SiGnAtUrEsIgNaTuRe
 readonly REFERRED_SECRET=ReFeRrErReFeRrErReFeRrEr
 readonly RECOVERY_TOKEN=ReCoVeRyToKeNrEcOvErYtOkEnReCoVeRyToKeNrEc
 readonly NAME=cafe-loyalty-caddy-test-$$
+# The release the fake counter build belongs to (smoke.sh checks it).
+readonly COMMIT=0123456789abcdef0123456789abcdef01234567
 CADDY_IMAGE=$(sed -n 's/^readonly CADDY_IMAGE=//p' "$DEPLOY_DIR/provision.sh")
 readonly CADDY_IMAGE
 
 work=$(mktemp -d)
 cleanup() {
-  docker rm -f "$NAME" "$NAME-api" >/dev/null 2>&1 || true
+  docker rm -f "$NAME" "$NAME-api" "$NAME-smoke" >/dev/null 2>&1 || true
+  docker network rm "$NAME-net" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -44,7 +48,9 @@ printf '%s\n' "${config/admin unix\/\/config\/admin.sock/admin unix//config/admi
 	local_certs}" >"$work/caddy/Caddyfile"
 echo '<!doctype html><title>dashboard</title>' >"$work/web/production/dashboard/index.html"
 echo '<!doctype html><title>counter</title>' >"$work/web/production/counter/index.html"
-echo 'self.addEventListener("fetch", () => {});' >"$work/web/production/counter/sw.js"
+echo '<!doctype html><title>staging dashboard</title>' >"$work/web/staging/dashboard/index.html"
+printf '%s\n' "const CACHE = \"counter-$COMMIT-2026-10-11T10:00:00Z\";" 'self.addEventListener("fetch", () => {});' \
+  >"$work/web/production/counter/sw.js"
 echo 'console.log("app");' >"$work/web/production/counter/assets/index-AbC123.js"
 # The API: the server's signup and feedback redirects, and one API route. Staging's port stays closed (a 502).
 cat >"$work/api/Caddyfile" <<EOF
@@ -55,13 +61,21 @@ cat >"$work/api/Caddyfile" <<EOF
 :3100 {
 	redir /join/* /c/$CARD_SECRET?lang=en 303
 	redir /f/* /f/$FEEDBACK_TOKEN?lang=en&sent=1 303
+	respond /health/ready "{\"status\":\"ready\",\"database\":\"ok\",\"jobQueue\":\"ok\"}" 200
+	respond /api/cafe 401
 	respond /api/* "api" 200
 	respond 404
 }
 EOF
 chmod -R a+rX "$work"
 
-docker run -d --name "$NAME" -p 127.0.0.1::443 -v "$work/caddy:/etc/caddy:ro" \
+docker network create "$NAME-net" >/dev/null
+aliases=()
+for domain in "$PRODUCTION_DASHBOARD_DOMAIN" "$PRODUCTION_COUNTER_DOMAIN" "$PRODUCTION_PUBLIC_DOMAIN" "$STAGING_DASHBOARD_DOMAIN" \
+  "$STAGING_COUNTER_DOMAIN" "$STAGING_PUBLIC_DOMAIN"; do
+  aliases+=(--network-alias "$domain")
+done
+docker run -d --name "$NAME" --network "$NAME-net" "${aliases[@]}" -p 127.0.0.1::443 -v "$work/caddy:/etc/caddy:ro" \
   -v "$work/web/production:/srv/cafe-loyalty/production/web:ro" -v "$work/web/staging:/srv/cafe-loyalty/staging/web:ro" \
   "$CADDY_IMAGE" >/dev/null
 docker run -d --name "$NAME-api" --network "container:$NAME" -v "$work/api:/etc/caddy:ro" "$CADDY_IMAGE" >/dev/null
@@ -110,6 +124,29 @@ for secret in "$CARD_SECRET" "${FEEDBACK_TOKEN%%.*}" "${FEEDBACK_TOKEN#*.}" "$RE
 done
 check "the redirect to the card was logged, masked" "$(grep -c '"Location":\["/c/\[redacted\]?lang=en"\]' <<<"$logs" || true)" 1
 check "the 502 was logged, masked" "$(grep '"logger":"http.log.error' <<<"$logs" | grep -c '/c/\[redacted\]' || true)" 1
+
+# The release workflow's smoke tests, through Caddy and TLS, with its internal CA trusted as Let's Encrypt's is.
+docker build -q -t cafe-loyalty-deploy-test -f "$DEPLOY_DIR/test/runner.Dockerfile" "$DEPLOY_DIR/test" >/dev/null
+docker run -d --name "$NAME-smoke" --network "$NAME-net" -v "$DEPLOY_DIR:/deploy:ro" cafe-loyalty-deploy-test sleep infinity >/dev/null
+docker exec "$NAME" cat /data/caddy/pki/authorities/local/root.crt |
+  docker exec -i "$NAME-smoke" sh -c 'cat >/usr/local/share/ca-certificates/caddy-test.crt && update-ca-certificates >/dev/null 2>&1'
+smoke() {
+  smoke_status=0
+  smoke_output=$(docker exec "$NAME-smoke" bash /deploy/ci/smoke.sh "$@" 2>&1) || smoke_status=$?
+}
+smoke "https://$public" "https://$dashboard" "https://$counter" "$COMMIT"
+check "the smoke tests pass on a working environment" "$smoke_status" 0
+[[ $smoke_status -eq 0 ]] || echo "$smoke_output" >&2
+smoke "https://$public" "https://$dashboard" "https://$counter" "$(printf '9%.0s' {1..40})"
+check "they fail when the counter is another release's" "$smoke_status" 1
+check "and say so in the workflow" "$([[ $smoke_output == '::error title=Smoke test failed::'*'serves another release'* ]] && echo said)" said
+smoke "https://$STAGING_PUBLIC_DOMAIN" "https://$dashboard" "https://$counter"
+check "they fail when the server is not ready" "$smoke_status" 1
+smoke "https://$public" "https://$dashboard" "https://$public"
+check "they fail without the counter's app" "$smoke_status" 1
+smoke "https://$public" "https://$STAGING_DASHBOARD_DOMAIN" "https://$counter"
+check "they fail when an app's /api does not reach the server" "$smoke_status" 1
+check "and say which" "$([[ $smoke_output == *"$STAGING_DASHBOARD_DOMAIN/api/cafe did not answer 401"* ]] && echo said)" said
 
 if ((failures > 0)); then
   echo "caddy test: $failures check(s) failed" >&2
