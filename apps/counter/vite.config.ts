@@ -91,6 +91,9 @@ function apiProxy(): string | undefined {
   return process.env.COUNTER_API_PROXY ?? (existsSync(envFile) ? parseEnv(readFileSync(envFile, "utf8")).COUNTER_API_PROXY : undefined);
 }
 
+/** The Content-Security-Policy Caddy sends with the built app (deploy/provision.sh), so the end-to-end tests run under it. */
+const contentSecurityPolicy = readFileSync(fileURLToPath(new URL("../../deploy/spa-csp.txt", import.meta.url)), "utf8").trim();
+
 export default defineConfig(() => {
   const proxy = apiProxy();
   return {
@@ -99,6 +102,7 @@ export default defineConfig(() => {
       __BUILD_ID__: JSON.stringify(buildId),
       __BUILT_AT__: JSON.stringify(builtAt),
     },
+    preview: { headers: { "Content-Security-Policy": contentSecurityPolicy } },
     ...(proxy === undefined || proxy === "" ? {} : { server: { proxy: { "/api": proxy } } }),
   };
 });

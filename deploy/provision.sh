@@ -3,6 +3,10 @@
 # to this setup: run it again after any change here or in deploy/. Run as root on the VPS, from a copy of this
 # repository's deploy/ directory, with every setting in the environment (see deploy/provision.conf.example and the
 # README's "Provisioning the VPS"). It never prints a secret and never replaces one it generated before.
+#
+# For tests (no root, any machine with bash): `provision.sh caddyfile` prints the Caddy configuration and
+# `provision.sh env-files <dir>` writes a production environment's database.env and app.env into <dir>, both from the
+# *_DOMAIN settings.
 set -euo pipefail
 
 readonly APP=cafe-loyalty
@@ -10,8 +14,6 @@ readonly OPT_DIR=/opt/$APP
 readonly BIN_DIR=$OPT_DIR/bin
 readonly SRV_DIR=/srv/$APP
 readonly ENVIRONMENTS=(production staging)
-# Loopback port each environment's Compose project publishes its API server on; Caddy proxies to it.
-declare -rA PROXY_PORT=([production]=3100 [staging]=3200)
 # Primary key fingerprint of Docker's apt repository signing key, as Docker publishes it.
 readonly DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 # Caddy runs from its official image (multi-arch index digest); bump both together to upgrade it.
@@ -38,13 +40,25 @@ put_file() {
   temp=$(mktemp "$(dirname "$path")/.provision.XXXXXX") || fail "cannot write in $(dirname "$path")."
   cat >"$temp" || fail "cannot write $temp."
   chmod "$mode" "$temp" || fail "cannot change the mode of $temp."
-  if [[ -f $path ]] && cmp -s "$temp" "$path" && [[ $(stat -c %a "$path") == "$mode" ]]; then
+  # GNU stat, or BSD stat for the test modes on macOS.
+  if [[ -f $path ]] && cmp -s "$temp" "$path" && [[ $(stat -c %a "$path" 2>/dev/null || stat -f %Lp "$path") == "$mode" ]]; then
     rm -f "$temp"
     return 1
   fi
   mv "$temp" "$path" || fail "cannot replace $path."
   log "wrote $path"
 }
+
+# Loopback port environment $1's Compose project publishes its API server on; Caddy proxies to it.
+proxy_port() {
+  case $1 in
+  production) echo 3100 ;;
+  staging) echo 3200 ;;
+  esac
+}
+
+# The upper-case form of $1 (bash 3 has no ${var^^}).
+upper() { tr '[:lower:]' '[:upper:]' <<<"$1"; }
 
 # The value of setting $2 in env file $1 (empty when unset).
 env_value() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
@@ -67,15 +81,7 @@ check_input() {
   local key_help="DEPLOY_SSH_PUBLIC_KEY must be one OpenSSH public key line (the contents of a .pub file)."
   [[ $DEPLOY_SSH_PUBLIC_KEY != *$'\n'* ]] || fail "$key_help"
   ssh-keygen -l -f - <<<"$DEPLOY_SSH_PUBLIC_KEY" >/dev/null 2>&1 || fail "$key_help"
-
-  local domains=() domain
-  for name in {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN; do
-    domain=${!name}
-    [[ $domain =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] || fail "$name must be a lowercase domain name such as app.example.com."
-    domains+=("$domain")
-  done
-  [[ $(printf '%s\n' "${domains[@]}" | sort -u | wc -l) -eq ${#domains[@]} ]] ||
-    fail "the six *_DOMAIN settings must all differ: each app of each environment has its own domain."
+  check_domains
 
   # Password logins end below, so whoever runs this must already be able to log in with a key.
   local admin=${SUDO_USER:-root} admin_home
@@ -83,6 +89,17 @@ check_input() {
   [[ $admin != "$DEPLOY_USER" ]] || fail "run this as an administrator, not as $DEPLOY_USER."
   [[ -s $admin_home/.ssh/authorized_keys ]] ||
     fail "$admin has no $admin_home/.ssh/authorized_keys: add your SSH key first, or this would lock you out."
+}
+
+check_domains() {
+  local domains=() domain name
+  for name in {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN; do
+    domain=${!name}
+    [[ $domain =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] || fail "$name must be a lowercase domain name such as app.example.com."
+    domains+=("$domain")
+  done
+  [[ $(printf '%s\n' "${domains[@]}" | sort -u | wc -l) -eq ${#domains[@]} ]] ||
+    fail "the six *_DOMAIN settings must all differ: each app of each environment has its own domain."
 }
 
 install_packages() {
@@ -95,6 +112,11 @@ install_packages() {
   add_repository docker https://download.docker.com/linux/ubuntu/gpg "$DOCKER_KEY_FINGERPRINT" \
     "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $codename stable"
   apt-get update -q
+  # In place before Docker is installed or upgraded, so its daemon starts with live-restore: an upgrade or restart of
+  # Docker then leaves the containers running.
+  write_docker_config
+  # A daemon already running takes live-restore now, before the upgrade below restarts it.
+  if systemctl is-active --quiet docker; then systemctl reload docker; fi
   # Upgrades Docker too on every run: unattended upgrades take security updates from Ubuntu only.
   apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
@@ -112,19 +134,35 @@ add_repository() {
   put_file "/etc/apt/sources.list.d/$name.list" 644 <<<"$source" || true
 }
 
-configure_docker() {
-  # Published ports bind to loopback unless a Compose file names another address (Docker's own rules bypass ufw), and
-  # every container's log is rotated.
-  if put_file /etc/docker/daemon.json 644 <<'EOF'; then
+# Published ports bind to loopback unless a Compose file names another address (Docker's own rules bypass ufw), every
+# container's log is rotated, and containers keep running while the daemon restarts or upgrades (live-restore).
+write_docker_config() {
+  install -d -m 0755 /etc/docker
+  put_file /etc/docker/daemon.json 644 <<'EOF' || true
 {
   "ip": "127.0.0.1",
+  "live-restore": true,
   "log-driver": "local",
   "log-opts": { "max-size": "20m", "max-file": "5" }
 }
 EOF
-    systemctl restart docker
-  fi
+}
+
+# Restarts the daemon when its settings file is newer than the running daemon (so a run that stopped half way is
+# finished by the next), never stopping containers: with live-restore off in the running daemon, a reload turns it on
+# first.
+configure_docker() {
   systemctl enable --now docker >/dev/null
+  local started
+  started=$(date -d "$(systemctl show docker -p ActiveEnterTimestamp --value)" +%s)
+  ((started >= $(stat -c %Y /etc/docker/daemon.json))) && return 0
+  if [[ $(docker info --format '{{.LiveRestoreEnabled}}') != true ]]; then
+    systemctl reload docker
+    [[ $(docker info --format '{{.LiveRestoreEnabled}}') == true || -z $(docker ps -q) ]] ||
+      fail "Docker did not turn on live-restore, so restarting it would stop the running containers; check journalctl -u docker."
+  fi
+  systemctl restart docker
+  log "restarted Docker with /etc/docker/daemon.json"
 }
 
 configure_ssh() {
@@ -171,13 +209,21 @@ X11Forwarding no
 Match User $DEPLOY_USER
 	AuthorizedKeysFile /etc/ssh/authorized_keys/%u
 EOF
-    if ! sshd -t; then
+    local refused
+    if ! refused=$(sshd -t 2>&1); then
       if [[ -s $previous ]]; then mv "$previous" "$conf"; else rm -f "$conf"; fi
-      fail "sshd refused the new configuration, so it was taken back; nothing else changed."
+      fail "sshd refused its configuration, so $conf is back as it was and sshd was not reloaded. sshd said:
+$refused
+Fix the file it names and run again."
     fi
     systemctl reload ssh
   fi
   rm -f "$previous"
+  # Every run, not only when this file changed: another drop-in can break sshd's next start (after a reboot) too.
+  local problem
+  problem=$(sshd -t 2>&1) || fail "sshd refuses its configuration, so it would not start after a reboot. sshd said:
+$problem
+Fix the file it names and run again."
   sshd -T | grep -x "passwordauthentication no" >/dev/null || fail "sshd still accepts passwords; check /etc/ssh/sshd_config."
 }
 
@@ -226,10 +272,8 @@ EOF
 }
 
 configure_environment() {
-  local env=$1 upper dir dashboard counter public
-  upper=${env^^}
-  dashboard=${upper}_DASHBOARD_DOMAIN counter=${upper}_COUNTER_DOMAIN public=${upper}_PUBLIC_DOMAIN
-  dir=$SRV_DIR/$env
+  local env=$1
+  local dir=$SRV_DIR/$env
   install -d -m 0755 "$dir" "$dir/web" "$dir/web/dashboard" "$dir/web/counter"
   install -d -m 0700 "$dir/backups"
 
@@ -237,15 +281,33 @@ configure_environment() {
   # apart, and Caddy proxies to the port its server publishes.
   put_file "$dir/.env" 644 <<EOF || true
 COMPOSE_PROJECT_NAME=$APP-$env
-PROXY_PORT=${PROXY_PORT[$env]}
+PROXY_PORT=$(proxy_port "$env")
 EOF
+  write_env_files "$dir" "$env"
+  local file
+  for file in "$dir/database.env" "$dir/app.env"; do
+    chown root:root "$file"
+    chmod 600 "$file"
+  done
+}
 
-  # Generated once and then kept: a new pepper or key would orphan every customer's data.
+# Writes environment $2's database.env and app.env in directory $1 the first time (generating every secret), and then
+# only follows the domains in app.env's addresses.
+write_env_files() {
+  local dir=$1 env=$2 prefix
+  prefix=$(upper "$env")
+  local dashboard=${prefix}_DASHBOARD_DOMAIN counter=${prefix}_COUNTER_DOMAIN public=${prefix}_PUBLIC_DOMAIN
+  # Generated once and then kept: a new pepper or key would orphan every customer's data, and new database passwords
+  # would no longer match the database, which keeps the ones it was created with.
+  if [[ ! -f $dir/database.env && -f $dir/app.env ]]; then
+    fail "$dir/database.env is missing but app.env is there; restore database.env from a backup of the VPS."
+  fi
   if [[ ! -f $dir/database.env ]]; then
     local postgres migrator app
     postgres=$(openssl rand -hex 32) migrator=$(openssl rand -hex 32) app=$(openssl rand -hex 32)
     put_file "$dir/database.env" 600 <<<"# $env database settings, generated by deploy/provision.sh. Only for the PostgreSQL container and its
 # one-off bootstrap, migration and backup containers; never copy them to another environment.
+LOG_LEVEL=info
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=$postgres
 POSTGRES_DB=postgres
@@ -293,14 +355,13 @@ EMAIL_FROM=
 # GOOGLE_WALLET_ISSUER_ID=
 # GOOGLE_WALLET_SERVICE_ACCOUNT=" || true
   fi
-  local file
-  for file in "$dir/database.env" "$dir/app.env"; do
-    chown root:root "$file"
-    chmod 600 "$file"
-  done
   # The addresses follow the domains given to this run.
-  sed -i -e "s|^DASHBOARD_URL=.*|DASHBOARD_URL=https://${!dashboard}|" -e "s|^COUNTER_URL=.*|COUNTER_URL=https://${!counter}|" \
-    -e "s|^PUBLIC_URL=.*|PUBLIC_URL=https://${!public}|" "$dir/app.env"
+  # Read in full first: a failed read must stop the run, never leave app.env (and its keys) empty.
+  local updated
+  updated=$(sed -e "s|^DASHBOARD_URL=.*|DASHBOARD_URL=https://${!dashboard}|" -e "s|^COUNTER_URL=.*|COUNTER_URL=https://${!counter}|" \
+    -e "s|^PUBLIC_URL=.*|PUBLIC_URL=https://${!public}|" "$dir/app.env") || fail "cannot read $dir/app.env."
+  [[ -n $updated ]] || fail "$dir/app.env is empty; restore it from a backup of the VPS."
+  put_file "$dir/app.env" 600 <<<"$updated" || true
 }
 
 # Fails when production and staging share any secret (AC 50), without printing it.
@@ -334,10 +395,13 @@ report_unset() {
   done
 }
 
-configure_caddy() {
-  local caddyfile env upper dashboard counter public
-  caddyfile=$(mktemp)
-  cat >"$caddyfile" <<'EOF'
+# The Caddy configuration for every environment, on stdout.
+caddyfile_text() {
+  local csp env prefix dashboard counter public noindex
+  # One line, shared with the dashboard's and counter's preview servers, which the end-to-end tests run under it.
+  csp=$(cat "$SCRIPT_DIR/spa-csp.txt")
+  [[ -n $csp && $csp != *'"'* && $csp != *$'\n'* ]] || fail "$SCRIPT_DIR/spa-csp.txt must hold one policy line without quotes."
+  cat <<'EOF'
 # Written by deploy/provision.sh from the *_DOMAIN settings; edits here are replaced on its next run.
 # Caddy gets and renews every site's TLS certificate itself. Its access logs never include Cookie or Authorization
 # headers (log_credentials stays off).
@@ -352,6 +416,7 @@ configure_caddy() {
 		format filter {
 			request>uri regexp [A-Za-z0-9_-]{16,} [redacted]
 			request>headers>Referer regexp [A-Za-z0-9_-]{16,} [redacted]
+			resp_headers>Location regexp [A-Za-z0-9_-]{16,} [redacted]
 		}
 	}
 }
@@ -363,11 +428,13 @@ configure_caddy() {
 			roll_keep 10
 			roll_keep_for 720h
 		}
-		# Card, recovery and feedback links carry secrets in their paths (/c/, /r/, /f/): every run of 16 or more
-		# URL-safe characters in a logged address is masked, as the server masks secret-like segments in its own logs.
+		# Card, recovery and feedback links carry secrets in their paths (/c/, /r/, /f/), and the server's redirects to
+		# them (and to Google's save links) in Location: every run of 16 or more URL-safe characters in a logged address
+		# is masked, as the server masks secret-like segments in its own logs.
 		format filter {
 			request>uri regexp [A-Za-z0-9_-]{16,} [redacted]
 			request>headers>Referer regexp [A-Za-z0-9_-]{16,} [redacted]
+			resp_headers>Location regexp [A-Za-z0-9_-]{16,} [redacted]
 		}
 	}
 }
@@ -381,13 +448,12 @@ configure_caddy() {
 	}
 }
 
-# A built single-page app (args: environment, app, API port): /api goes to the server, hashed /assets/ files are
-# cached for good, and every other path is the app's index.html; everything but /assets/ (index.html, the counter's
+# A built single-page app (args: environment, app, API port, Content-Security-Policy): /api goes to the server,
+# hashed /assets/ files are cached for good, and every other path is the app's index.html; everything but /assets/ (index.html, the counter's
 # sw.js) is revalidated on every load, so a release reaches browsers at once.
 (spa) {
 	import security_headers
-	# The builds run no inline script or style; QR codes are data: images.
-	header Content-Security-Policy "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	header Content-Security-Policy "{args[3]}"
 	header X-Frame-Options DENY
 	root * /srv/cafe-loyalty/{args[0]}/web/{args[1]}
 	encode zstd gzip
@@ -408,43 +474,48 @@ configure_caddy() {
 }
 EOF
   for env in "${ENVIRONMENTS[@]}"; do
-    upper=${env^^}
-    dashboard=${upper}_DASHBOARD_DOMAIN counter=${upper}_COUNTER_DOMAIN public=${upper}_PUBLIC_DOMAIN
-    local noindex=""
+    prefix=$(upper "$env")
+    dashboard=${prefix}_DASHBOARD_DOMAIN counter=${prefix}_COUNTER_DOMAIN public=${prefix}_PUBLIC_DOMAIN
+    noindex=""
     [[ $env == staging ]] && noindex=$'\n\theader X-Robots-Tag "noindex, nofollow"'
-    cat >>"$caddyfile" <<EOF
+    cat <<EOF
 
 # $env
 ${!dashboard} {
 	import access_log $env-dashboard
-	import spa $env dashboard ${PROXY_PORT[$env]}$noindex
+	import spa $env dashboard $(proxy_port "$env") "$csp"$noindex
 }
 
 ${!counter} {
 	import access_log $env-counter
-	import spa $env counter ${PROXY_PORT[$env]}$noindex
+	import spa $env counter $(proxy_port "$env") "$csp"$noindex
 }
 
 # The server's own pages: customer signup, cards, recovery and feedback, the PassKit web service and its assets.
 ${!public} {
 	import access_log $env-public
 	import security_headers$noindex
-	reverse_proxy 127.0.0.1:${PROXY_PORT[$env]}
+	reverse_proxy 127.0.0.1:$(proxy_port "$env")
 }
 EOF
   done
+}
+
+configure_caddy() {
   install -d -m 0755 /etc/caddy /var/log/caddy "$EDGE_DIR"
-  local check
+  if ! docker image inspect "$CADDY_IMAGE" >/dev/null 2>&1; then
+    timeout 600 docker pull -q "$CADDY_IMAGE" >/dev/null ||
+      fail "could not download $CADDY_IMAGE (network or Docker Hub trouble); run this again."
+  fi
+  local check refused
   check=$(mktemp -d)
-  cp "$caddyfile" "$check/Caddyfile"
-  local refused
+  caddyfile_text >"$check/Caddyfile"
   refused=$(docker run --rm --network none -v "$check:/etc/caddy" "$CADDY_IMAGE" \
     sh -c 'caddy fmt --overwrite /etc/caddy/Caddyfile && caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile' 2>&1) ||
     fail "Caddy refused the generated configuration:
 $refused"
-  local changed=0
-  put_file /etc/caddy/Caddyfile 644 <"$check/Caddyfile" && changed=1
-  rm -rf "$check" "$caddyfile"
+  put_file /etc/caddy/Caddyfile 644 <"$check/Caddyfile" || true
+  rm -rf "$check"
 
   # Host networking: ufw governs ports 80 and 443 as for any host service, and the servers' loopback ports are in reach.
   # Only the app builds are mounted, never an environment's settings.
@@ -469,15 +540,25 @@ volumes:
   data:
   config:
 EOF
-  local edge=(docker compose -f "$EDGE_DIR/compose.yaml") running
-  running=$("${edge[@]}" ps -q caddy)
-  "${edge[@]}" up -d --quiet-pull
-  # A container that just started read the new configuration already.
-  if ((changed == 1)) && [[ -n $running ]]; then
-    "${edge[@]}" exec -T caddy \
-      caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile --address unix//config/admin.sock ||
-      fail "Caddy did not take the new configuration (docker compose -f $EDGE_DIR/compose.yaml logs caddy)."
-  fi
+  local edge=(docker compose -f "$EDGE_DIR/compose.yaml") logs="docker compose -f $EDGE_DIR/compose.yaml logs caddy"
+  "${edge[@]}" up -d --quiet-pull --wait || fail "Caddy did not start; see $logs."
+  # Always, not only when this run changed the file, so a run that stopped half way is finished by the next (an
+  # unchanged configuration reloads as a no-op). Retried while a just-started Caddy opens its admin socket.
+  local tries=0 output
+  until output=$("${edge[@]}" exec -T caddy \
+    caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile --address unix//config/admin.sock 2>&1); do
+    ((++tries < 15)) || fail "Caddy is not running /etc/caddy/Caddyfile ($logs). Its last words:
+$("${edge[@]}" logs --tail 5 caddy 2>&1)
+$output"
+    sleep 2
+  done
+  local port
+  for port in 80 443; do
+    [[ $(ss -Hltnp "sport = :$port") == *'"caddy"'* ]] ||
+      fail "Caddy is not listening on port $port (another service may hold it: ss -ltnp 'sport = :$port'); see $logs."
+  done
+  [[ $(ss -Hlunp "sport = :443") == *'"caddy"'* ]] ||
+    fail "Caddy is not listening on UDP port 443 for HTTP/3 (ss -lunp 'sport = :443'); see $logs."
 }
 
 install_scripts() {
@@ -576,4 +657,9 @@ main() {
   log "done."
 }
 
-main "$@"
+case ${1:-} in
+"") main ;;
+caddyfile) check_domains && caddyfile_text ;;
+env-files) [[ -d ${2:-} ]] || fail "usage: $0 env-files <existing directory>"; check_domains && write_env_files "$2" production ;;
+*) fail "usage: $0 [caddyfile | env-files <directory>]" ;;
+esac
