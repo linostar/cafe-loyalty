@@ -2,14 +2,17 @@ import {
   OWNER_PASSWORD_MIN_LENGTH,
   PRODUCT_NAME,
   VISIT_HOURS_WEEKS,
+  cafeSetupSchema,
   ownerSessionSchema,
   visitHoursSchema,
   walletDeliveriesSchema,
+  type OperatorSession,
   type OwnerSession,
   type VisitHours as VisitHoursData,
 } from "@cafe-loyalty/shared";
 import logoUrl from "@cafe-loyalty/ui/logo.svg";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { AdminArea } from "./admin-page.js";
 import { ApiRequestError, apiRequest, noContent } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
 import { CafePage } from "./cafe-page.js";
@@ -17,6 +20,7 @@ import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
 import { InboxPage } from "./inbox-page.js";
+import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
@@ -36,6 +40,7 @@ const OWNER_PAGES = [
   { path: "/devices", label: "Devices" },
   { path: "/review", label: "Review" },
   { path: "/inbox", label: "Inbox" },
+  { path: "/results", label: "Results" },
   { path: "/account", label: "Account" },
 ] as const;
 
@@ -130,6 +135,27 @@ function WalletDeliveryNotice() {
         Stamps are still saved, and the server keeps retrying these cards every 15 minutes: they catch up, and this notice goes away, once updates go
         through again. If it is still here after a day, contact support with the codes above.
       </p>
+    </section>
+  );
+}
+
+/** Says when the operator suspended the café (AC 39), so the owner knows why nobody can join; nothing otherwise. */
+function PlanNotice() {
+  const [state] = useApiData("/api/cafe", cafeSetupSchema);
+  if (state.status === "failed") {
+    return (
+      <p role="alert" className="form-error">
+        Could not check your café&apos;s plan: {state.message}
+      </p>
+    );
+  }
+  if (state.status !== "loaded" || state.data.cafe.plan !== "suspended") {
+    return null;
+  }
+  return (
+    <section aria-labelledby="plan-notice-title" className="form-error">
+      <h3 id="plan-notice-title">Your café&apos;s plan is suspended</h3>
+      <p>New customers cannot join from your signup QR. Your counter still records stamps and rewards for existing cards. Contact us to reactivate it.</p>
     </section>
   );
 }
@@ -251,6 +277,7 @@ function HomePage({ session }: { session: OwnerSession }) {
     <section aria-labelledby="cafe-title">
       <h2 id="cafe-title">{session.cafe.name}</h2>
       <p className="page-intro">Signed in as {session.owner.email}</p>
+      <PlanNotice />
       <WalletDeliveryNotice />
       <VisitHours />
       <ul className="tiles">
@@ -277,6 +304,10 @@ function HomePage({ session }: { session: OwnerSession }) {
         <li>
           <a href="/inbox">Inbox</a>
           <p>Private feedback from your customers.</p>
+        </li>
+        <li>
+          <a href="/results">Results</a>
+          <p>Your first month: customers won back, quiet-hour visits and what offers cost.</p>
         </li>
         <li>
           <a href="/account">Account</a>
@@ -336,12 +367,12 @@ function OwnerNav({ path }: { path: OwnerPath }) {
 }
 
 /** The product's mark and name: the page's one h1. */
-function Brand() {
+function Brand({ app = "Dashboard" }: { app?: string | undefined }) {
   return (
     <div className="brand">
       <img src={logoUrl} alt="" width={36} height={36} />
       <h1>
-        {PRODUCT_NAME} <span className="brand-app">Dashboard</span>
+        {PRODUCT_NAME} <span className="brand-app">{app}</span>
       </h1>
     </div>
   );
@@ -356,11 +387,11 @@ function BuildFooter() {
 }
 
 /** The pages before a session (sign-in, signup, password reset, the session check): one card, centred, the brand above it. */
-function AuthLayout({ children }: { children: ReactNode }) {
+function AuthLayout({ children, app }: { children: ReactNode; app?: string }) {
   return (
     <div className="auth-layout">
       <header>
-        <Brand />
+        <Brand app={app} />
       </header>
       <main className="card auth-card">{children}</main>
       <BuildFooter />
@@ -383,6 +414,22 @@ function OwnerLayout({ session, path, children }: { session: OwnerSession; path:
         </p>
       </header>
       <OwnerNav path={path} />
+      <main className="owner-main">{children}</main>
+      <BuildFooter />
+    </div>
+  );
+}
+
+/** The operator's screen: the top bar with their email, then the page, without the owner's navigation. */
+function AdminLayout({ session, children }: { session: OperatorSession; children: ReactNode }) {
+  return (
+    <div className="owner-layout admin-layout">
+      <header className="topbar">
+        <Brand app="Admin" />
+        <p className="topbar-account">
+          <span className="topbar-email">{session.operator.email}</span>
+        </p>
+      </header>
       <main className="owner-main">{children}</main>
       <BuildFooter />
     </div>
@@ -481,6 +528,9 @@ function OwnerArea({ path }: { path: OwnerPath }) {
         case "/inbox":
           content = <InboxPage />;
           break;
+        case "/results":
+          content = <ResultsPage />;
+          break;
         case "/account":
           content = <AccountPage onSignedOut={signOut} />;
           break;
@@ -514,6 +564,14 @@ function Page({ path }: { path: string }) {
         <AuthLayout>
           <ResetPasswordPage />
         </AuthLayout>
+      );
+    case "/admin":
+      return (
+        <AdminArea
+          layout={(children, session) =>
+            session === null ? <AuthLayout app="Admin">{children}</AuthLayout> : <AdminLayout session={session}>{children}</AdminLayout>
+          }
+        />
       );
     default:
       return <OwnerArea path={isOwnerPath(path) ? path : "/"} />;

@@ -88,6 +88,35 @@ const SIGNED_IN = {
     unread: 1,
     more: false,
   }),
+  "GET /api/results": reply(200, {
+    window: { from: "2026-09-20T08:00:00.000Z", to: "2026-10-20T08:00:00.000Z", complete: false },
+    memberVisits: 412,
+    customersWonBack: 6,
+    quietHourVisits: 58,
+    rewardRedemptions: 21,
+    offers: { winBack: { visits: 6, costCents: 540, revenueCents: 2830 }, quietHour: { visits: 58, costCents: 4350, revenueCents: 21460 } },
+  }),
+};
+
+/** The operator's admin screen with fake cafés. */
+const ADMIN = {
+  "GET /api/admin/session": reply(200, { operator: { id: "c01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", email: "operator@example.com" } }),
+  "GET /api/admin/cafes": reply(200, {
+    cafes: [
+      {
+        id: SESSION.cafe.id,
+        name: SESSION.cafe.name,
+        plan: "active",
+        createdAt: "2026-09-01T08:00:00.000Z",
+        paidCents: 5000,
+        payments: [
+          { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042", recordedAt: "2026-10-01T09:00:00.000Z" },
+          { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", amountCents: 2500, paidOn: "2026-09-01", method: "cash", reference: null, recordedAt: "2026-09-01T09:00:00.000Z" },
+        ],
+      },
+      { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e", name: "Study Corner", plan: "pilot", createdAt: "2026-09-15T08:00:00.000Z", paidCents: 0, payments: [] },
+    ],
+  }),
 };
 
 const WIDTHS = [1440, 1024, 390] as const;
@@ -107,7 +136,7 @@ for (const width of WIDTHS) {
   test.describe(`at ${String(width)} px`, () => {
     test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
 
-    for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/account"]) {
+    for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"]) {
       test(`signed in at ${path}`, async ({ page }, testInfo) => {
         await mockApi(page, SIGNED_IN);
         await page.goto(path);
@@ -117,6 +146,21 @@ for (const width of WIDTHS) {
         await expectFocusNeverHidden(page);
       });
     }
+
+    test("operator signed in at /admin", async ({ page }, testInfo) => {
+      await mockApi(page, ADMIN);
+      await page.goto("/admin");
+      await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+      await capture(page, testInfo, `dashboard-admin-${String(width)}`);
+      await expectFocusNeverHidden(page);
+    });
+
+    test("operator signed out at /admin", async ({ page }, testInfo) => {
+      await mockApi(page, { "GET /api/admin/session": reply(401, UNAUTHENTICATED) });
+      await page.goto("/admin");
+      await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
+      await capture(page, testInfo, `dashboard-admin-sign-in-${String(width)}`);
+    });
 
     for (const [name, path] of [
       ["sign-in", "/"],

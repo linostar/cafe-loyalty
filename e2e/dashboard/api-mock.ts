@@ -29,8 +29,13 @@ export const visitHours = (visits: number[][] = Array.from({ length: 7 }, () => 
   visits,
 });
 
-/** What the home page's own requests get unless a test says otherwise: every wallet card update going through, no visits. */
+/** What the home page's own requests get unless a test says otherwise: a café on its pilot plan, every wallet card update going through, no visits. */
 const DEFAULTS: Readonly<Record<string, Handler>> = {
+  "GET /api/cafe": reply(200, {
+    cafe: { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 0, winBack: { discount: null, cooldownDays: 30 }, googleReviewUrl: null, plan: "pilot" },
+    program: null,
+    orderTypes: [],
+  }),
   "GET /api/cafe/wallet-deliveries": reply(200, { failing: [] }),
   "GET /api/cafe/visit-hours": reply(200, visitHours()),
 };

@@ -34,7 +34,7 @@ describe("access control", () => {
     const app = Fastify();
     registerAccessControl(app, context.testDb.app.db);
     // The onRoute hook throws as the route is added, so the server never starts with it.
-    expect(() => app.get("/undeclared", () => ({}))).toThrow('must declare config.access ("owner", "device" or "public")');
+    expect(() => app.get("/undeclared", () => ({}))).toThrow('must declare config.access ("owner", "device", "operator" or "public")');
     await app.close();
   });
 
@@ -85,7 +85,7 @@ describe("café setup", () => {
     const { as, owner } = await ownerApp();
     const setup = await as("GET", "/api/cafe");
     expect(setup.statusCode).toBe(200);
-    expect(setup.json()).toEqual({ cafe: { id: owner.cafeId, name: "Café Test", catalogVersion: 1, minMarginPercent: 0, winBack: { discount: null, cooldownDays: 30 }, googleReviewUrl: null }, program: null, orderTypes: [] });
+    expect(setup.json()).toEqual({ cafe: { id: owner.cafeId, name: "Café Test", catalogVersion: 1, minMarginPercent: 0, winBack: { discount: null, cooldownDays: 30 }, googleReviewUrl: null, plan: "pilot" }, program: null, orderTypes: [] });
   });
 
   it("renames the café and saves the loyalty program, audit-logged", async () => {

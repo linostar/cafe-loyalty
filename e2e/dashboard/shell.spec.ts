@@ -14,11 +14,20 @@ const SIGNED_IN = {
   "GET /api/staff": reply(200, { staff: [] }),
   "GET /api/devices": reply(200, { devices: [], pairingCodes: [] }),
   "GET /api/review-queue": reply(200, { items: [], nextCursor: null }),
+  // Seven-digit amounts: the widest the offers table gets.
+  "GET /api/results": reply(200, {
+    window: { from: "2026-09-20T08:00:00.000Z", to: "2026-10-20T08:00:00.000Z", complete: true },
+    memberVisits: 99999,
+    customersWonBack: 9999,
+    quietHourVisits: 9999,
+    rewardRedemptions: 9999,
+    offers: { winBack: { visits: 9999, costCents: 99999999, revenueCents: 99999999 }, quietHour: { visits: 9999, costCents: 99999999, revenueCents: 99999999 } },
+  }),
   // Every hour busy, with three-digit counts: the widest the busy and quiet hours table gets.
   "GET /api/cafe/visit-hours": reply(200, visitHours(Array.from({ length: 7 }, () => Array.from({ length: 24 }, (_, hour) => 100 + hour)))),
 };
 
-for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/account"]) {
+for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/results", "/account"]) {
   test(`fits a 360 px phone screen when signed in at ${path}`, async ({ page }) => {
     await page.unrouteAll();
     await mockApi(page, SIGNED_IN);
@@ -74,3 +83,28 @@ for (const path of ["/", "/signup#invite=x", "/forgot-password", "/reset-passwor
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
+
+test("fits a 360 px phone screen on the operator's admin screen", async ({ page }) => {
+  await page.unrouteAll();
+  // Fake café and payment for the test only, with the longest reference and a large amount.
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, { operator: { id: "c01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", email: "operator@example.com" } }),
+    "GET /api/admin/cafes": reply(200, {
+      cafes: [
+        {
+          id: SESSION.cafe.id,
+          name: SESSION.cafe.name,
+          plan: "suspended",
+          createdAt: "2026-09-01T08:00:00.000Z",
+          paidCents: 99999999,
+          payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 99999999, paidOn: "2026-10-01", method: "bank_transfer", reference: "R".repeat(100), recordedAt: "2026-10-01T09:00:00.000Z" }],
+        },
+      ],
+    }),
+  });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+  const screenWidth = page.viewportSize()?.width ?? 0;
+  const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
