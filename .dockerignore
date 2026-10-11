@@ -1,0 +1,15 @@
+# Only what the image builds from (Dockerfile): never .env files, keys, test reports or local builds.
+*
+!apps/
+!packages/
+!deploy/spa-csp.txt
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!tsconfig.json
+!release-commits.txt
+**/node_modules
+**/dist
+**/.env*
+**/*.tsbuildinfo

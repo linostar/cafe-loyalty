@@ -1,0 +1,152 @@
+name: Release
+
+# A merge to main, once CI has passed on it (README, Deploying; AC 48, 51-54): build the release image, scan it, push it
+# to GHCR tagged with the commit, deploy it to staging with smoke tests and the rollback test, then deploy the same image
+# digest to production once the production environment's reviewers approve. Settings (README, Deploying), on each
+# environment (staging, production), both limited to main: the variables DEPLOY_HOST, DEPLOY_USER, PUBLIC_URL,
+# DASHBOARD_URL and COUNTER_URL and the secrets DEPLOY_SSH_KEY (that environment's own deploy key, which can deploy only
+# it) and DEPLOY_KNOWN_HOSTS.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One release at a time, in order: a newer merge waits for the running release, never cancels it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  COMMIT: ${{ github.event.workflow_run.head_sha }}
+  TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa # 0.75.0, multi-arch index
+
+jobs:
+  build:
+    name: Build and scan
+    # Pushes to main only: CI also runs on pull requests, whose code is never released.
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+          # Full history: release-commits.txt is the release's history, which the next deploy's migration gate reads.
+          fetch-depth: 0
+
+      - name: Build the release image
+        env:
+          TZ: UTC
+        run: |
+          image=$(tr '[:upper:]' '[:lower:]' <<<"ghcr.io/$GITHUB_REPOSITORY")
+          echo "IMAGE=$image" >>"$GITHUB_ENV"
+          git rev-list HEAD >release-commits.txt
+          built_at=$(git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
+          test -n "$built_at"
+          docker build -t "$image:$COMMIT" --build-arg BUILD_ID="$COMMIT" --build-arg BUILT_AT="$built_at" \
+            --build-arg SOURCE_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" .
+
+      # Before the push: an image with a secret or a known vulnerability that has a fix never reaches the registry.
+      - name: Scan the image for secrets and vulnerabilities
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --no-progress \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE:$COMMIT"
+
+      - name: Push to GHCR
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          docker push -q "$IMAGE:$COMMIT"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$COMMIT" --format '{{.Manifest.Digest}}')
+          docker logout ghcr.io
+          [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+          echo "Pushed $IMAGE:$COMMIT ($digest)." >>"$GITHUB_STEP_SUMMARY"
+
+  staging:
+    name: Deploy to staging
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ vars.DASHBOARD_URL }}
+    env:
+      DIGEST: ${{ needs.build.outputs.digest }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+      COUNTER_URL: ${{ vars.COUNTER_URL }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+
+      - name: Deploy
+        run: deploy/ci/remote.sh deploy.sh staging "$COMMIT" "$DIGEST" || { echo "::error title=Staging deploy failed::See the deploy output above."; exit 1; }
+
+      - name: Smoke test
+        run: deploy/ci/smoke.sh "$PUBLIC_URL" "$DASHBOARD_URL" "$COUNTER_URL" "$COMMIT"
+
+      # AC 54: the previous release runs on the schema this release expanded, then this release runs again.
+      - name: Rollback test
+        run: |
+          status=0
+          deploy/ci/remote.sh rollback.sh staging || status=$?
+          if ((status == 3)); then
+            echo "::notice title=Rollback test skipped::Staging has run no other release yet."
+            exit 0
+          fi
+          ((status == 0)) || { echo "::error title=Rollback test failed::The previous release did not run on this schema."; exit 1; }
+          deploy/ci/smoke.sh "$PUBLIC_URL" "$DASHBOARD_URL" "$COUNTER_URL"
+          deploy/ci/remote.sh rollback.sh staging "$COMMIT" || { echo "::error title=Rollback test failed::Staging did not return to $COMMIT."; exit 1; }
+          deploy/ci/smoke.sh "$PUBLIC_URL" "$DASHBOARD_URL" "$COUNTER_URL" "$COMMIT"
+
+  production:
+    name: Deploy to production
+    needs: [build, staging]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Its required reviewers approve before this job starts (README, Deploying).
+    environment:
+      name: production
+      url: ${{ vars.DASHBOARD_URL }}
+    env:
+      DIGEST: ${{ needs.build.outputs.digest }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+      COUNTER_URL: ${{ vars.COUNTER_URL }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+
+      - name: Deploy
+        run: deploy/ci/remote.sh deploy.sh production "$COMMIT" "$DIGEST" || { echo "::error title=Production deploy failed::See the deploy output above."; exit 1; }
+
+      - name: Smoke test
+        run: deploy/ci/smoke.sh "$PUBLIC_URL" "$DASHBOARD_URL" "$COUNTER_URL" "$COMMIT"

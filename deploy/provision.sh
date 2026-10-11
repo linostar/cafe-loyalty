@@ -74,17 +74,25 @@ check_input() {
   [[ $ID == ubuntu ]] || fail "this script supports Ubuntu only."
 
   local missing=() name
-  for name in DEPLOY_USER DEPLOY_SSH_PUBLIC_KEY {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN BACKUP_AGE_RECIPIENT \
-    BACKUP_REMOTE ALERT_URL; do
+  for name in DEPLOY_USER {PRODUCTION,STAGING}_DEPLOY_SSH_PUBLIC_KEY IMAGE_REPOSITORY {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN \
+    BACKUP_AGE_RECIPIENT BACKUP_REMOTE ALERT_URL; do
     [[ -n ${!name:-} ]] || missing+=("$name")
   done
   ((${#missing[@]} == 0)) || fail "set ${missing[*]} (see deploy/provision.conf.example)."
 
   [[ $DEPLOY_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ && $DEPLOY_USER != root ]] ||
     fail "DEPLOY_USER must be a new or existing non-root user name (lowercase letters, digits, - and _)."
-  local key_help="DEPLOY_SSH_PUBLIC_KEY must be one OpenSSH public key line (the contents of a .pub file)."
-  [[ $DEPLOY_SSH_PUBLIC_KEY != *$'\n'* ]] || fail "$key_help"
-  ssh-keygen -l -f - <<<"$DEPLOY_SSH_PUBLIC_KEY" >/dev/null 2>&1 || fail "$key_help"
+  for name in {PRODUCTION,STAGING}_DEPLOY_SSH_PUBLIC_KEY; do
+    if [[ ${!name} == *$'\n'* ]] || ! ssh-keygen -l -f - <<<"${!name}" >/dev/null 2>&1; then
+      fail "$name must be one OpenSSH public key line (the contents of a .pub file)."
+    fi
+  done
+  # Each key may deploy only its own environment (ssh-command.sh), so the two must differ.
+  [[ $(cut -d ' ' -f 2 <<<"$PRODUCTION_DEPLOY_SSH_PUBLIC_KEY") != $(cut -d ' ' -f 2 <<<"$STAGING_DEPLOY_SSH_PUBLIC_KEY") ]] ||
+    fail "PRODUCTION_DEPLOY_SSH_PUBLIC_KEY and STAGING_DEPLOY_SSH_PUBLIC_KEY must be two different keys."
+  # Written to deploy.conf, which the deploy scripts read: a registry host and repository path only.
+  [[ $IMAGE_REPOSITORY =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] ||
+    fail "IMAGE_REPOSITORY must be the release image's repository without a tag, such as ghcr.io/owner/cafe-loyalty."
   check_domains
   check_backup_settings
 
@@ -193,11 +201,15 @@ configure_ssh() {
       fail "$DEPLOY_USER is in the $group group, which gives root; remove it (gpasswd -d $DEPLOY_USER $group) and run again."
     fi
   done
-  # The deploy user's only key, in a file only root can change (sshd reads it through the Match below); root never
-  # touches the user's home, where a symlink could turn a write into a takeover. `restrict` turns off forwarding,
-  # terminals and the agent, so the key can run commands only.
+  # The deploy user's only keys, one per environment, in a file only root can change (sshd reads it through the Match
+  # below); root never touches the user's home, where a symlink could turn a write into a takeover. `restrict` turns
+  # off forwarding, terminals and the agent, and each key's forced command runs only that environment's deploy and
+  # rollback (ssh-command.sh).
   install -d -m 0755 /etc/ssh/authorized_keys
-  put_file "/etc/ssh/authorized_keys/$DEPLOY_USER" 644 <<<"restrict $DEPLOY_SSH_PUBLIC_KEY" || true
+  put_file "/etc/ssh/authorized_keys/$DEPLOY_USER" 644 <<EOF || true
+restrict,command="$BIN_DIR/ssh-command.sh production" $PRODUCTION_DEPLOY_SSH_PUBLIC_KEY
+restrict,command="$BIN_DIR/ssh-command.sh staging" $STAGING_DEPLOY_SSH_PUBLIC_KEY
+EOF
 
   # The deploy user may run, as root, only the scripts this installs in $BIN_DIR (a directory only root can write).
   local sudoers
@@ -290,7 +302,8 @@ EOF
 configure_environment() {
   local env=$1
   local dir=$SRV_DIR/$env
-  install -d -m 0755 "$dir" "$dir/web" "$dir/web/dashboard" "$dir/web/counter"
+  # web/dashboard and web/counter are links to a release's builds, made by the deploy.
+  install -d -m 0755 "$dir" "$dir/web"
   install -d -m 0700 "$dir/backups"
 
   # Settings for Compose itself (no secrets): the project name keeps each environment's containers, network and volumes
@@ -318,6 +331,10 @@ write_env_files() {
   if [[ ! -f $dir/database.env && -f $dir/app.env ]]; then
     fail "$dir/database.env is missing but app.env is there; restore database.env from a backup of the VPS."
   fi
+  # The database keeps the passwords it was made with, and its data needs app.env's keys (not in test modes: no Docker).
+  if [[ ! -f $dir/database.env && $MODE == main ]] && [[ -n $(docker volume ls -q --filter "label=com.docker.compose.project=$APP-$env") ]]; then
+    fail "$dir/database.env and app.env are missing but the $env database volume is there; restore both from a backup (README, Backups)."
+  fi
   if [[ ! -f $dir/database.env ]]; then
     local postgres migrator app
     postgres=$(openssl rand -hex 32) migrator=$(openssl rand -hex 32) app=$(openssl rand -hex 32)
@@ -340,7 +357,7 @@ MIGRATOR_DATABASE_URL=postgres://cafe_loyalty_migrator:$migrator@postgres:5432/c
     app_password=$(env_value "$dir/database.env" APP_PASSWORD)
     [[ -n $app_password ]] || fail "$dir/database.env has no APP_PASSWORD; restore it from a backup of the VPS."
     put_file "$dir/app.env" 600 <<<"# $env settings for the API server and the worker (see .env.example), generated by deploy/provision.sh.
-# Never copy a value to another environment. The release (deploy script) sets BUILT_AT.
+# Never copy a value to another environment. The release image sets BUILT_AT.
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=3000
@@ -582,6 +599,8 @@ $output"
 
 install_scripts() {
   install -d -m 0755 "$OPT_DIR" "$BIN_DIR"
+  # Each environment's Compose file, which only the deploy scripts run.
+  put_file "$OPT_DIR/compose.yaml" 644 <"$SCRIPT_DIR/compose.yaml" || true
   local script name
   # Every script next to this one but itself (provisioning stays with administrators).
   for script in "$SCRIPT_DIR"/*.sh; do
@@ -597,6 +616,15 @@ install_scripts() {
       log "removed $script"
     fi
   done
+}
+
+# The deploy scripts' settings (no secrets).
+configure_deploy() {
+  install -d -m 0755 "$CONF_DIR"
+  put_file "$CONF_DIR/deploy.conf" 644 <<EOF || true
+# Written by deploy/provision.sh from provision.conf; change it there. Where deploy.sh pulls release images from.
+IMAGE_REPOSITORY=$IMAGE_REPOSITORY
+EOF
 }
 
 configure_backups() {
@@ -707,12 +735,14 @@ main() {
   check_environments_apart
   configure_caddy
   install_scripts
+  configure_deploy
   configure_backups
   configure_timers
   report_unset
   log "done."
 }
 
+MODE=${1:-main}
 case ${1:-} in
 "") main ;;
 caddyfile) check_domains && caddyfile_text ;;

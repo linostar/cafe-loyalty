@@ -23,6 +23,11 @@ const bootstrapEnvSchema = z.object({
 const migrateEnvSchema = z.object({
   LOG_LEVEL: logLevel,
   MIGRATOR_DATABASE_URL: postgresUrl,
+  /**
+   * all: every pending migration. expand (deploys): contract migrations only once the running release, whose commits
+   * the deploy sends on stdin one per line, is at or after their requires-deployed commit.
+   */
+  MIGRATE_MODE: z.enum(["all", "expand"]).default("all"),
 });
 
 const checkEnvSchema = z.object({

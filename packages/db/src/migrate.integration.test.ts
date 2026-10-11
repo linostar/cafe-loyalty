@@ -1,6 +1,6 @@
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
-import { MigrationStateError, migrate } from "./migrate.js";
+import { MigrationStateError, migrate, type MigrateOptions } from "./migrate.js";
 import { loadMigrations, parseMigration, type MigrationFile } from "./migrations.js";
 import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
 
@@ -17,11 +17,11 @@ async function freshDatabase(): Promise<TestDatabase> {
   return db;
 }
 
-async function runMigrations(db: TestDatabase, migrations: readonly MigrationFile[]) {
+async function runMigrations(db: TestDatabase, migrations: readonly MigrationFile[], options?: MigrateOptions) {
   const client = new pg.Client({ connectionString: db.migratorUrl });
   await client.connect();
   try {
-    return await migrate(client, migrations, quiet);
+    return await migrate(client, migrations, quiet, options);
   } finally {
     await client.end();
   }
@@ -89,5 +89,56 @@ describe("migrate", () => {
     const outcomes = await Promise.all([runMigrations(db, migrations), runMigrations(db, migrations)]);
     expect(outcomes.flatMap((outcome) => outcome.applied).sort()).toEqual(migrations.map((migration) => migration.version));
     expect(await appliedVersions(db)).toEqual(migrations.map((migration) => migration.version));
+  });
+});
+
+describe("migrate in expand-only mode (deploys, AC 47)", () => {
+  const released = "a".repeat(40);
+  const later = "b".repeat(40);
+
+  async function withPending(): Promise<{ db: TestDatabase; migrations: MigrationFile[]; expand: MigrationFile; contract: MigrationFile }> {
+    const db = await freshDatabase();
+    const migrations = await loadMigrations();
+    await runMigrations(db, migrations);
+    const version = (offset: number): string => String(migrations.length + offset).padStart(4, "0");
+    const expand = parseMigration(`${version(1)}_add_probe.sql`, "-- migration: expand\nCREATE TABLE gate_probe (id int, note text);\n");
+    const contract = parseMigration(
+      `${version(2)}_drop_probe_note.sql`,
+      `-- migration: contract\n-- requires-deployed: ${released}\nALTER TABLE gate_probe DROP COLUMN note;\n`,
+    );
+    return { db, migrations, expand, contract };
+  }
+
+  it("applies expand migrations", async () => {
+    const { db, migrations, expand } = await withPending();
+    const outcome = await runMigrations(db, [...migrations, expand], { deployedCommits: new Set([later]) });
+    expect(outcome.applied).toEqual([expand.version]);
+  });
+
+  it("refuses the whole run, expand migrations before it included, while the running release is before a contract migration", async () => {
+    const { db, migrations, expand, contract } = await withPending();
+    const error = await runMigrations(db, [...migrations, expand, contract], { deployedCommits: new Set([later]) }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(MigrationStateError);
+    expect((error as Error).message).toContain(`${contract.fileName} (requires-deployed ${released})`);
+    expect(await appliedVersions(db)).toEqual(migrations.map((migration) => migration.version));
+  });
+
+  it("refuses every contract migration when the running release's history is empty", async () => {
+    const { db, migrations, expand, contract } = await withPending();
+    await expect(runMigrations(db, [...migrations, expand, contract], { deployedCommits: new Set() })).rejects.toThrow(/would break the running release/);
+  });
+
+  it("applies a contract migration once the running release is at or after its commit, and records that commit", async () => {
+    const { db, migrations, expand, contract } = await withPending();
+    const outcome = await runMigrations(db, [...migrations, expand, contract], { deployedCommits: new Set([later, released]) });
+    expect(outcome.applied).toEqual([expand.version, contract.version]);
+    const client = new pg.Client({ connectionString: db.adminUrl });
+    await client.connect();
+    const { rows } = await client.query("SELECT version, requires_deployed FROM meta.schema_migrations WHERE version >= $1 ORDER BY version", [expand.version]);
+    await client.end();
+    expect(rows).toEqual([
+      { version: expand.version, requires_deployed: null },
+      { version: contract.version, requires_deployed: released },
+    ]);
   });
 });

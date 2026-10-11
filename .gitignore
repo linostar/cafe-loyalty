@@ -39,3 +39,6 @@ backups/
 
 # Per-VPS provisioning settings (deploy/provision.conf.example)
 deploy/provision.conf
+
+# Written for an image build (Dockerfile): the release's git history.
+release-commits.txt
