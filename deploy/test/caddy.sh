@@ -126,8 +126,9 @@ check "the redirect to the card was logged, masked" "$(grep -c '"Location":\["/c
 check "the 502 was logged, masked" "$(grep '"logger":"http.log.error' <<<"$logs" | grep -c '/c/\[redacted\]' || true)" 1
 
 # The release workflow's smoke tests, through Caddy and TLS, with its internal CA trusted as Let's Encrypt's is.
-docker build -q -t cafe-loyalty-deploy-test -f "$DEPLOY_DIR/test/runner.Dockerfile" "$DEPLOY_DIR/test" >/dev/null
-docker run -d --name "$NAME-smoke" --network "$NAME-net" -v "$DEPLOY_DIR:/deploy:ro" cafe-loyalty-deploy-test sleep infinity >/dev/null
+# shellcheck source=deploy/test/runner.sh
+. "$DEPLOY_DIR/test/runner.sh"
+docker run -d --name "$NAME-smoke" --network "$NAME-net" -v "$DEPLOY_DIR:/deploy:ro" "$RUNNER" sleep infinity >/dev/null
 docker exec "$NAME" cat /data/caddy/pki/authorities/local/root.crt |
   docker exec -i "$NAME-smoke" sh -c 'cat >/usr/local/share/ca-certificates/caddy-test.crt && update-ca-certificates >/dev/null 2>&1'
 smoke() {

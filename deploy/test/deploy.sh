@@ -62,7 +62,8 @@ commit_a=$(git -C "$REPO_DIR" rev-parse HEAD)
 git -C "$REPO_DIR" rev-list HEAD >"$REPO_DIR/release-commits.txt"
 docker build -q -t cafe-loyalty-deploy-test-app --build-arg BUILD_ID="$commit_a" \
   --build-arg BUILT_AT="$(TZ=UTC git -C "$REPO_DIR" log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)" "$REPO_DIR" >/dev/null
-docker build -q -t cafe-loyalty-deploy-test -f "$DEPLOY_DIR/test/runner.Dockerfile" "$DEPLOY_DIR/test" >/dev/null
+# shellcheck source=deploy/test/runner.sh
+. "$DEPLOY_DIR/test/runner.sh"
 
 # On both loopback addresses where the host has both: Docker Desktop's daemon (in its VM) reaches it only so. A loopback
 # registry needs no TLS.
@@ -123,7 +124,7 @@ for commit in "$commit_a" "$commit_b" "$commit_c" "$commit_d" "$commit_e" "$comm
 
 proxy_port=$((20000 + RANDOM % 20000))
 docker run -d --name "$NAME-runner" -v /var/run/docker.sock:/var/run/docker.sock -v "$DEPLOY_DIR:/deploy:ro" \
-  cafe-loyalty-deploy-test sleep infinity >/dev/null
+  "$RUNNER" sleep infinity >/dev/null
 vps "set -e
   install -d -m 0755 /etc/cafe-loyalty /opt/cafe-loyalty/bin $ENV_DIR $ENV_DIR/web
   install -d -m 0700 $ENV_DIR/backups

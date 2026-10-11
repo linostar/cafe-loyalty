@@ -82,3 +82,34 @@ jobs:
             test-results/
           retention-days: 14
           if-no-files-found: ignore
+
+  # The VPS scripts on the other Ubuntu release provision.sh supports (the Test job runs them on 24.04): Rust coreutils,
+  # sudo-rs and newer curl and OpenSSL. In parallel, so the run takes no longer.
+  deploy-ubuntu-2604:
+    name: Deploy scripts on Ubuntu 26.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUNNER_UBUNTU: "26.04"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the deploy test builds the release image with release-commits.txt from it.
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the deploy tests
+        run: pnpm test:deploy
