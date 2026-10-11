@@ -1,5 +1,6 @@
 import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expectEveryControlNamed, expectLanguageAndFit } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { mockApi, reply } from "../dashboard/api-mock.js";
 import { CAMERA_CAFE_ID } from "./camera.js";
@@ -137,6 +138,8 @@ for (const { width, height } of WIDTHS) {
         await expect(page.getByText("Total $7.60 · 2 stamps")).toBeInViewport();
       }
       await capture(page, testInfo, `counter-order-${String(width)}`);
+      await expectLanguageAndFit(page, "en");
+      await expectEveryControlNamed(page);
       await context.setOffline(true);
       await expect(page.getByRole("status").first()).toHaveText(/^Offline/);
       await capture(page, testInfo, `counter-offline-${String(width)}`);
@@ -150,6 +153,40 @@ for (const { width, height } of WIDTHS) {
       await page.getByRole("button", { name: "Sign in" }).click();
       await expect(page.getByRole("alert")).toContainText("Wrong PIN");
       await capture(page, testInfo, `counter-pin-wrong-${String(width)}`);
+    });
+  });
+}
+
+/** The counter in Arabic (AC 41): each screen right to left, fitting the width, every control named. */
+for (const { width, height } of [WIDTHS[1], WIDTHS[3]]) {
+  test.describe(`in Arabic at ${String(width)} px`, () => {
+    test.use({ locale: "ar-LB", viewport: { width, height }, isMobile: width === 390, hasTouch: true });
+
+    test("pairing, who is working, PIN, an order, and offline", async ({ page, context }, testInfo) => {
+      const check = async (name: string) => {
+        await capture(page, testInfo, `counter-${name}-ar-${String(width)}`);
+        await expectLanguageAndFit(page, "ar");
+        await expectEveryControlNamed(page);
+      };
+      await mockCounter(page);
+      await page.goto("/pair#code=ABCD-1234-EFGH");
+      await expect(page.getByRole("heading", { name: "اربط هذا الهاتف" })).toBeVisible();
+      await check("pair");
+      await page.getByRole("button", { name: "اربط هذا الهاتف" }).click();
+      await expect(page.getByRole("button", { name: "Rami" })).toBeVisible();
+      await check("who");
+      await page.getByRole("button", { name: "Rami" }).click();
+      // Typed on an Arabic keypad: the same PIN.
+      await page.getByLabel("الرمز السري", { exact: true }).fill("٤٨٢٩١٣");
+      await check("pin");
+      await page.getByRole("button", { name: "تسجيل الدخول" }).click();
+      await expect(page.getByRole("heading", { name: "زيارة جديدة" })).toBeVisible();
+      await page.getByRole("button", { name: /^زيادة .*لاتيه/ }).click();
+      await check("order");
+      await context.setOffline(true);
+      await expect(page.getByRole("status").first()).not.toHaveText("متصل");
+      await check("offline");
+      await expectFocusNeverHidden(page);
     });
   });
 }

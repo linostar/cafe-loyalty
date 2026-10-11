@@ -1,5 +1,5 @@
 import { withCafe, type Database } from "@cafe-loyalty/db";
-import { ApiError, staffCreateSchema, staffUpdateSchema, type StaffMember } from "@cafe-loyalty/shared";
+import { apiText, ApiError, staffCreateSchema, staffUpdateSchema, type StaffMember } from "@cafe-loyalty/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Kysely, Transaction } from "kysely";
 import { z } from "zod";
@@ -15,7 +15,7 @@ export interface StaffRoutesOptions {
 
 const idParams = z.object({ id: z.uuid("Use an id from the list.") });
 
-const notFound = () => new ApiError("NOT_FOUND", "This staff member does not exist. Reload the page to see the current list.");
+const notFound = () => new ApiError("NOT_FOUND", apiText("This staff member does not exist. Reload the page to see the current list."));
 
 async function listStaff(trx: Transaction<Database>): Promise<{ staff: StaffMember[] }> {
   const rows = await trx.selectFrom("staff").select(["id", "name", "revoked_at", "created_at"]).orderBy("name").execute();
@@ -70,7 +70,7 @@ export function staffRoutes(app: FastifyInstance, options: StaffRoutesOptions, d
         throw notFound();
       }
       if (current.revoked_at !== null) {
-        throw new ApiError("CONFLICT", "This staff member was removed. Add them again to give them a PIN.");
+        throw new ApiError("CONFLICT", apiText("This staff member was removed. Add them again to give them a PIN."));
       }
     };
     // Checked before the PIN is hashed, so an unknown or removed id costs no hashing and no rate-limit slot.

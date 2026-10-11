@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { apiText } from "./api-messages.js";
+import { toLatinDigits } from "./i18n.js";
 
 /** A phone number in E.164 form: "+", a country code not starting with 0, 7 to 15 digits in total (AC 4). */
-export const e164PhoneSchema = z.string().regex(/^\+[1-9]\d{6,14}$/, "Enter the number in international form, e.g. +96170123456.");
+export const e164PhoneSchema = z.string().regex(/^\+[1-9]\d{6,14}$/, apiText("Enter the number in international form, e.g. +96170123456."));
 
 export type E164Phone = z.output<typeof e164PhoneSchema>;
 
@@ -21,9 +23,7 @@ const SEPARATORS = /[\s\-.()؜‎‏‪-‮⁦-⁩]/g;
  * Lebanese numbers must use a real prefix.
  */
 export function normalizePhoneInput(input: string): string | null {
-  let number = input
-    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
-    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+  let number = toLatinDigits(input)
     .replace(/\(0\)/g, "")
     .replace(SEPARATORS, "");
   if (number.startsWith("00")) {

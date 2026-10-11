@@ -1,14 +1,15 @@
 import { z } from "zod";
+import { apiText } from "./api-messages.js";
 
 /** Largest amount accepted anywhere, in cents (USD 1,000,000). Larger values are input errors, not real prices. */
 export const MAX_CENTS = 100_000_000;
 
 /** An amount of US dollars in whole cents (AC 32). Every price, cost and total uses this schema. */
 export const centsSchema = z
-  .number("Enter an amount.")
-  .int("Use whole cents.")
-  .min(0, "Use an amount of $0 or more.")
-  .max(MAX_CENTS, "Use an amount up to $1,000,000.");
+  .number(apiText("Enter an amount."))
+  .int(apiText("Use whole cents."))
+  .min(0, apiText("Use an amount of $0 or more."))
+  .max(MAX_CENTS, apiText("Use an amount up to $1,000,000."));
 
 export type Cents = z.output<typeof centsSchema>;
 

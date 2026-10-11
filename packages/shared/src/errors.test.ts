@@ -21,21 +21,21 @@ describe("ERROR_CODES", () => {
 
 describe("ApiError", () => {
   it("builds a valid envelope with status and retryable from the code table", () => {
-    const error = new ApiError("VALIDATION_FAILED", "The phone number is not valid.", [{ path: "phone", issue: "format" }]);
+    const error = new ApiError("VALIDATION_FAILED", "Enter the number in international form, e.g. +96170123456.", [{ path: "phone", issue: "format" }]);
     expect(error.status).toBe(400);
     const envelope = error.toEnvelope();
     expect(errorEnvelopeSchema.parse(envelope)).toEqual({
       code: "VALIDATION_FAILED",
-      message: "The phone number is not valid.",
+      message: "Enter the number in international form, e.g. +96170123456.",
       retryable: false,
       details: [{ path: "phone", issue: "format" }],
     });
   });
 
   it("omits details when there are none", () => {
-    expect(new ApiError("NOT_FOUND", "No such card.").toEnvelope()).toEqual({
+    expect(new ApiError("NOT_FOUND", "This is not a loyalty card of this café. Scan the customer's card again.").toEnvelope()).toEqual({
       code: "NOT_FOUND",
-      message: "No such card.",
+      message: "This is not a loyalty card of this café. Scan the customer's card again.",
       retryable: false,
     });
   });

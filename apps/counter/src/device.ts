@@ -1,5 +1,6 @@
 import {
   COUNTER_BUILT_AT_HEADER,
+  apiText,
   devicePairProofPayload,
   deviceTokenSigningPayload,
   interpretErrorResponse,
@@ -35,8 +36,8 @@ export class DeviceUnpairedError extends Error {
   constructor(reason: "revoked" | "pairing_required") {
     super(
       reason === "revoked"
-        ? "The owner removed this phone. Ask them for a pairing code to use it again; its waiting stamps are kept."
-        : "This phone must be paired again. Ask the owner for a pairing code; its waiting stamps are kept.",
+        ? apiText("The owner removed this phone. Ask them for a pairing code to use it again; its waiting stamps are kept.")
+        : apiText("This phone must be paired again. Ask the owner for a pairing code; its waiting stamps are kept."),
     );
     this.name = "DeviceUnpairedError";
     this.reason = reason;
@@ -98,7 +99,7 @@ function parseReply<T extends z.ZodType>(schema: T, reply: Reply): z.output<T> {
   if (!result.success) {
     throw new RequestError({
       code: null,
-      message: "The server sent an answer this app cannot read. Your work is kept; reload the page and try again.",
+      message: apiText("The server sent an answer this app cannot read. Your work is kept; reload the page and try again."),
       retryable: true,
       status: reply.status,
     });
@@ -110,7 +111,7 @@ function parseReply<T extends z.ZodType>(schema: T, reply: Reply): z.output<T> {
 export async function unpairDevice(keyId: string, reason: "revoked" | "pairing_required"): Promise<never> {
   if (!(await storeUnpaired(keyId, reason))) {
     // Another pairing replaced that key meanwhile: the answer was about the old one.
-    throw new RequestError({ code: null, message: "This phone was paired again meanwhile. Try again.", retryable: true, status: null });
+    throw new RequestError({ code: null, message: apiText("This phone was paired again meanwhile. Try again."), retryable: true, status: null });
   }
   throw new DeviceUnpairedError(reason);
 }
@@ -140,7 +141,7 @@ export class PairedElsewhereError extends Error {
 const notConfirmed = (failure: InterpretedError) =>
   new RequestError({
     ...failure,
-    message: "The pairing could not be confirmed. Check the connection and try again; if the code no longer works, ask the owner for a new one.",
+    message: apiText("The pairing could not be confirmed. Check the connection and try again; if the code no longer works, ask the owner for a new one."),
   });
 
 /**
@@ -223,7 +224,7 @@ async function renew(replacing: string | undefined): Promise<Credential> {
   const token = parseReply(tokenRenewalResponseSchema, reply);
   // Dropped if the phone was paired again meanwhile: a token is only ever used with the key it was issued for.
   if (!(await storeToken({ accessToken: token.accessToken, expiresAt: token.accessTokenExpiresAt, keyId: device.keyId }))) {
-    throw new RequestError({ code: null, message: "This phone was paired again meanwhile. Try again.", retryable: true, status: null });
+    throw new RequestError({ code: null, message: apiText("This phone was paired again meanwhile. Try again."), retryable: true, status: null });
   }
   return { accessToken: token.accessToken, keyId: device.keyId };
 }

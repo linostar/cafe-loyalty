@@ -1,4 +1,4 @@
-import { LOG_REDACT_CENSOR, LOG_REDACT_HEADER_PATHS, redactLogObject } from "@cafe-loyalty/shared";
+import { apiText, LOG_REDACT_CENSOR, LOG_REDACT_HEADER_PATHS, redactLogObject } from "@cafe-loyalty/shared";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { handleError } from "./http-errors.js";
 
@@ -85,7 +85,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
   // Replaces Fastify's default handler, whose log message contains the raw URL (secrets included).
   // Its own no-store: a 404 never passes through the API plugin's hooks.
   app.setNotFoundHandler((_request, reply) =>
-    reply.code(404).header("cache-control", "no-store").send({ code: "NOT_FOUND", message: "No such page or API route. Check the address.", retryable: false }),
+    reply.code(404).header("cache-control", "no-store").send({ code: "NOT_FOUND", message: apiText("No such page or API route. Check the address."), retryable: false }),
   );
 
   return app;

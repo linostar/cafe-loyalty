@@ -10,6 +10,8 @@ import {
   type Campaign,
   type Campaigns,
   type ErrorDetail,
+  apiMessage,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -108,7 +110,7 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
       const cafe = await trx.selectFrom("cafes").select("min_margin_percent").where("id", "=", owner.cafeId).forUpdate().executeTakeFirstOrThrow();
       const running = await trx.selectFrom("campaigns").select(({ fn }) => fn.countAll<string>().as("count")).where("ended_at", "is", null).executeTakeFirstOrThrow();
       if (Number(running.count) >= MAX_RUNNING_CAMPAIGNS) {
-        throw new ApiError("CONFLICT", `A café can run at most ${String(MAX_RUNNING_CAMPAIGNS)} campaigns at once. End one first.`);
+        throw new ApiError("CONFLICT", apiMessage("A café can run at most {max} campaigns at once. End one first.", { max: MAX_RUNNING_CAMPAIGNS }));
       }
       const types = await trx
         .selectFrom("order_types")
@@ -120,8 +122,8 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         .orderBy("name_en")
         .execute();
       if (types.length !== body.orderTypeIds.length) {
-        throw new ApiError("VALIDATION_FAILED", "Pick order types that are on sale. Reload the page to see the current list.", [
-          { path: "orderTypeIds", issue: "An order type is not on sale or no longer exists." },
+        throw new ApiError("VALIDATION_FAILED", apiText("Pick order types that are on sale. Reload the page to see the current list."), [
+          { path: "orderTypeIds", issue: apiText("An order type is not on sale or no longer exists.") },
         ]);
       }
       const margin = cafe.min_margin_percent;
@@ -129,12 +131,18 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         .filter((type) => !keepsMargin(type.price_cents, type.cost_cents, body.discount, margin))
         .map((type) => ({
           path: "orderTypeIds",
-          issue: `${type.name_en} would sell for ${formatUsd(type.price_cents - unitDiscountCents(type.price_cents, body.discount), "en")}, below its floor of ${formatUsd(marginFloorCents(type.cost_cents, margin), "en")} (cost ${formatUsd(type.cost_cents, "en")} plus ${String(margin)}%).`,
+          issue: apiMessage("{name} would sell for {price}, below its floor of {floor} (cost {cost} plus {margin}%).", {
+            name: type.name_en,
+            price: formatUsd(type.price_cents - unitDiscountCents(type.price_cents, body.discount), "en"),
+            floor: formatUsd(marginFloorCents(type.cost_cents, margin), "en"),
+            cost: formatUsd(type.cost_cents, "en"),
+            margin,
+          }),
         }));
       if (belowFloor.length > 0) {
         throw new ApiError(
           "VALIDATION_FAILED",
-          "This discount takes some order types below your minimum margin. Lower the discount, or leave those order types out.",
+          apiText("This discount takes some order types below your minimum margin. Lower the discount, or leave those order types out."),
           belowFloor,
         );
       }
@@ -195,7 +203,7 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         .returning("id")
         .executeTakeFirst();
       if (ended === undefined) {
-        throw new ApiError("NOT_FOUND", "This campaign is not running. Reload the page to see the current list.");
+        throw new ApiError("NOT_FOUND", apiText("This campaign is not running. Reload the page to see the current list."));
       }
       await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "campaign.ended", entityType: "campaign", entityId: id });
       if (jobs !== undefined) {

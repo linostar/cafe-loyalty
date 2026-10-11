@@ -12,6 +12,14 @@
   min-block-size: 100vh;
 }
 
+/* The account (from 40rem) and the language switch (always), at the end of the top bar. */
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
 /* The café and the account: shown from 40rem, where they fit beside the brand (the nav has Account on phones). */
 .topbar-account {
   display: none;
@@ -155,6 +163,13 @@
   gap: var(--space-5);
   min-block-size: 100vh;
   padding: var(--space-7) var(--space-4) 0;
+}
+
+.auth-layout > header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .auth-layout .brand {

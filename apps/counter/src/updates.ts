@@ -1,3 +1,4 @@
+import { apiText } from "@cafe-loyalty/shared";
 import { useEffect, useState } from "react";
 
 /** How often a running counter asks whether a new build is out. */
@@ -6,11 +7,11 @@ const UPDATE_CHECK_MS = 60 * 60 * 1000;
 export interface UpdateState {
   /** A new build is installed and waits until the counter is idle. */
   waiting: boolean;
-  /** Why offline use is unavailable, when the service worker could not be registered or installed. */
+  /** Why offline use is unavailable, when the service worker could not be registered or installed (API catalog English). */
   error: string | null;
 }
 
-const OFFLINE_FAILED = "The app could not be saved for offline use. Reload the page while online.";
+const OFFLINE_FAILED = apiText("The app could not be saved for offline use. Reload the page while online.");
 
 /**
  * Registers the service worker that keeps the app usable offline, and switches to a new build only while
@@ -104,7 +105,7 @@ export function useServiceWorkerUpdate(canApply: boolean, enabled: boolean = imp
   }, [replaced, canApply]);
 
   if (enabled && !supported) {
-    return { waiting: false, error: "This browser cannot keep the app for offline use. Use an up-to-date Chrome or Safari." };
+    return { waiting: false, error: apiText("This browser cannot keep the app for offline use. Use an up-to-date Chrome or Safari.") };
   }
   return { waiting, error };
 }

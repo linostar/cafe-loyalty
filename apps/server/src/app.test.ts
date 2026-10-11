@@ -89,7 +89,7 @@ describe("error envelope", () => {
     const built = buildApp({ logLevel: "silent" });
     built.post("/echo", (request) => ({ received: request.body }));
     built.get("/conflict", () => {
-      throw new ApiError("CONFLICT", "Already there.");
+      throw new ApiError("CONFLICT", "This email already has an account. Sign in instead, or use another email.");
     });
     built.get("/crash", () => {
       throw new Error("database password=hunter2 rejected");
@@ -101,7 +101,7 @@ describe("error envelope", () => {
   it("sends an ApiError with its status and envelope", async () => {
     const response = await appWithRoutes().inject({ method: "GET", url: "/conflict" });
     expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ code: "CONFLICT", message: "Already there.", retryable: false });
+    expect(response.json()).toEqual({ code: "CONFLICT", message: "This email already has an account. Sign in instead, or use another email.", retryable: false });
   });
 
   it("hides unexpected errors behind INTERNAL", async () => {

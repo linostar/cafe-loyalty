@@ -15,6 +15,7 @@ import {
   tokenRenewalRequestSchema,
   type DevicePublicKeyJwk,
   type Devices,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -58,13 +59,13 @@ const builtAtSchema = z.iso.datetime({ offset: false });
 export function requireSupportedBuild(request: FastifyRequest, releaseBuiltAt: Date): void {
   const header = builtAtSchema.safeParse(request.headers[COUNTER_BUILT_AT_HEADER]);
   if (!header.success || Date.parse(header.data) < releaseBuiltAt.getTime() - COUNTER_SUPPORT_DAYS * DAY * 1000) {
-    throw new ApiError("CLIENT_TOO_OLD", "This counter app is out of date. Keep the phone online: it sends its waiting stamps, then updates itself.");
+    throw new ApiError("CLIENT_TOO_OLD", apiText("This counter app is out of date. Keep the phone online: it sends its waiting stamps, then updates itself."));
   }
 }
 
 const invalidCode = () =>
-  new ApiError("PAIRING_CODE_INVALID", "This pairing code is wrong, used or expired. Check it, or create a new code on the owner's dashboard.");
-const pairingRequired = () => new ApiError("PAIRING_REQUIRED", "This device must be paired again. Create a pairing code on the owner's dashboard.");
+  new ApiError("PAIRING_CODE_INVALID", apiText("This pairing code is wrong, used or expired. Check it, or create a new code on the owner's dashboard."));
+const pairingRequired = () => new ApiError("PAIRING_REQUIRED", apiText("This device must be paired again. Create a pairing code on the owner's dashboard."));
 
 /** A new pairing code: 12 characters drawn uniformly from the Crockford alphabet (60 bits; 40 in the secret part). */
 export function newPairingCode(): string {
@@ -226,7 +227,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     await withCafe(db, owner.cafeId, async (trx) => {
       const deleted = await trx.deleteFrom("pairing_codes").where("id", "=", id).executeTakeFirst();
       if (deleted.numDeletedRows === 0n) {
-        throw new ApiError("NOT_FOUND", "This pairing code was already used, cancelled or expired.");
+        throw new ApiError("NOT_FOUND", apiText("This pairing code was already used, cancelled or expired. Reload the page to see the current codes."));
       }
       await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "pairing_code.cancelled", entityType: "pairing_code", entityId: id });
     });
@@ -245,7 +246,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     return withCafe(db, owner.cafeId, async (trx) => {
       const current = await trx.selectFrom("devices").select("revoked_at").where("id", "=", id).forUpdate().executeTakeFirst();
       if (current === undefined) {
-        throw new ApiError("NOT_FOUND", "This device does not exist. Reload the page to see the current list.");
+        throw new ApiError("NOT_FOUND", apiText("This device does not exist. Reload the page to see the current list."));
       }
       if (current.revoked_at === null) {
         await trx.updateTable("devices").set({ revoked_at: now() }).where("id", "=", id).execute();
@@ -270,8 +271,8 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     reserveFailure(limits.pairFailuresPerIp, client, reply);
     const body = parseInput(pairRequestSchema, request.body);
     if (importDeviceKey(body.publicKey) === undefined) {
-      throw new ApiError("VALIDATION_FAILED", "The device's key is not valid. Reload the counter app and pair again.", [
-        { path: "publicKey", issue: "Not a P-256 public key." },
+      throw new ApiError("VALIDATION_FAILED", apiText("The device's key is not valid. Reload the counter app and pair again."), [
+        { path: "publicKey", issue: apiText("Not a P-256 public key.") },
       ]);
     }
     const lookupHash = hashToken(body.code.slice(0, PAIRING_CODE_LOOKUP_LENGTH));
@@ -359,7 +360,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       request.log.info({ cafeId: found.cafe_id }, "pairing refused: phone still paired with another café");
       throw new ApiError(
         "PAIRED_ELSEWHERE",
-        "This phone is still paired with another café and may hold stamps it has not sent there. Pair it with that café first, or start over on the phone.",
+        apiText("This phone is still paired with another café and may hold stamps it has not sent there. Pair it with that café first, or start over on the phone."),
       );
     }
     if (outcome.kind !== "paired") {
@@ -392,8 +393,8 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     const body = parseInput(tokenRenewalRequestSchema, request.body);
     const issuedAt = new Date(body.issuedAt);
     if (Math.abs(Date.now() - issuedAt.getTime()) > RENEWAL_CLOCK_SKEW_MS) {
-      throw new ApiError("VALIDATION_FAILED", "This device's clock is off by more than 5 minutes. Set the phone's date and time to automatic, then try again.", [
-        { path: "issuedAt", issue: "Outside the accepted clock skew." },
+      throw new ApiError("VALIDATION_FAILED", apiText("This device's clock is off by more than 5 minutes. Set the phone's date and time to automatic, then try again."), [
+        { path: "issuedAt", issue: apiText("Outside the accepted clock skew.") },
       ]);
     }
     const key = await withLookup(db, { deviceKeyId: body.keyId }, (trx) =>
@@ -421,7 +422,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       // A missing device row (undefined) counts as revoked too.
       if (device?.revoked_at !== null) {
         request.log.info({ cafeId: key.cafe_id, deviceId: key.device_id }, "token renewal refused: device revoked");
-        throw new ApiError("DEVICE_REVOKED", "The owner removed this device. Pair it again from the owner's dashboard to use it.");
+        throw new ApiError("DEVICE_REVOKED", apiText("The owner removed this device. Pair it again from the owner's dashboard to use it."));
       }
       if (device.stale) {
         request.log.info({ cafeId: key.cafe_id, deviceId: key.device_id }, "token renewal refused: not renewed for 7 days");
@@ -437,8 +438,8 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
       const last = device.last_renewal_issued_at;
       if (last !== null && last.getTime() <= Date.now() + RENEWAL_CLOCK_SKEW_MS && issuedAt.getTime() <= last.getTime()) {
         request.log.info({ cafeId: key.cafe_id, deviceId: key.device_id }, "token renewal refused: issuedAt not after the last renewal");
-        throw new ApiError("VALIDATION_FAILED", "This renewal was already used. The device signs a new one for each attempt; try again.", [
-          { path: "issuedAt", issue: "Not later than the last accepted renewal." },
+        throw new ApiError("VALIDATION_FAILED", apiText("This renewal was already used. The device signs a new one for each attempt; try again."), [
+          { path: "issuedAt", issue: apiText("Not later than the last accepted renewal.") },
         ]);
       }
       await trx

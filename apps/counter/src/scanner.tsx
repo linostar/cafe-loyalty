@@ -1,5 +1,14 @@
 import jsQR from "jsqr";
 import { useEffect, useId, useRef, useState } from "react";
+import { useT, type Translate } from "./i18n.js";
+
+const AR = {
+  "The camera is not allowed. Allow this site to use the camera in the browser's settings, then try again.":
+    "الكاميرا غير مسموح بها. اسمح لهذا الموقع باستخدام الكاميرا من إعدادات المتصفح، ثم حاول مجدداً.",
+  "No camera was found on this phone. {next}": "لم يُعثر على كاميرا في هذا الهاتف. {next}",
+  "The camera could not start. Close other apps that use it, then try again.": "تعذّر تشغيل الكاميرا. أغلق التطبيقات الأخرى التي تستخدمها، ثم حاول مجدداً.",
+  "Point the camera at the {purpose}.": "وجّه الكاميرا نحو {purpose}.",
+} as const;
 
 /** How often a camera frame is checked for a QR code. */
 const SCAN_INTERVAL_MS = 200;
@@ -9,22 +18,24 @@ export function decodeQr(image: { data: Uint8ClampedArray; width: number; height
   return jsQR(image.data, image.width, image.height, { inversionAttempts: "dontInvert" })?.data ?? null;
 }
 
-function cameraProblem(error: unknown, noCamera: string): string {
+function cameraProblem(error: unknown, noCamera: string, t: Translate<typeof AR>): string {
   const name = error instanceof DOMException ? error.name : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "The camera is not allowed. Allow this site to use the camera in the browser's settings, then try again.";
+    return t("The camera is not allowed. Allow this site to use the camera in the browser's settings, then try again.");
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
-    return `No camera was found on this phone. ${noCamera}`;
+    return t("No camera was found on this phone. {next}", { next: noCamera });
   }
-  return "The camera could not start. Close other apps that use it, then try again.";
+  return t("The camera could not start. Close other apps that use it, then try again.");
 }
 
 /**
  * Shows the back camera and reports the first QR code it sees, reading frames on the phone (nothing leaves it). The
- * camera is released when the scanner closes. `noCamera` is what to do instead on a phone without one.
+ * camera is released when the scanner closes. `purpose` names what to scan and `noCamera` says what to do instead on a
+ * phone without one, both in the page's language.
  */
 export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: string; noCamera: string; onScan: (text: string) => void; onCancel: () => void }) {
+  const t = useT(AR);
   const video = useRef<HTMLVideoElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const helpId = useId();
@@ -36,10 +47,12 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
   }, []);
   const reported = useRef(onScan);
   const noCameraText = useRef(noCamera);
+  const translate = useRef(t);
   useEffect(() => {
     reported.current = onScan;
     noCameraText.current = noCamera;
-  }, [onScan, noCamera]);
+    translate.current = t;
+  }, [onScan, noCamera, t]);
 
   useEffect(() => {
     let stream: MediaStream | undefined;
@@ -71,7 +84,7 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
             track.stop();
           }
           if (isActive()) {
-            setProblem(cameraProblem(caught, noCameraText.current));
+            setProblem(cameraProblem(caught, noCameraText.current, translate.current));
           }
           return;
         }
@@ -97,7 +110,7 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
       (caught: unknown) => {
         console.error("Opening the camera failed", caught);
         if (isActive()) {
-          setProblem(cameraProblem(caught, noCameraText.current));
+          setProblem(cameraProblem(caught, noCameraText.current, translate.current));
         }
       },
     );
@@ -113,7 +126,7 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
   return (
     <div className="scanner">
       {problem === null ? (
-        <p id={helpId}>Point the camera at the {purpose}.</p>
+        <p id={helpId}>{t("Point the camera at the {purpose}.", { purpose })}</p>
       ) : (
         <p id={helpId} role="alert" className="field-error">
           {problem}
@@ -121,7 +134,7 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
       )}
       {problem === null ? <video ref={video} className="camera" muted playsInline aria-describedby={helpId} /> : null}
       <button ref={cancel} type="button" onClick={onCancel}>
-        Cancel
+        {t("Cancel")}
       </button>
     </div>
   );

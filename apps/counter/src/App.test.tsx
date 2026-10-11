@@ -217,3 +217,42 @@ describe("Counter App", () => {
     expect(await screen.findByText("This counter app is out of date.")).toBeInTheDocument();
   });
 });
+
+describe("Counter App in Arabic", () => {
+  it("follows an Arabic browser right to left, and switches to English and back, keeping the choice (AC 41)", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(["ar-LB", "en"]);
+    fakeApi(() => ({ status: 404, body: envelope("NOT_FOUND") }));
+    const { unmount } = render(<App />);
+    expect(await screen.findByRole("heading", { name: "اربط هذا الهاتف" })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("dir", "rtl");
+    expect(document.documentElement).toHaveAttribute("lang", "ar");
+    expect(screen.getByText("لا شيء بانتظار الإرسال.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(await screen.findByRole("heading", { name: "Pair this phone" })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("dir", "ltr");
+    unmount();
+
+    // A reload keeps the viewer's choice over the browser's languages.
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Pair this phone" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "العربية" }));
+    expect(await screen.findByRole("heading", { name: "اربط هذا الهاتف" })).toBeInTheDocument();
+  });
+
+  it("says a wrong PIN and the tries left in Arabic", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    localStorage.setItem("cl_lang", "ar");
+    await storePairedDevice();
+    await setMeta("staff", [await staffEntry(RAMI_ID, "Rami", "482913")]);
+    fakeApi(() => ({ status: 404, body: envelope("NOT_FOUND") }));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rami" }));
+    fireEvent.change(await screen.findByLabelText("الرمز السري"), { target: { value: "٠٠٠٠٠٠" } });
+    fireEvent.click(screen.getByRole("button", { name: "تسجيل الدخول" }));
+    expect(await screen.findByText("رمز سري خاطئ. بقيت ⁨4⁩ محاولات قبل الإيقاف المؤقت.")).toBeInTheDocument();
+  });
+});

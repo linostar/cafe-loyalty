@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiText } from "./api-messages.js";
 
 /**
  * A card's QR token: `v1.<cardId>.<cafeId>.<epoch>.<keyId>.<mac>`, where mac is a base64url HMAC-SHA256 over
@@ -35,7 +36,7 @@ export function parseCardQr(token: string): (CardQrFields & { mac: string }) | n
 }
 
 /** The café's signup link code, from its printed QR. */
-export const joinCodeSchema = z.string().regex(/^[0-9a-f]{32}$/, "This signup link is incomplete. Scan the café's code again.");
+export const joinCodeSchema = z.string().regex(/^[0-9a-f]{32}$/, apiText("This signup link is incomplete. Scan the café's code again."));
 
 /** The owner dashboard's view of the café's signup QR. */
 export const joinLinkSchema = z.object({ joinUrl: z.url() });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiMessage, apiText, type ApiText } from "./api-messages.js";
 
 /**
  * Every error code the API can return, with the HTTP status it is sent with. `retryable` says only whether the
@@ -64,7 +65,7 @@ export class ApiError extends Error {
   readonly retryable: boolean;
   readonly details: readonly ErrorDetail[] | undefined;
 
-  constructor(code: ErrorCode, message: string, details?: readonly ErrorDetail[]) {
+  constructor(code: ErrorCode, message: ApiText, details?: readonly ErrorDetail[]) {
     super(message);
     this.name = "ApiError";
     this.code = code;
@@ -104,18 +105,18 @@ export function interpretErrorResponse(status: number, body: string): Interprete
   try {
     parsed = JSON.parse(body);
   } catch {
-    return { code: null, message: `The server sent an unreadable response (HTTP ${String(status)}). Wait a moment and try again.`, retryable: true, status };
+    return { code: null, message: apiMessage("The server sent an unreadable response (HTTP {status}). Wait a moment and try again.", { status }), retryable: true, status };
   }
   const envelope = clientEnvelopeSchema.safeParse(parsed);
   if (!envelope.success || !Object.hasOwn(ERROR_CODES, envelope.data.code)) {
-    return { code: null, message: `The server sent an error this app does not recognise (HTTP ${String(status)}). Reload the page and try again.`, retryable: true, status };
+    return { code: null, message: apiMessage("The server sent an error this app does not recognise (HTTP {status}). Reload the page and try again.", { status }), retryable: true, status };
   }
   const code = envelope.data.code as ErrorCode;
-  const message = envelope.data.message.length > 0 ? envelope.data.message : `The request failed (HTTP ${String(status)}).`;
+  const message = envelope.data.message.length > 0 ? envelope.data.message : apiMessage("The request failed (HTTP {status}). Try again.", { status });
   return { code, message, retryable: ERROR_CODES[code].retryable, status };
 }
 
 /** The interpretation of a request that never got a response (offline, DNS failure, timeout). */
 export function interpretNetworkFailure(): InterpretedError {
-  return { code: null, message: "Could not reach the server. Your work is kept and will be sent again.", retryable: true, status: null };
+  return { code: null, message: apiText("Could not reach the server. Your work is kept and will be sent again."), retryable: true, status: null };
 }

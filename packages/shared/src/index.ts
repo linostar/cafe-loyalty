@@ -209,3 +209,23 @@ export {
   type PaymentRecord,
 } from "./admin.js";
 export { RESULTS_WINDOW_DAYS, offerResultSchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";
+export {
+  API_MESSAGES_AR,
+  apiMessage,
+  apiText,
+  localiseApiMessage,
+  type ApiMessage,
+  type ApiText,
+  type FilledApiMessage,
+} from "./api-messages.js";
+export {
+  arabicPluralForm,
+  fill,
+  langFromPreferences,
+  plural,
+  toLatinDigits,
+  type ArabicPlural,
+  type Lang,
+  type Plural,
+  type TemplateValues,
+} from "./i18n.js";

@@ -1,4 +1,4 @@
-import { ApiError, ERROR_CODES, type ErrorCode } from "@cafe-loyalty/shared";
+import { apiMessage, apiText, ApiError, ERROR_CODES, type ApiText, type ErrorCode } from "@cafe-loyalty/shared";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 
@@ -10,7 +10,7 @@ export function parseInput<T extends z.ZodType>(schema: T, input: unknown): z.ou
   }
   throw new ApiError(
     "VALIDATION_FAILED",
-    "Some fields are missing or not valid. Check them and try again.",
+    apiText("Some fields are missing or not valid. Check them and try again."),
     result.error.issues.map((issue) => ({ path: issue.path.map(String).join("."), issue: issue.message })),
   );
 }
@@ -19,16 +19,16 @@ export function parseInput<T extends z.ZodType>(schema: T, input: unknown): z.ou
 export function rateLimited(reply: FastifyReply, retryAfterSeconds: number): ApiError {
   void reply.header("retry-after", String(retryAfterSeconds));
   const minutes = Math.ceil(retryAfterSeconds / 60);
-  return new ApiError("RATE_LIMITED", `Too many attempts. Wait ${String(minutes)} minute${minutes === 1 ? "" : "s"} and try again.`);
+  return new ApiError("RATE_LIMITED", minutes === 1 ? apiText("Too many attempts. Wait 1 minute and try again.") : apiMessage("Too many attempts. Wait {n} minutes and try again.", { n: minutes }));
 }
 
 /** Envelopes for errors Fastify raises itself (unparseable JSON, oversized bodies, unsupported content types). */
-const FRAMEWORK_ERRORS: Readonly<Partial<Record<number, { code: ErrorCode; message: string }>>> = {
-  400: { code: "VALIDATION_FAILED", message: "The request could not be read. Reload the page and try again." },
-  404: { code: "NOT_FOUND", message: "No such page or API route. Check the address." },
-  413: { code: "PAYLOAD_TOO_LARGE", message: "The request is too large. Send less at once and try again." },
-  415: { code: "UNSUPPORTED_MEDIA_TYPE", message: "Send the request as JSON." },
-  429: { code: "RATE_LIMITED", message: "Too many requests. Wait a minute and try again." },
+const FRAMEWORK_ERRORS: Readonly<Partial<Record<number, { code: ErrorCode; message: ApiText }>>> = {
+  400: { code: "VALIDATION_FAILED", message: apiText("The request could not be read. Reload the page and try again.") },
+  404: { code: "NOT_FOUND", message: apiText("No such page or API route. Check the address.") },
+  413: { code: "PAYLOAD_TOO_LARGE", message: apiText("The request is too large. Send less at once and try again.") },
+  415: { code: "UNSUPPORTED_MEDIA_TYPE", message: apiText("Send the request as JSON.") },
+  429: { code: "RATE_LIMITED", message: apiText("Too many requests. Wait a minute and try again.") },
 };
 
 /**
@@ -50,8 +50,8 @@ export function handleError(error: FastifyError | ApiError, request: FastifyRequ
   }
   if (status < 500) {
     request.log.warn({ status, frameworkCode: error.code }, "request rejected with an unmapped status");
-    return reply.code(400).send(new ApiError("VALIDATION_FAILED", "The request is not valid.").toEnvelope());
+    return reply.code(400).send(new ApiError("VALIDATION_FAILED", apiText("The request is not valid. Reload the page and try again.")).toEnvelope());
   }
   request.log.error({ err: error }, "request failed");
-  return reply.code(500).send(new ApiError("INTERNAL", "Something went wrong on our side. Try again in a moment.").toEnvelope());
+  return reply.code(500).send(new ApiError("INTERNAL", apiText("Something went wrong on our side. Try again in a moment.")).toEnvelope());
 }

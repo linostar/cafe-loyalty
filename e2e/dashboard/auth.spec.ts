@@ -32,6 +32,9 @@ test("signs in with the keyboard alone", async ({ page }) => {
   await mockApi(page, { "GET /api/auth/session": reply(401, UNAUTHENTICATED), "POST /api/auth/login": reply(200, SESSION) });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  // The header's language switch comes first, then the form.
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "العربية" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Email")).toBeFocused();
   await page.keyboard.type("rana@example.com");

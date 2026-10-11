@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { apiMessage, apiText } from "./api-messages.js";
 import { MAX_CENTS } from "./money.js";
 
 /** A café's plan (AC 39): a suspended café's signup page enrols no one, while its counter still syncs. */
 export const CAFE_PLANS = ["pilot", "active", "suspended"] as const;
 export type CafePlan = (typeof CAFE_PLANS)[number];
-export const cafePlanSchema = z.enum(CAFE_PLANS, "Choose pilot, active or suspended.");
+export const cafePlanSchema = z.enum(CAFE_PLANS, apiText("Choose pilot, active or suspended."));
 
 /** How a café paid, recorded by hand (no payment provider: plan Deferred Ideas). */
 export const PAYMENT_METHODS = ["cash", "whish", "omt", "bank_transfer", "other"] as const;
@@ -14,7 +15,7 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export const ADMIN_PAYMENTS_SHOWN = 10;
 
 const timestamp = z.iso.datetime({ offset: false });
-const day = z.iso.date("Enter the date as YYYY-MM-DD.");
+const day = z.iso.date(apiText("Enter the date as YYYY-MM-DD."));
 
 /** The signed-in operator (the person who runs the service). */
 export const operatorSessionSchema = z.object({ operator: z.object({ id: z.uuid(), email: z.string() }) });
@@ -24,14 +25,14 @@ export const operatorSessionSchema = z.object({ operator: z.object({ id: z.uuid(
  * (at least one cent), the day it was paid, how, and an optional receipt or transfer number.
  */
 export const paymentRecordSchema = z.object({
-  paymentId: z.uuid("Reload the page and record the payment again."),
-  amountCents: z.number("Enter an amount.").int("Use whole cents.").min(1, "Use an amount over $0.").max(MAX_CENTS, "Use an amount up to $1,000,000."),
+  paymentId: z.uuid(apiText("Reload the page and record the payment again.")),
+  amountCents: z.number(apiText("Enter an amount.")).int(apiText("Use whole cents.")).min(1, apiText("Use an amount over $0.")).max(MAX_CENTS, apiText("Use an amount up to $1,000,000.")),
   paidOn: day,
-  method: z.enum(PAYMENT_METHODS, "Choose how the café paid."),
+  method: z.enum(PAYMENT_METHODS, apiText("Choose how the café paid.")),
   reference: z
     .string()
     .trim()
-    .max(100, "Use at most 100 characters.")
+    .max(100, apiMessage("Use at most {max} characters.", { max: 100 }))
     .transform((value) => (value === "" ? null : value))
     .nullable()
     .default(null),

@@ -1,26 +1,48 @@
-import { feedbackInboxSchema, feedbackReadSchema, type FeedbackItem } from "@cafe-loyalty/shared";
+import { feedbackInboxSchema, feedbackReadSchema, plural, type FeedbackItem } from "@cafe-loyalty/shared";
 import { apiRequest } from "./api.js";
 import { useState } from "react";
 import { FormError, Notice, useSubmit } from "./forms.js";
+import { dateFormat, useLang, useT } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
+const AR = {
+  New: "جديدة",
+  "Received {received}, about a visit in the hour from {hour}": "وصلت {received}، عن زيارة في الساعة التي تبدأ {hour}",
+  "Mark the message of {received} as read": "تعليم رسالة {received} كمقروءة",
+  Inbox: "الوارد",
+  "About two hours after a visit, the customer's card links to a page where they can send you a private message, and every customer is offered your Google review link there too. Messages carry no name or number, so you cannot reply here.":
+    "بعد نحو ساعتين من الزيارة، تربط بطاقة الزبون بصفحة يمكنه فيها إرسال رسالة خاصة إليك، ويُعرض هناك أيضاً على كل زبون رابط تقييمك على Google. لا تحمل الرسائل اسماً ولا رقماً، لذا لا يمكنك الرد هنا.",
+  "No unread messages.": "لا رسائل غير مقروءة.",
+  "No messages yet. What customers write about their visits arrives here.": "لا رسائل بعد. ما يكتبه الزبائن عن زياراتهم يصل إلى هنا.",
+  "The message of {received} is marked as read.": "عُلّمت رسالة {received} كمقروءة.",
+  "Older messages are not shown.": "الرسائل الأقدم غير معروضة.",
+} as const;
+
+const UNREAD = {
+  en: { one: "{n} unread message.", other: "{n} unread messages." },
+  ar: { one: "رسالة واحدة غير مقروءة.", two: "رسالتان غير مقروءتين.", few: "{n} رسائل غير مقروءة.", other: "{n} رسالة غير مقروءة." },
+};
 // To the second, so two messages received in the same minute still get different button names.
-const timeFormat = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "medium" });
-const hourFormat = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
+const TIME_OPTIONS = { dateStyle: "medium", timeStyle: "medium" } as const;
 // The customer's own words, in the language they wrote them: Arabic (the feedback page's default) reads right to left.
 const ARABIC_FIRST = /^\P{L}*\p{Script=Arabic}/u;
 
 function Message({ item, pending, onRead }: { item: FeedbackItem; pending: boolean; onRead: () => void }) {
-  const received = timeFormat.format(new Date(item.receivedAt));
+  const t = useT(AR);
+  const lang = useLang();
+  const received = dateFormat(lang, TIME_OPTIONS).format(new Date(item.receivedAt));
   return (
     <li className="feedback-item">
       <p className="feedback-meta">
         {item.read ? null : (
           <>
-            <span className="badge badge-accent">New</span>{" "}
+            <span className="badge badge-accent">{t("New")}</span>{" "}
           </>
         )}
-        Received {received}, about a visit in the hour from {hourFormat.format(new Date(item.visitedAt))}
+        {t("Received {received}, about a visit in the hour from {hour}", {
+          received,
+          hour: dateFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.visitedAt)),
+        })}
       </p>
       <p className="feedback-message" dir="auto" lang={ARABIC_FIRST.test(item.message) ? "ar" : undefined}>
         {item.message}
@@ -28,7 +50,7 @@ function Message({ item, pending, onRead }: { item: FeedbackItem; pending: boole
       {item.read ? null : (
         <div className="actions">
           <button type="button" disabled={pending} onClick={onRead}>
-            Mark the message of {received} as read
+            {t("Mark the message of {received} as read", { received })}
           </button>
         </div>
       )}
@@ -38,6 +60,8 @@ function Message({ item, pending, onRead }: { item: FeedbackItem; pending: boole
 
 /** `/inbox`: customers' private feedback about their visits (AC 37), newest first. */
 export function InboxPage() {
+  const t = useT(AR);
+  const lang = useLang();
   const [state, setData] = useApiData("/api/feedback", feedbackInboxSchema);
   const { pending, error, submit } = useSubmit();
   const [notice, setNotice] = useState<string | null>(null);
@@ -48,17 +72,18 @@ export function InboxPage() {
   return (
     <section aria-labelledby="inbox-page-title">
       <h2 id="inbox-page-title" tabIndex={-1} data-focus-after-change>
-        Inbox
+        {t("Inbox")}
       </h2>
       <p className="page-intro">
-        About two hours after a visit, the customer&apos;s card links to a page where they can send you a private message, and every customer is offered
-        your Google review link there too. Messages carry no name or number, so you cannot reply here.
+        {t(
+          "About two hours after a visit, the customer's card links to a page where they can send you a private message, and every customer is offered your Google review link there too. Messages carry no name or number, so you cannot reply here.",
+        )}
       </p>
-      <p>{unread === 0 ? "No unread messages." : `${String(unread)} unread ${unread === 1 ? "message" : "messages"}.`}</p>
+      <p>{unread === 0 ? t("No unread messages.") : plural(lang, UNREAD, unread)}</p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />
       {items.length === 0 ? (
-        <p className="empty">No messages yet. What customers write about their visits arrives here.</p>
+        <p className="empty">{t("No messages yet. What customers write about their visits arrives here.")}</p>
       ) : (
         <ul className="items">
           {items.map((item) => (
@@ -72,7 +97,7 @@ export function InboxPage() {
                   if (result.ok) {
                     // The button goes with the unread state, so focus moves to the heading, which stays.
                     document.getElementById("inbox-page-title")?.focus();
-                    setNotice(`The message of ${timeFormat.format(new Date(item.receivedAt))} is marked as read.`);
+                    setNotice(t("The message of {received} is marked as read.", { received: dateFormat(lang, TIME_OPTIONS).format(new Date(item.receivedAt)) }));
                     setData({ items: items.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry)), unread: Math.max(0, unread - 1), more });
                   }
                 });
@@ -81,7 +106,7 @@ export function InboxPage() {
           ))}
         </ul>
       )}
-      {more ? <p className="hint">Older messages are not shown.</p> : null}
+      {more ? <p className="hint">{t("Older messages are not shown.")}</p> : null}
     </section>
   );
 }

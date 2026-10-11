@@ -1,3 +1,4 @@
+import { toLatinDigits } from "@cafe-loyalty/shared";
 import { fromBase64Url, toBase64Url } from "./device.js";
 import { recordEvent } from "./sync.js";
 import { countPinAttempt, deleteLockout, type StaffEntry } from "./storage.js";
@@ -15,9 +16,12 @@ export function lockoutDelayMs(failures: number): number {
   return Math.min(FIRST_LOCKOUT_MS * 2 ** (failures - PIN_FREE_ATTEMPTS - 1), LONGEST_LOCKOUT_MS);
 }
 
-/** Whether `pin` matches the barista's PBKDF2-SHA256 hash, derived as the server derived it (AC 19). */
+/**
+ * Whether `pin` matches the barista's PBKDF2-SHA256 hash, derived as the server derived it (AC 19). Arabic-Indic and
+ * Persian digits count as the same digits, so a PIN typed on an Arabic keypad matches.
+ */
 export async function pinMatches(staff: StaffEntry, pin: string): Promise<boolean> {
-  const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveBits"]);
+  const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(toLatinDigits(pin)), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: fromBase64Url(staff.pinSalt), iterations: staff.pinIterations }, material, 256);
   return toBase64Url(bits) === staff.pinHash;
 }

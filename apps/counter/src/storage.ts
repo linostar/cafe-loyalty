@@ -5,7 +5,10 @@
  * queue is empty (AC 29), but every other store survives an update.
  */
 
-import type { DeviceCatalog } from "@cafe-loyalty/shared";
+import { apiText, type DeviceCatalog } from "@cafe-loyalty/shared";
+
+/** Why storage could not open while another tab holds it: a cause the barista can fix, so it is shown as it is. */
+export const STORAGE_BUSY = apiText("This phone's storage is busy in another tab. Close the other counter tabs and reload.");
 
 const DB_NAME = "cafe-loyalty-counter";
 const DB_VERSION = 1;
@@ -145,7 +148,7 @@ function database(): Promise<IDBDatabase> {
     };
     request.onblocked = () => {
       abandoned = true;
-      reject(new Error("This phone's storage is busy in another tab. Close the other counter tabs and reload."));
+      reject(new Error(STORAGE_BUSY));
     };
   }).catch((error: unknown) => {
     opening = undefined;

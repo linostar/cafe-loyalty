@@ -127,6 +127,23 @@
   outline-color: var(--color-focus-inverse);
 }
 
+/* The switch to the other language: a quiet button, outlined in the top bar's own colours there. */
+.lang-switch {
+  flex: none;
+  padding-inline: var(--space-3);
+}
+
+.topbar .lang-switch {
+  border-color: var(--color-on-espresso-muted);
+  background: transparent;
+  color: var(--color-on-espresso);
+}
+
+.topbar .lang-switch:hover {
+  border-color: var(--color-on-espresso);
+  background: transparent;
+}
+
 .app-footer {
   padding: var(--space-4);
   color: var(--color-text-muted);

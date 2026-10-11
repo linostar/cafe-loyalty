@@ -12,6 +12,8 @@ import {
   type SyncResultCode,
   type VisitLine,
   type VisitRecordedPayload,
+  apiMessage,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -351,7 +353,7 @@ export interface StampingRoutesOptions {
   releaseBuiltAt: Date;
 }
 
-const removedStaff = () => new ApiError("FORBIDDEN", "This barista was removed by the owner. Switch barista and try again.");
+const removedStaff = () => new ApiError("FORBIDDEN", apiText("This barista was removed by the owner. Switch barista and try again."));
 
 /** The device's catalog (AC 32) and online-only reward redemption (AC 31). */
 export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOptions, done: (error?: Error) => void): void {
@@ -422,7 +424,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           .executeTakeFirst();
         if (earlier !== undefined) {
           if (card.status !== "found" || earlier.card_id !== card.cardId) {
-            throw new ApiError("CONFLICT", "This reward was already given for another card. Start a new redemption.");
+            throw new ApiError("CONFLICT", apiText("This reward was already given for another card. Start a new redemption."));
           }
           return { redemption: { stampsUsed: earlier.stamps_used, stampsLeft: earlier.stamps_left, ...names }, created: false };
         }
@@ -432,7 +434,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
         // Locked and read here, so a revocation committed since the access check cannot slip through (AC 21).
         const deviceRow = await trx.selectFrom("devices").select("revoked_at").where("id", "=", device.deviceId).forShare().executeTakeFirstOrThrow();
         if (deviceRow.revoked_at !== null) {
-          throw new ApiError("DEVICE_REVOKED", "The owner removed this device. Pair it again from the owner's dashboard to use it.");
+          throw new ApiError("DEVICE_REVOKED", apiText("The owner removed this device. Pair it again from the owner's dashboard to use it."));
         }
         const staff = await trx.selectFrom("staff").select("revoked_at").where("id", "=", body.staffId).forShare().executeTakeFirst();
         if (staff?.revoked_at !== null) {
@@ -440,11 +442,11 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
         }
         if (card.status === "refused") {
           throw card.code === "CARD_REPLACED"
-            ? new ApiError("NOT_FOUND", "This card was moved to another phone. Ask the customer to show the card on their new phone.")
-            : new ApiError("NOT_FOUND", "This is not a loyalty card of this café. Scan the customer's card again.");
+            ? new ApiError("NOT_FOUND", apiText("This card was moved to another phone. Ask the customer to show the card on their new phone."))
+            : new ApiError("NOT_FOUND", apiText("This is not a loyalty card of this café. Scan the customer's card again."));
         }
         if (program === undefined) {
-          throw new ApiError("CONFLICT", "This café has no reward yet. Ask the owner to set the loyalty program on the dashboard.");
+          throw new ApiError("CONFLICT", apiText("This café has no reward yet. Ask the owner to set the loyalty program on the dashboard."));
         }
         const updated = await trx
           .updateTable("cards")
@@ -467,7 +469,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
           const current = await trx.selectFrom("cards").select("stamps").where("id", "=", card.cardId).executeTakeFirstOrThrow();
           throw new ApiError(
             "CONFLICT",
-            `This card has ${String(current.stamps)} of the ${String(program.stamps_required)} stamps a reward needs. Add stamps first.`,
+            apiMessage("This card has {stamps} of the {required} stamps a reward needs. Add stamps first.", { stamps: current.stamps, required: program.stamps_required }),
           );
         }
         const created = await trx
