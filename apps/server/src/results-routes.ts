@@ -47,7 +47,7 @@ export function resultsRoutes(app: FastifyInstance, options: ResultsRoutesOption
            WHERE visits.outcome NOT IN ('held', 'discarded')
              AND visits.occurred_at >= bounds.window_from AND visits.occurred_at < bounds.window_to
         ), offer_lines AS (
-          SELECT visit_items.visit_id, visit_items.win_back, visit_items.unit_discount_cents * visit_items.quantity AS discount
+          SELECT visit_items.visit_id, visit_items.win_back, visit_items.unit_discount_cents::bigint * visit_items.quantity AS discount
             FROM visit_items JOIN member_visits ON member_visits.id = visit_items.visit_id
            WHERE visit_items.win_back OR visit_items.campaign_id IS NOT NULL
         ), offer_visits AS (

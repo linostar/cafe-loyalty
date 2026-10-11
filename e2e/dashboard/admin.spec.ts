@@ -56,7 +56,7 @@ test("the operator signs in, suspends a café, records a payment and signs out (
   await expect(card.getByText("Its signup page enrols no one; its counter still records and syncs visits.")).toBeVisible();
   await card.getByRole("button", { name: "Save plan" }).click();
   await expect(page.getByRole("status")).toHaveText("Café Najjar is now on the suspended plan.");
-  await expect(card.getByRole("heading", { name: /Café Najjar/ })).toContainText("Suspended");
+  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
 
   // An amount the form cannot read is caught before anything is sent.
   await card.getByLabel("Amount (USD)").fill("twenty");
@@ -77,8 +77,89 @@ test("the operator signs in, suspends a café, records a payment and signs out (
   expect(sent).toEqual([
     { email: "operator@example.com", password: "fake-operator-password" },
     { plan: "suspended" },
-    { amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042" },
+    { paymentId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown, amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042" },
   ]);
+});
+
+test("sends a payment again with the same id after a failed try, and a new id for the next payment", async ({ page }) => {
+  const ids: string[] = [];
+  let calls = 0;
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/payments`]: async (route) => {
+      calls += 1;
+      ids.push((route.request().postDataJSON() as { paymentId: string }).paymentId);
+      // The first try's answer is lost.
+      await (calls === 1 ? route.abort("failed") : route.fulfill({ status: 201, json: cafe({ paidCents: 2500 }) }));
+    },
+  });
+  await page.goto("/admin");
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByLabel("Amount (USD)").fill("25");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await expect(card.getByRole("alert")).toHaveText("Could not reach the server. Check your connection and try again.");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByRole("status")).toContainText("Recorded $25.00 from Café Najjar");
+  await card.getByLabel("Amount (USD)").fill("10");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await expect.poll(() => ids.length).toBe(3);
+  expect(ids[1]).toBe(ids[0]);
+  expect(ids[2]).not.toBe(ids[0]);
+});
+
+test("shows a refused payment's reason by its field, and a failed sign-out", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/payments`]: reply(400, {
+      code: "VALIDATION_FAILED",
+      message: "Use the day the café paid, from 2026 up to today.",
+      retryable: false,
+      details: [{ path: "paidOn", issue: "Use the day the café paid, from 2026 up to today." }],
+    }),
+    "POST /api/admin/logout": reply(503, { code: "SERVICE_UNAVAILABLE", message: "The server is restarting. Try again in a minute.", retryable: true }),
+  });
+  await page.goto("/admin");
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByLabel("Amount (USD)").fill("25");
+  await card.getByLabel("Paid on").fill("2025-06-01");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await expect(card.getByLabel("Paid on")).toHaveAttribute("aria-invalid", "true");
+  await expect(card.getByLabel("Paid on")).toHaveAccessibleDescription("Use the day the café paid, from 2026 up to today.");
+  await expect(card.getByLabel("Amount (USD)")).toHaveValue("25");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("region", { name: "Sign out" }).getByRole("alert")).toHaveText("The server is restarting. Try again in a minute.");
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+});
+
+test("returns to the operator sign-in when the session ends while working", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(401, { code: "UNAUTHENTICATED", message: "Your operator session has ended. Sign in to the admin screen again.", retryable: false }),
+  });
+  await page.goto("/admin");
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByLabel("Active").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Your operator session has ended. Sign in to the admin screen again.");
+});
+
+test("offers to try again when the session cannot be checked", async ({ page }) => {
+  let checks = 0;
+  await mockApi(page, {
+    "GET /api/admin/session": async (route) => {
+      checks += 1;
+      await (checks === 1 ? route.abort("failed") : route.fulfill({ json: OPERATOR }));
+    },
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+  });
+  await page.goto("/admin");
+  await expect(page.getByRole("alert")).toHaveText("Could not reach the server. Check your connection and try again.");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
 });
 
 test("refuses an owner on the admin screen with the operator sign-in", async ({ page }) => {

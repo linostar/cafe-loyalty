@@ -206,11 +206,38 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
       throw new ApiError("VALIDATION_FAILED", "Use the day the café paid, from 2026 up to today.", [{ path: "paidOn", issue: "Use the day the café paid, from 2026 up to today." }]);
     }
     const cafe = await withListedCafe(id, async (trx) => {
+      // Payments cannot be removed, so a form sent again (its response lost) must not record a second one.
       const payment = await trx
         .insertInto("cafe_payments")
-        .values({ cafe_id: id, amount_cents: body.amountCents, paid_on: body.paidOn, method: body.method, reference: body.reference, operator_id: operator.operatorId })
+        .values({
+          id: body.paymentId,
+          cafe_id: id,
+          amount_cents: body.amountCents,
+          paid_on: body.paidOn,
+          method: body.method,
+          reference: body.reference,
+          operator_id: operator.operatorId,
+        })
+        .onConflict((conflict) => conflict.column("id").doNothing())
         .returning("id")
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+      if (payment === undefined) {
+        const recorded = await trx
+          .selectFrom("cafe_payments")
+          .select(["amount_cents", sql<string>`to_char(paid_on, 'YYYY-MM-DD')`.as("paid_on"), "method", "reference"])
+          .where("id", "=", body.paymentId)
+          .executeTakeFirst();
+        // Undefined too when the id is another café's payment, which this café cannot see.
+        if (
+          recorded?.amount_cents !== body.amountCents ||
+          recorded.paid_on !== body.paidOn ||
+          recorded.method !== body.method ||
+          recorded.reference !== body.reference
+        ) {
+          throw new ApiError("CONFLICT", "This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one.");
+        }
+        return loadCafe(trx, id);
+      }
       await audit(trx, {
         cafeId: id,
         actorType: "operator",

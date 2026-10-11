@@ -19,7 +19,7 @@ afterAll(async () => {
   await db.cleanup();
 });
 
-const TOKEN_TABLES = ["owner_sessions", "password_reset_tokens", "owner_invites", "device_tokens", "pairing_codes", "customer_recovery_tokens"] as const;
+const TOKEN_TABLES = ["owner_sessions", "password_reset_tokens", "owner_invites", "device_tokens", "pairing_codes", "customer_recovery_tokens", "operator_sessions"] as const;
 
 /** A café with an owner and a device, and one expired and one live row of each of its credential tables. */
 async function cafeWithCredentials(): Promise<void> {
@@ -65,6 +65,20 @@ describe("purge_expired_credentials", () => {
     for (const expires of ["now() - interval '1 minute'", "now() + interval '1 hour'"]) {
       await admin.query(`INSERT INTO customer_recovery_tokens (email_lookup, token_hash, expires_at) VALUES ($1, $2, ${expires})`, [randomBytes(32), randomBytes(32)]);
     }
+    // An operator's sessions (no café): expired, live, and idle a minute either side of OPERATOR_SESSION_IDLE_TIMEOUT_SECONDS (2 hours).
+    const operatorId = randomUUID();
+    await admin.query("INSERT INTO operators (id, email, password_hash) VALUES ($1, $2, '$argon2id$fixture')", [operatorId, `${operatorId}@example.com`]);
+    for (const [expires, idle] of [
+      ["now() - interval '1 minute'", "0"],
+      ["now() + interval '1 hour'", "0"],
+      ["now() + interval '10 hours'", "7200 + 60"],
+      ["now() + interval '10 hours'", "7200 - 60"],
+    ] as const) {
+      await admin.query(
+        `INSERT INTO operator_sessions (operator_id, token_hash, expires_at, last_seen_at) VALUES ($1, $2, ${expires}, now() - make_interval(secs => ${idle}))`,
+        [operatorId, randomBytes(32)],
+      );
+    }
 
     // As the app role, with no café set: it sees none of these rows itself, expired or not, and the policies that let
     // the purge see expired rows are the owner role's alone.
@@ -85,7 +99,8 @@ describe("purge_expired_credentials", () => {
       device_tokens: 2,
       pairing_codes: 2,
       customer_recovery_tokens: 1,
+      operator_sessions: 2,
     });
-    expect(await counts()).toEqual({ owner_sessions: 4, password_reset_tokens: 2, owner_invites: 2, device_tokens: 2, pairing_codes: 2, customer_recovery_tokens: 1 });
+    expect(await counts()).toEqual({ owner_sessions: 4, password_reset_tokens: 2, owner_invites: 2, device_tokens: 2, pairing_codes: 2, customer_recovery_tokens: 1, operator_sessions: 2 });
   });
 });

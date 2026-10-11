@@ -71,6 +71,35 @@ CREATE POLICY operator_session_by_secret ON operator_sessions FOR SELECT TO cl_a
 CREATE POLICY operator_session_own ON operator_sessions TO cl_app
   USING (operator_id = current_operator_id()) WITH CHECK (operator_id = current_operator_id());
 
+-- The hourly purge (migration 0007) removes expired and idle operator sessions too, as it does owners' (idle: the
+-- server's OPERATOR_SESSION_IDLE_TIMEOUT_SECONDS, 2 hours).
+CREATE POLICY purge_expired ON operator_sessions FOR ALL TO cl_owner
+  USING (expires_at <= now() OR last_seen_at <= now() - make_interval(secs => 7200));
+
+CREATE OR REPLACE FUNCTION purge_expired_credentials()
+  RETURNS TABLE (table_name text, deleted bigint)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp
+  AS $$
+  DECLARE
+    n bigint;
+  BEGIN
+    DELETE FROM owner_sessions;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'owner_sessions'; deleted := n; RETURN NEXT;
+    DELETE FROM password_reset_tokens;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'password_reset_tokens'; deleted := n; RETURN NEXT;
+    DELETE FROM owner_invites;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'owner_invites'; deleted := n; RETURN NEXT;
+    DELETE FROM device_tokens;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'device_tokens'; deleted := n; RETURN NEXT;
+    DELETE FROM pairing_codes;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'pairing_codes'; deleted := n; RETURN NEXT;
+    DELETE FROM customer_recovery_tokens;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'customer_recovery_tokens'; deleted := n; RETURN NEXT;
+    DELETE FROM operator_sessions;
+    GET DIAGNOSTICS n = ROW_COUNT; table_name := 'operator_sessions'; deleted := n; RETURN NEXT;
+  END
+  $$;
+
 ALTER TABLE cafe_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cafe_payments FORCE ROW LEVEL SECURITY;
 CREATE POLICY cafe_isolation ON cafe_payments TO cl_app

@@ -11,7 +11,7 @@ import {
   type PaymentMethod,
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ApiRequestError, apiRequest, noContent } from "./api.js";
+import { ApiRequestError, apiRequest, isStale, noContent } from "./api.js";
 import { Field, FormError, Notice, useSubmit } from "./forms.js";
 import { parseUsdInput } from "./money-input.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
@@ -24,7 +24,13 @@ const PLAN_HINTS: Record<CafePlan, string> = {
 };
 const METHOD_LABELS: Record<PaymentMethod, string> = { cash: "Cash", whish: "Whish", omt: "OMT", bank_transfer: "Bank transfer", other: "Other" };
 const dayFormat = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" });
-const today = (): string => new Date().toISOString().slice(0, 10);
+/** The operator's own calendar day, YYYY-MM-DD (not UTC's, which is still yesterday after midnight in Beirut). */
+const today = (): string => {
+  const now = new Date();
+  return `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+/** Said after a control's visible name, so a screen reader's list of controls tells each café's apart. */
+const forCafe = (name: string, word = "for") => <span className="visually-hidden"> {`${word} ${name}`}</span>;
 
 function AdminLoginForm({ notice, onSignedIn }: { notice: string | null; onSignedIn: (session: OperatorSession) => void }) {
   const [email, setEmail] = useState("");
@@ -92,6 +98,7 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
       </fieldset>
       <button type="submit" disabled={pending || plan === cafe.plan}>
         {pending ? "Saving…" : "Save plan"}
+        {forCafe(cafe.name, "of")}
       </button>
     </form>
   );
@@ -102,10 +109,14 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   const [paidOn, setPaidOn] = useState(today);
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [reference, setReference] = useState("");
+  // Kept until the payment is recorded, so sending the form again after a lost response records it once.
+  const [paymentId, setPaymentId] = useState(() => crypto.randomUUID());
   const [problems, setProblems] = useState<Record<string, string>>({});
+  const titleId = `payment-title-${cafe.id}`;
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
     <form
+      aria-labelledby={titleId}
       onSubmit={(event) => {
         event.preventDefault();
         const amountCents = parseUsdInput(amount);
@@ -114,19 +125,26 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
           return;
         }
         setProblems({});
-        void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/payments`, adminCafeSchema, { amountCents, paidOn, method, reference })).then((result) => {
+        void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/payments`, adminCafeSchema, { paymentId, amountCents, paidOn, method, reference })).then((result) => {
           if (result.ok) {
             setAmount("");
             setReference("");
+            setPaymentId(crypto.randomUUID());
             onSaved(result.value, `Recorded ${formatUsd(amountCents, "en")} from ${cafe.name}, paid by ${METHOD_LABELS[method]} on ${dayFormat.format(new Date(paidOn))}.`);
+          } else if (isStale(result.error)) {
+            // Recorded already with other details (CONFLICT): what is in the form now is a new payment.
+            setPaymentId(crypto.randomUUID());
           }
         });
       }}
     >
-      <h4>Record a payment</h4>
+      <h4 id={titleId}>
+        Record a payment
+        {forCafe(cafe.name)}
+      </h4>
       <FormError message={error} />
       <Field
-        label="Amount (USD)"
+        label={<>Amount (USD){forCafe(cafe.name)}</>}
         name="amount"
         type="text"
         inputMode="decimal"
@@ -134,9 +152,12 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         onChange={setAmount}
         error={problems.amountCents ?? fieldErrors.amountCents}
       />
-      <Field label="Paid on" name="paidOn" type="date" value={paidOn} onChange={setPaidOn} error={fieldErrors.paidOn} />
+      <Field label={<>Paid on{forCafe(cafe.name)}</>} name="paidOn" type="date" value={paidOn} onChange={setPaidOn} error={fieldErrors.paidOn} />
       <fieldset>
-        <legend>Paid by</legend>
+        <legend>
+          Paid by
+          {forCafe(cafe.name)}
+        </legend>
         <div className="choices">
           {PAYMENT_METHODS.map((option) => (
             <label key={option}>
@@ -154,7 +175,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         </div>
       </fieldset>
       <Field
-        label="Reference"
+        label={<>Reference{forCafe(cafe.name)}</>}
         name="reference"
         type="text"
         value={reference}
@@ -166,6 +187,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
       />
       <button type="submit" disabled={pending}>
         {pending ? "Recording…" : "Record payment"}
+        {forCafe(cafe.name)}
       </button>
     </form>
   );
@@ -177,7 +199,8 @@ function CafeCard({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
     <li>
       <section aria-labelledby={titleId} className="card">
         <h3 id={titleId}>
-          {cafe.name} <span className={cafe.plan === "suspended" ? "badge badge-warning" : cafe.plan === "active" ? "badge badge-success" : "badge"}>{PLAN_LABELS[cafe.plan]}</span>
+          {cafe.name}
+          <span className="visually-hidden">, plan:</span> <span className={cafe.plan === "suspended" ? "badge badge-warning" : cafe.plan === "active" ? "badge badge-success" : "badge"}>{PLAN_LABELS[cafe.plan]}</span>
         </h3>
         <p className="hint">
           Created {dayFormat.format(new Date(cafe.createdAt))}. Paid in all: {formatUsd(cafe.paidCents, "en")}.

@@ -4,7 +4,8 @@ import { ApiRequestError } from "./api.js";
 import { SessionEndedContext } from "./session.js";
 
 interface FieldProps {
-  label: string;
+  /** Text, or text with a visually hidden part that tells repeated fields apart. */
+  label: ReactNode;
   name: string;
   type: "email" | "password" | "text" | "url" | "date";
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";

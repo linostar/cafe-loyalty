@@ -19,8 +19,12 @@ const day = z.iso.date("Enter the date as YYYY-MM-DD.");
 /** The signed-in operator (the person who runs the service). */
 export const operatorSessionSchema = z.object({ operator: z.object({ id: z.uuid(), email: z.string() }) });
 
-/** Recording a payment: its amount (at least one cent), the day it was paid, how, and an optional receipt or transfer number. */
+/**
+ * Recording a payment: its id (made by the form, so sending it again after a lost response records it once), its amount
+ * (at least one cent), the day it was paid, how, and an optional receipt or transfer number.
+ */
 export const paymentRecordSchema = z.object({
+  paymentId: z.uuid("Reload the page and record the payment again."),
   amountCents: z.number("Enter an amount.").int("Use whole cents.").min(1, "Use an amount over $0.").max(MAX_CENTS, "Use an amount up to $1,000,000."),
   paidOn: day,
   method: z.enum(PAYMENT_METHODS, "Choose how the café paid."),

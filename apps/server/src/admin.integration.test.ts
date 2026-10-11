@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
+import { hashToken } from "./credentials.js";
 import { setOperatorPassword } from "./operators.js";
 import { signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
 
@@ -87,6 +88,51 @@ describe("operator accounts (AC 39)", () => {
     expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: replaced.password } })).statusCode).toBe(200);
   });
 
+  it("end after 2 hours without a request or 12 hours after sign-in, and stay alive while used", async () => {
+    const app = await adminApp();
+    const age = (column: "last_seen_at" | "expires_at", interval: string) =>
+      context.admin.query(`UPDATE app.operator_sessions SET ${column} = now() ${interval} WHERE token_hash = $1`, [hashToken(app.operator)]);
+    // Just under the idle limit: still signed in, and the request counts as activity.
+    await age("last_seen_at", "- interval '1 hour 59 minutes'");
+    expect((await app.asOperator("GET", "/api/admin/session")).statusCode).toBe(200);
+    const { rows } = await context.admin.query<{ idle: number }>("SELECT extract(epoch FROM now() - last_seen_at)::int AS idle FROM app.operator_sessions WHERE token_hash = $1", [
+      hashToken(app.operator),
+    ]);
+    expect(rows[0]?.idle).toBeLessThan(60);
+    await age("last_seen_at", "- interval '2 hours 1 minute'");
+    const idle = await app.asOperator("GET", "/api/admin/session");
+    expect(idle.statusCode).toBe(401);
+    expect(String(idle.headers["set-cookie"])).toContain("__Host-cl_operator=; ");
+
+    const fresh = await adminApp();
+    // Sign-in sets the 12-hour end, on the session and on the cookie.
+    const { rows: lifetimes } = await context.admin.query<{ hours: number }>(
+      "SELECT round(extract(epoch FROM expires_at - created_at) / 3600)::int AS hours FROM app.operator_sessions WHERE token_hash = $1",
+      [hashToken(fresh.operator)],
+    );
+    expect(lifetimes).toEqual([{ hours: 12 }]);
+    const signIn = await fresh.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: fresh.email, password: fresh.password } });
+    expect(String(signIn.headers["set-cookie"])).toContain("Max-Age=43200");
+    await context.admin.query("UPDATE app.operator_sessions SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [hashToken(fresh.operator)]);
+    expect((await fresh.asOperator("GET", "/api/admin/session")).statusCode).toBe(401);
+  });
+
+  it("limit failed sign-ins per account and address, without counting the right password", async () => {
+    const app = await adminApp();
+    const login = (password: string) => app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password }, remoteAddress: "198.51.100.9" });
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      expect((await login("not the password")).statusCode).toBe(401);
+    }
+    // A right password is refunded, so it does not use up the fifth try.
+    expect((await login(app.password)).statusCode).toBe(200);
+    expect((await login("not the password")).statusCode).toBe(401);
+    const blocked = await login(app.password);
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.headers["retry-after"]).toBeDefined();
+    // Another address is not blocked by this one.
+    expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: app.password }, remoteAddress: "198.51.100.10" })).statusCode).toBe(200);
+  });
+
   it("answer 401 without an operator session, and 403 to an owner or a device, on every operator route", async () => {
     const app = await adminApp();
     const operatorRoutes = app.routes.filter((route) => route.access === "operator" && route.method !== "HEAD");
@@ -114,9 +160,9 @@ describe("the admin screen (AC 39)", () => {
     expect(active.json()).toMatchObject({ id: app.owner.cafeId, plan: "active" });
     expect((await app.asOperator("PATCH", `/api/admin/cafes/${app.owner.cafeId}`, { plan: "free" })).statusCode).toBe(400);
 
-    const paid = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, { amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: " W-1042 " });
+    const paid = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, { paymentId: randomUUID(), amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: " W-1042 " });
     expect(paid.statusCode).toBe(201);
-    await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, { amountCents: 1000, paidOn: "2026-10-05", method: "cash" });
+    await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, { paymentId: randomUUID(), amountCents: 1000, paidOn: "2026-10-05", method: "cash" });
     expect((await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: { id: string }[] }>().cafes.find((cafe) => cafe.id === app.owner.cafeId)).toMatchObject({
       plan: "active",
       paidCents: 3500,
@@ -132,15 +178,43 @@ describe("the admin screen (AC 39)", () => {
       { amountCents: 100, paidOn: "2025-12-31", method: "cash" },
       { amountCents: 100, paidOn: "2026-10-01", method: "card" },
     ]) {
-      expect((await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, wrong)).statusCode).toBe(400);
+      expect((await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, { paymentId: randomUUID(), ...wrong })).statusCode).toBe(400);
     }
     expect((await app.asOperator("PATCH", `/api/admin/cafes/${randomUUID()}`, { plan: "active" })).statusCode).toBe(404);
-    expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/payments`, { amountCents: 100, paidOn: "2026-10-01", method: "cash" })).statusCode).toBe(404);
+    expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/payments`, { paymentId: randomUUID(), amountCents: 100, paidOn: "2026-10-01", method: "cash" })).statusCode).toBe(404);
 
     const actions = await auditActions(app.owner.cafeId);
     expect(actions.filter((action) => action === "cafe.plan_changed" || action === "cafe.payment_recorded")).toEqual(["cafe.plan_changed", "cafe.payment_recorded", "cafe.payment_recorded"]);
-    const { rows } = await context.admin.query<{ actor_type: string; changes: unknown }>("SELECT actor_type, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'cafe.plan_changed'", [app.owner.cafeId]);
-    expect(rows).toEqual([{ actor_type: "operator", changes: { from: "pilot", to: "active" } }]);
+    const { rows } = await context.admin.query<{ action: string; actor_type: string; actor_id: string; changes: unknown }>(
+      "SELECT action, actor_type, actor_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action IN ('cafe.plan_changed', 'cafe.payment_recorded') ORDER BY id",
+      [app.owner.cafeId],
+    );
+    const operatorId = (await app.asOperator("GET", "/api/admin/session")).json<{ operator: { id: string } }>().operator.id;
+    // The payment's reference is the operator's free text, so it stays out of the audit log.
+    expect(rows).toEqual([
+      { action: "cafe.plan_changed", actor_type: "operator", actor_id: operatorId, changes: { from: "pilot", to: "active" } },
+      { action: "cafe.payment_recorded", actor_type: "operator", actor_id: operatorId, changes: { amountCents: 2500, paidOn: "2026-10-01", method: "whish" } },
+      { action: "cafe.payment_recorded", actor_type: "operator", actor_id: operatorId, changes: { amountCents: 1000, paidOn: "2026-10-05", method: "cash" } },
+    ]);
+    // The same plan again changes nothing and writes no entry.
+    expect((await app.asOperator("PATCH", `/api/admin/cafes/${app.owner.cafeId}`, { plan: "active" })).json()).toMatchObject({ plan: "active" });
+    expect((await auditActions(app.owner.cafeId)).filter((action) => action === "cafe.plan_changed")).toHaveLength(1);
+  });
+
+  it("records a payment sent again (its response lost) once, and refuses the same id with other details", async () => {
+    const app = await adminApp();
+    const payment = { paymentId: randomUUID(), amountCents: 2500, paidOn: "2026-10-01", method: "cash" };
+    const first = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, payment);
+    const again = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, payment);
+    expect([first.statusCode, again.statusCode]).toEqual([201, 201]);
+    expect(again.json()).toMatchObject({ paidCents: 2500, payments: [{ id: payment.paymentId, amountCents: 2500 }] });
+    const changed = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/payments`, { ...payment, amountCents: 3000 });
+    expect(changed.statusCode).toBe(409);
+    expect(changed.json()).toMatchObject({ code: "CONFLICT" });
+    // Another café never sees, nor collides silently with, this café's payment.
+    const other = await signUp(app.app);
+    expect((await app.asOperator("POST", `/api/admin/cafes/${other.cafeId}/payments`, payment)).statusCode).toBe(409);
+    expect((await auditActions(app.owner.cafeId)).filter((action) => action === "cafe.payment_recorded")).toHaveLength(1);
   });
 
   it("stops a suspended café enrolling customers while its counter still syncs, and tells its owner", async () => {
