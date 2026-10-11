@@ -19,6 +19,8 @@ readonly DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 # Caddy runs from its official image (multi-arch index digest); bump both together to upgrade it.
 readonly CADDY_IMAGE=caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
 readonly EDGE_DIR=$OPT_DIR/edge
+# Settings of the backup scripts and the failure alert (backup.conf), and the off-site remote's rclone.conf.
+readonly CONF_DIR=/etc/$APP
 # Settings generated per environment, which must never be the same in production and staging.
 readonly GENERATED_SECRETS=(POSTGRES_PASSWORD MIGRATOR_PASSWORD APP_PASSWORD PHONE_LOOKUP_PEPPER PHONE_ENCRYPTION_KEYS CARD_QR_KEYS)
 # Settings the operator fills in per environment; the same value in both is refused, like a generated secret.
@@ -71,7 +73,8 @@ check_input() {
   [[ $ID == ubuntu ]] || fail "this script supports Ubuntu only."
 
   local missing=() name
-  for name in DEPLOY_USER DEPLOY_SSH_PUBLIC_KEY {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN; do
+  for name in DEPLOY_USER DEPLOY_SSH_PUBLIC_KEY {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN BACKUP_AGE_RECIPIENT \
+    BACKUP_REMOTE ALERT_URL; do
     [[ -n ${!name:-} ]] || missing+=("$name")
   done
   ((${#missing[@]} == 0)) || fail "set ${missing[*]} (see deploy/provision.conf.example)."
@@ -82,6 +85,14 @@ check_input() {
   [[ $DEPLOY_SSH_PUBLIC_KEY != *$'\n'* ]] || fail "$key_help"
   ssh-keygen -l -f - <<<"$DEPLOY_SSH_PUBLIC_KEY" >/dev/null 2>&1 || fail "$key_help"
   check_domains
+  # Written to backup.conf and alert.curlrc: plain values only (no quotes, backslashes or spaces).
+  [[ $BACKUP_AGE_RECIPIENT =~ ^age1[02-9ac-hj-np-z]{58}$ ]] ||
+    fail "BACKUP_AGE_RECIPIENT must be an age public key (age1…), from age-keygen on a machine other than this VPS."
+  [[ $BACKUP_REMOTE =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_./-]*$ ]] ||
+    fail "BACKUP_REMOTE must be an rclone remote and path, such as offsite:cafe-loyalty-backups."
+  local url_pattern='^https://[A-Za-z0-9._~:/?#@!&+,;=%-]+$'
+  [[ $ALERT_URL =~ $url_pattern ]] ||
+    fail "ALERT_URL must be an https:// address that takes a POST with a plain-text body, such as an ntfy topic."
 
   # Password logins end below, so whoever runs this must already be able to log in with a key.
   local admin=${SUDO_USER:-root} admin_home
@@ -105,7 +116,7 @@ check_domains() {
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -q
-  apt-get install -yq ca-certificates curl gnupg openssl ufw unattended-upgrades
+  apt-get install -yq age ca-certificates curl gnupg openssl rclone ufw unattended-upgrades
   install -d -m 0755 /etc/apt/keyrings
   local arch codename=$VERSION_CODENAME
   arch=$(dpkg --print-architecture)
@@ -393,6 +404,9 @@ report_unset() {
     done
     ((${#unset[@]} == 0)) || log "$env: fill in ${unset[*]} in $SRV_DIR/$env/app.env (as root)."
   done
+  local remote=${BACKUP_REMOTE%%:*}
+  rclone --config "$CONF_DIR/rclone.conf" listremotes 2>/dev/null | grep -Fx "$remote:" >/dev/null ||
+    log "backups: add the rclone remote $remote with rclone config --config $CONF_DIR/rclone.conf (as root)."
 }
 
 # The Caddy configuration for every environment, on stdout.
@@ -580,6 +594,19 @@ install_scripts() {
   done
 }
 
+configure_backups() {
+  install -d -m 0755 "$CONF_DIR"
+  age -r "$BACKUP_AGE_RECIPIENT" </dev/null >/dev/null 2>&1 || fail "age does not accept BACKUP_AGE_RECIPIENT as a recipient."
+  put_file "$CONF_DIR/backup.conf" 600 <<EOF || true
+# Written by deploy/provision.sh from provision.conf; change it there. The age identity (private key) that decrypts the
+# off-site backups must never be on this VPS.
+BACKUP_AGE_RECIPIENT=$BACKUP_AGE_RECIPIENT
+BACKUP_REMOTE=$BACKUP_REMOTE
+EOF
+  # The failure alert's address (an ntfy topic is a secret), as a curl config file.
+  put_file "$CONF_DIR/alert.curlrc" 600 <<<"url = \"$ALERT_URL\"" || true
+}
+
 configure_timers() {
   local changed=0
   put_file /etc/systemd/system/$APP-backup@.service 644 <<EOF && changed=1
@@ -589,6 +616,7 @@ Description=Cafe Loyalty backup (%i)
 ConditionFileIsExecutable=$BIN_DIR/backup.sh
 Requires=docker.service
 After=docker.service
+OnFailure=$APP-alert@%n.service
 
 [Service]
 Type=oneshot
@@ -613,6 +641,7 @@ Description=Cafe Loyalty restore test (%i)
 ConditionFileIsExecutable=$BIN_DIR/restore-test.sh
 Requires=docker.service
 After=docker.service
+OnFailure=$APP-alert@%n.service
 
 [Service]
 Type=oneshot
@@ -629,6 +658,16 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
+EOF
+  # Started by a failed backup or restore test (OnFailure above), with the failed unit as its instance.
+  put_file /etc/systemd/system/$APP-alert@.service 644 <<EOF && changed=1
+[Unit]
+Description=Cafe Loyalty failure alert (%i)
+
+[Service]
+Type=oneshot
+# The address from a root-only file, never in curl's arguments, which every local user can read.
+ExecStart=/usr/bin/curl -fsS -m 30 --retry 3 -o /dev/null -K $CONF_DIR/alert.curlrc --data-binary "%i failed on %H; see journalctl -u %i"
 EOF
   ((changed == 0)) || systemctl daemon-reload
   local env
@@ -652,6 +691,7 @@ main() {
   check_environments_apart
   configure_caddy
   install_scripts
+  configure_backups
   configure_timers
   report_unset
   log "done."
