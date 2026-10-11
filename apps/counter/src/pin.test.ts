@@ -30,6 +30,13 @@ describe("attemptPin", () => {
     expect(await pinMatches(rami, "482914")).toBe(false);
   });
 
+  it("matches a PIN typed in Arabic-Indic or Persian digits", async () => {
+    const rami = await staffEntry(STAFF_ID, "Rami", "482913");
+    expect(await pinMatches(rami, "٤٨٢٩١٣")).toBe(true);
+    expect(await pinMatches(rami, "۴۸۲۹۱۳")).toBe(true);
+    expect(await pinMatches(rami, "٤٨٢٩١٤")).toBe(false);
+  });
+
   it("locks out after the fifth wrong PIN, keeps the lockout in IndexedDB and reports it at sync (AC 19)", async () => {
     await storePairedDevice();
     const rami = await staffEntry(STAFF_ID, "Rami", "482913");

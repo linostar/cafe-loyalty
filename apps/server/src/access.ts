@@ -1,5 +1,5 @@
 import { withCafe, withLookup, withOperator, type Database } from "@cafe-loyalty/db";
-import { ApiError } from "@cafe-loyalty/shared";
+import { apiText, ApiError } from "@cafe-loyalty/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely } from "kysely";
 import { clearedOperatorCookie, clearedSessionCookie, hashToken, readOperatorCookie, readSessionCookie } from "./credentials.js";
@@ -64,14 +64,14 @@ declare module "fastify" {
   }
 }
 
-const sessionEnded = () => new ApiError("UNAUTHENTICATED", "Your session has ended. Sign in again.");
-const operatorSessionEnded = () => new ApiError("UNAUTHENTICATED", "Your operator session has ended. Sign in to the admin screen again.");
+const sessionEnded = () => new ApiError("UNAUTHENTICATED", apiText("Your session has ended. Sign in again."));
+const operatorSessionEnded = () => new ApiError("UNAUTHENTICATED", apiText("Your operator session has ended. Sign in to the admin screen again."));
 /**
  * Device routes answer a missing, unknown or expired token alike with TOKEN_EXPIRED: the device renews with its
  * key, and the renewal decides between a new token, PAIRING_REQUIRED and DEVICE_REVOKED. So a device never has to
  * guess from a 401 whether to renew or pair again.
  */
-const renewToken = () => new ApiError("TOKEN_EXPIRED", "This device needs a new access token. It renews itself; try again.");
+const renewToken = () => new ApiError("TOKEN_EXPIRED", apiText("This device needs a new access token. It renews itself; try again."));
 
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
 
@@ -191,7 +191,7 @@ export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>
     }
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer !== undefined && (await checkDeviceToken(db, bearer)).status === "valid") {
-      throw new ApiError("FORBIDDEN", "Only the café owner can do this, from the dashboard.");
+      throw new ApiError("FORBIDDEN", apiText("Only the café owner can do this, from the dashboard."));
     }
     throw sessionEnded();
   }
@@ -221,7 +221,7 @@ export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>
       (ownerToken !== undefined && (await findSession(db, ownerToken)) !== undefined) ||
       (bearer !== undefined && (await checkDeviceToken(db, bearer)).status === "valid")
     ) {
-      throw new ApiError("FORBIDDEN", "Only the service's operator can do this, from the admin screen.");
+      throw new ApiError("FORBIDDEN", apiText("Only the service's operator can do this, from the admin screen."));
     }
     throw operatorSessionEnded();
   }
@@ -238,7 +238,7 @@ export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>
           request.device = check.device;
           return;
         }
-        throw new ApiError("DEVICE_REVOKED", "The owner removed this device. Pair it again from the owner's dashboard to use it.");
+        throw new ApiError("DEVICE_REVOKED", apiText("The owner removed this device. Pair it again from the owner's dashboard to use it."));
       case "expired":
       case "unknown":
         throw renewToken();
@@ -262,7 +262,7 @@ export function registerAccessControl(app: FastifyInstance, db: Kysely<Database>
     // form body without a CORS preflight, and a sibling subdomain is "same-site", so SameSite cookies alone do not
     // stop it; it can never send application/json without a preflight, which this API never grants.
     if (!SAFE_METHODS.has(request.method) && (request.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
-      throw new ApiError("UNSUPPORTED_MEDIA_TYPE", "Send the request as JSON, with an empty object ({}) when there is nothing to send.");
+      throw new ApiError("UNSUPPORTED_MEDIA_TYPE", apiText("Send the request as JSON, with an empty object ({}) when there is nothing to send."));
     }
     const access = request.routeOptions.config.access;
     if (access === "owner") {

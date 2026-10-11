@@ -13,6 +13,7 @@ import {
   type SyncHoldReason,
   type SyncResult,
   type SyncResultCode,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { sql, type Kysely } from "kysely";
@@ -72,7 +73,7 @@ const cursorSchema = z
     } catch {
       // Reported below.
     }
-    context.addIssue({ code: "custom", message: "This list position is not valid. Reload the list." });
+    context.addIssue({ code: "custom", message: apiText("This list position is not valid. Reload the list.") });
     return z.NEVER;
   });
 const reviewQuery = z.object({ cursor: cursorSchema.optional() });
@@ -95,7 +96,7 @@ function holdReasonOf(reason: SyncHoldReason | null): SyncHoldReason {
   return reason;
 }
 
-const alreadyDecided = () => new ApiError("NOT_FOUND", "This event was already accepted or discarded. Reload the list.");
+const alreadyDecided = () => new ApiError("NOT_FOUND", apiText("This event was already accepted or discarded. Reload the list."));
 
 /**
  * Records one event of a sync request in its own transaction, so one event never decides another's outcome (AC 23).

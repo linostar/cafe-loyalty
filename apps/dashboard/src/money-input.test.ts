@@ -9,6 +9,8 @@ describe("parseUsdInput", () => {
     [" $2.05 ", 205],
     ["0", 0],
     ["1000000", 100_000_000],
+    ["٢٫٥٠", 250],
+    ["۳.۰۵", 305],
   ])("reads %j as %i cents", (input, cents) => {
     expect(parseUsdInput(input)).toBe(cents);
   });
@@ -29,6 +31,7 @@ describe("parseWholeNumberInput", () => {
   it("reads whole numbers", () => {
     expect(parseWholeNumberInput(" 12 ")).toBe(12);
     expect(parseWholeNumberInput("0")).toBe(0);
+    expect(parseWholeNumberInput("١٢")).toBe(12);
   });
 
   it.each(["", " ", "1.5", "-2", "nine", "1e3"])("refuses %j", (input) => {

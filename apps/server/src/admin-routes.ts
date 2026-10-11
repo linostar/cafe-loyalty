@@ -7,6 +7,7 @@ import {
   paymentRecordSchema,
   type AdminCafe,
   type OperatorSession,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -24,8 +25,8 @@ export interface AdminRoutesOptions {
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
 const idParams = z.object({ id: z.uuid("Use a café from the list.") });
-const wrongCredentials = () => new ApiError("UNAUTHENTICATED", "The email or password is wrong. Try again, or ask for a new password from create-operator.");
-const cafeNotFound = () => new ApiError("NOT_FOUND", "This café no longer exists. Reload the list.");
+const wrongCredentials = () => new ApiError("UNAUTHENTICATED", apiText("The email or password is wrong. Try again, or ask for a new password from create-operator."));
+const cafeNotFound = () => new ApiError("NOT_FOUND", apiText("This café no longer exists. Reload the list."));
 
 /** Creates a session for the operator (dropping their timed-out ones) and returns its token for the cookie. */
 async function startSession(trx: Transaction<Database>, operatorId: string): Promise<string> {
@@ -203,7 +204,7 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     const body = parseInput(paymentRecordSchema, request.body);
     // A day either side of UTC covers every time zone; the service started in 2026.
     if (body.paidOn > utcDay(1) || body.paidOn < "2026-01-01") {
-      throw new ApiError("VALIDATION_FAILED", "Use the day the café paid, from 2026 up to today.", [{ path: "paidOn", issue: "Use the day the café paid, from 2026 up to today." }]);
+      throw new ApiError("VALIDATION_FAILED", apiText("Use the day the café paid, from 2026 up to today."), [{ path: "paidOn", issue: apiText("Use the day the café paid, from 2026 up to today.") }]);
     }
     const cafe = await withListedCafe(id, async (trx) => {
       // Payments cannot be removed, so a form sent again (its response lost) must not record a second one.
@@ -234,7 +235,7 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
           recorded.method !== body.method ||
           recorded.reference !== body.reference
         ) {
-          throw new ApiError("CONFLICT", "This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one.");
+          throw new ApiError("CONFLICT", apiText("This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one."));
         }
         return loadCafe(trx, id);
       }

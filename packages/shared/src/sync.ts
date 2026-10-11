@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiText } from "./api-messages.js";
 import { MAX_CENTS, centsSchema } from "./money.js";
 import { e164PhoneSchema } from "./phone.js";
 
@@ -24,7 +25,7 @@ const idSchema = z.uuid().transform((id) => id.toLowerCase());
 export const MAX_SYNC_SEQUENCE = 2_147_483_647;
 
 /** Signature: ECDSA P-256 with SHA-256 in WebCrypto's raw r||s form (64 bytes), base64url without padding. */
-export const syncSignatureSchema = z.string().regex(/^[A-Za-z0-9_-]{86}$/, "Signature must be 64 bytes, base64url-encoded.");
+export const syncSignatureSchema = z.string().regex(/^[A-Za-z0-9_-]{86}$/, apiText("Signature must be 64 bytes, base64url-encoded."));
 
 /** The fields every event of every type and version carries, read before anything else. */
 const syncEventHeaderSchema = z.object({
@@ -54,8 +55,8 @@ export type VisitItem = z.output<typeof visitItemSchema>;
 /** One line of a version 2 visit: as version 1, plus the campaign that discounted it and its discount per unit (AC 35). */
 export const visitLineSchema = visitItemSchema
   .extend({ campaignId: idSchema.nullable(), unitDiscountCents: centsSchema })
-  .refine((line) => line.unitDiscountCents <= line.unitPriceCents, { path: ["unitDiscountCents"], message: "The discount is more than the price." })
-  .refine((line) => line.campaignId !== null || line.unitDiscountCents === 0, { path: ["campaignId"], message: "A discount needs its campaign." });
+  .refine((line) => line.unitDiscountCents <= line.unitPriceCents, { path: ["unitDiscountCents"], message: apiText("The discount is more than the price.") })
+  .refine((line) => line.campaignId !== null || line.unitDiscountCents === 0, { path: ["campaignId"], message: apiText("A discount needs its campaign.") });
 
 export type VisitLine = z.output<typeof visitLineSchema>;
 
@@ -90,9 +91,9 @@ const v1EnvelopeFields = {
 function checkTotal(visit: { items: readonly (VisitItem & { unitDiscountCents?: number })[]; totalCents: number }, context: z.RefinementCtx): void {
   const total = visitItemsTotalCents(visit.items);
   if (total === null) {
-    context.addIssue({ code: "custom", path: ["items"], message: "The items add up to more than the largest accepted amount." });
+    context.addIssue({ code: "custom", path: ["items"], message: apiText("The items add up to more than the largest accepted amount.") });
   } else if (total !== visit.totalCents) {
-    context.addIssue({ code: "custom", path: ["totalCents"], message: "The total does not match the sum of the items." });
+    context.addIssue({ code: "custom", path: ["totalCents"], message: apiText("The total does not match the sum of the items.") });
   }
 }
 
@@ -117,7 +118,7 @@ export const visitRecordedV2PayloadSchema = z
 /** A version 3 line: as version 2, and a discount without a campaign is the card's win-back offer's (AC 36). */
 const visitLineV3Schema = visitItemSchema
   .extend({ campaignId: idSchema.nullable(), unitDiscountCents: centsSchema })
-  .refine((line) => line.unitDiscountCents <= line.unitPriceCents, { path: ["unitDiscountCents"], message: "The discount is more than the price." });
+  .refine((line) => line.unitDiscountCents <= line.unitPriceCents, { path: ["unitDiscountCents"], message: apiText("The discount is more than the price.") });
 
 /**
  * Payload of `visit.recorded`, schema version 3 (AC 36): as version 2, and `winBack` says the barista applied the
@@ -135,7 +136,7 @@ export const visitRecordedV3PayloadSchema = z
     checkTotal(visit, context);
     visit.items.forEach((line, index) => {
       if (!visit.winBack && line.campaignId === null && line.unitDiscountCents > 0) {
-        context.addIssue({ code: "custom", path: ["items", index, "campaignId"], message: "A discount needs its campaign or the win-back offer." });
+        context.addIssue({ code: "custom", path: ["items", index, "campaignId"], message: apiText("A discount needs its campaign or the win-back offer.") });
       }
     });
   });

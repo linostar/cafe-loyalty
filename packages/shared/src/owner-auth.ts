@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiMessage, apiText } from "./api-messages.js";
 
 /**
  * Owner sign-in email, trimmed and lower-cased so it matches however it was typed. Only Latin-letter (ASCII)
@@ -8,8 +9,8 @@ export const ownerEmailSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .max(254, "Use at most 254 characters.")
-  .pipe(z.email("Enter an email address in Latin letters, such as name@example.com."));
+  .max(254, apiMessage("Use at most {max} characters.", { max: 254 }))
+  .pipe(z.email(apiText("Enter an email address in Latin letters, such as name@example.com.")));
 
 export const OWNER_PASSWORD_MIN_LENGTH = 10;
 export const OWNER_PASSWORD_MAX_LENGTH = 128;
@@ -28,14 +29,14 @@ const passwordInput = z
 
 /** Length is the only rule (NIST SP 800-63B); the upper bound keeps hashing cost bounded. */
 export const ownerPasswordSchema = passwordInput
-  .refine((value) => characterCount(value) >= OWNER_PASSWORD_MIN_LENGTH, `Use at least ${String(OWNER_PASSWORD_MIN_LENGTH)} characters.`)
+  .refine((value) => characterCount(value) >= OWNER_PASSWORD_MIN_LENGTH, apiMessage("Use at least {min} characters.", { min: OWNER_PASSWORD_MIN_LENGTH }))
   .refine((value) => characterCount(value) <= OWNER_PASSWORD_MAX_LENGTH, `Use at most ${String(OWNER_PASSWORD_MAX_LENGTH)} characters.`);
 
 /** A password being checked rather than set: normalised the same way, without the length rule. */
-const enteredPasswordSchema = passwordInput.refine((value) => value.length > 0, "Enter your password.");
+const enteredPasswordSchema = passwordInput.refine((value) => value.length > 0, apiText("Enter your password."));
 
 /** An invite or password reset token: 32 random bytes in base64url (43 characters). */
-export const linkTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/, "This link is incomplete. Open it again from the message.");
+export const linkTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/, apiText("This link is incomplete. Open it again from the message."));
 
 export const signupRequestSchema = z.object({ inviteToken: linkTokenSchema, email: ownerEmailSchema, password: ownerPasswordSchema });
 /** Sign-in does not apply the password rules, so an account keeps working if the rules change. */

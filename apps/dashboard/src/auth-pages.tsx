@@ -2,18 +2,43 @@ import { OWNER_PASSWORD_MIN_LENGTH, ownerSessionSchema, type OwnerSession } from
 import { useState } from "react";
 import { apiRequest, messageSchema, noContent } from "./api.js";
 import { Field, FormError, Notice, useLinkToken, useSubmit } from "./forms.js";
+import { useApiText, useT } from "./i18n.js";
 
-const PASSWORD_HINT = `At least ${String(OWNER_PASSWORD_MIN_LENGTH)} characters.`;
+const AR = {
+  "Sign in": "تسجيل الدخول",
+  "Signing in…": "جارٍ تسجيل الدخول…",
+  Email: "البريد الإلكتروني",
+  Password: "كلمة المرور",
+  "New password": "كلمة المرور الجديدة",
+  "At least {n} characters.": "{n} أحرف على الأقل.",
+  "Forgot your password?": "نسيت كلمة المرور؟",
+  "Create your owner account": "أنشئ حساب المالك",
+  "This invite link is incomplete. Open it again from the message you received, or ask for a new invite.":
+    "رابط الدعوة هذا ناقص. افتحه مجدداً من الرسالة التي وصلتك، أو اطلب دعوة جديدة.",
+  "Creating your account…": "جارٍ إنشاء حسابك…",
+  "Create account": "إنشاء الحساب",
+  "Reset your password": "إعادة تعيين كلمة المرور",
+  "Enter the email you sign in with. We will send it a link to choose a new password.": "أدخل البريد الذي تسجّل الدخول به. سنرسل إليه رابطاً لاختيار كلمة مرور جديدة.",
+  "Sending…": "جارٍ الإرسال…",
+  "Send reset link": "إرسال رابط إعادة التعيين",
+  "Back to sign in": "العودة إلى تسجيل الدخول",
+  "This reset link is incomplete. Open it again from the email, or": "رابط إعادة التعيين هذا ناقص. افتحه مجدداً من الرسالة، أو",
+  "request a new link": "اطلب رابطاً جديداً",
+  "Choose a new password": "اختر كلمة مرور جديدة",
+  "Save new password": "حفظ كلمة المرور الجديدة",
+} as const;
 
 export function LoginForm({ notice, onSignedIn }: { notice: string | null; onSignedIn: (session: OwnerSession) => void }) {
+  const t = useT(AR);
+  const api = useApiText();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
 
   return (
     <section aria-labelledby="login-title">
-      <h2 id="login-title">Sign in</h2>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      <h2 id="login-title">{t("Sign in")}</h2>
+      {notice === null ? null : <Notice>{api(notice)}</Notice>}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -25,20 +50,21 @@ export function LoginForm({ notice, onSignedIn }: { notice: string | null; onSig
         }}
       >
         <FormError message={error} />
-        <Field label="Email" name="email" type="email" autoComplete="username" value={email} onChange={setEmail} error={fieldErrors.email} />
-        <Field label="Password" name="password" type="password" autoComplete="current-password" value={password} onChange={setPassword} error={fieldErrors.password} />
+        <Field label={t("Email")} name="email" type="email" autoComplete="username" value={email} onChange={setEmail} error={fieldErrors.email} />
+        <Field label={t("Password")} name="password" type="password" autoComplete="current-password" value={password} onChange={setPassword} error={fieldErrors.password} />
         <button type="submit" disabled={pending}>
-          {pending ? "Signing in…" : "Sign in"}
+          {pending ? t("Signing in…") : t("Sign in")}
         </button>
       </form>
       <p>
-        <a href="/forgot-password">Forgot your password?</a>
+        <a href="/forgot-password">{t("Forgot your password?")}</a>
       </p>
     </section>
   );
 }
 
 export function SignupPage() {
+  const t = useT(AR);
   const inviteToken = useLinkToken("invite");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -46,10 +72,10 @@ export function SignupPage() {
 
   return (
     <section aria-labelledby="signup-title">
-      <h2 id="signup-title">Create your owner account</h2>
+      <h2 id="signup-title">{t("Create your owner account")}</h2>
       {inviteToken === null ? (
         <p role="alert" className="form-error">
-          This invite link is incomplete. Open it again from the message you received, or ask for a new invite.
+          {t("This invite link is incomplete. Open it again from the message you received, or ask for a new invite.")}
         </p>
       ) : (
         <form
@@ -63,20 +89,20 @@ export function SignupPage() {
           }}
         >
           <FormError message={error} />
-          <Field label="Email" name="email" type="email" autoComplete="email" value={email} onChange={setEmail} error={fieldErrors.email} />
+          <Field label={t("Email")} name="email" type="email" autoComplete="email" value={email} onChange={setEmail} error={fieldErrors.email} />
           <Field
-            label="Password"
+            label={t("Password")}
             name="password"
             type="password"
             autoComplete="new-password"
             value={password}
             onChange={setPassword}
-            hint={PASSWORD_HINT}
+            hint={t("At least {n} characters.", { n: OWNER_PASSWORD_MIN_LENGTH })}
             minLength={OWNER_PASSWORD_MIN_LENGTH}
             error={fieldErrors.password}
           />
           <button type="submit" disabled={pending}>
-            {pending ? "Creating your account…" : "Create account"}
+            {pending ? t("Creating your account…") : t("Create account")}
           </button>
         </form>
       )}
@@ -85,13 +111,15 @@ export function SignupPage() {
 }
 
 export function ForgotPasswordPage() {
+  const t = useT(AR);
+  const api = useApiText();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState<string | null>(null);
   const { pending, error, fieldErrors, submit } = useSubmit();
 
   return (
     <section aria-labelledby="forgot-title">
-      <h2 id="forgot-title">Reset your password</h2>
+      <h2 id="forgot-title">{t("Reset your password")}</h2>
       {sent === null ? (
         <form
           onSubmit={(event) => {
@@ -103,24 +131,25 @@ export function ForgotPasswordPage() {
             });
           }}
         >
-          <p>Enter the email you sign in with. We will send it a link to choose a new password.</p>
+          <p>{t("Enter the email you sign in with. We will send it a link to choose a new password.")}</p>
           <FormError message={error} />
-          <Field label="Email" name="email" type="email" autoComplete="email" value={email} onChange={setEmail} error={fieldErrors.email} />
+          <Field label={t("Email")} name="email" type="email" autoComplete="email" value={email} onChange={setEmail} error={fieldErrors.email} />
           <button type="submit" disabled={pending}>
-            {pending ? "Sending…" : "Send reset link"}
+            {pending ? t("Sending…") : t("Send reset link")}
           </button>
         </form>
       ) : (
-        <Notice>{sent}</Notice>
+        <Notice>{api(sent)}</Notice>
       )}
       <p>
-        <a href="/">Back to sign in</a>
+        <a href="/">{t("Back to sign in")}</a>
       </p>
     </section>
   );
 }
 
 export function ResetPasswordPage() {
+  const t = useT(AR);
   const token = useLinkToken("token");
   const [password, setPassword] = useState("");
   const [done, setDone] = useState(false);
@@ -130,11 +159,11 @@ export function ResetPasswordPage() {
   if (token === null) {
     content = (
       <p role="alert" className="form-error">
-        This reset link is incomplete. Open it again from the email, or <a href="/forgot-password">request a new link</a>.
+        {t("This reset link is incomplete. Open it again from the email, or")} <a href="/forgot-password">{t("request a new link")}</a>.
       </p>
     );
   } else if (done) {
-    content = <Notice>Your password is changed. Sign in with the new password.</Notice>;
+    content = <Notice>{t("Your password is changed. Sign in with the new password.")}</Notice>;
   } else {
     content = (
       <form
@@ -149,18 +178,18 @@ export function ResetPasswordPage() {
       >
         <FormError message={error} />
         <Field
-          label="New password"
+          label={t("New password")}
           name="password"
           type="password"
           autoComplete="new-password"
           value={password}
           onChange={setPassword}
-          hint={PASSWORD_HINT}
+          hint={t("At least {n} characters.", { n: OWNER_PASSWORD_MIN_LENGTH })}
           minLength={OWNER_PASSWORD_MIN_LENGTH}
           error={fieldErrors.password}
         />
         <button type="submit" disabled={pending}>
-          {pending ? "Saving…" : "Save new password"}
+          {pending ? t("Saving…") : t("Save new password")}
         </button>
       </form>
     );
@@ -168,10 +197,10 @@ export function ResetPasswordPage() {
 
   return (
     <section aria-labelledby="reset-title">
-      <h2 id="reset-title">Choose a new password</h2>
+      <h2 id="reset-title">{t("Choose a new password")}</h2>
       {content}
       <p>
-        <a href="/">Back to sign in</a>
+        <a href="/">{t("Back to sign in")}</a>
       </p>
     </section>
   );

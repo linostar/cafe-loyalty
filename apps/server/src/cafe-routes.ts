@@ -12,6 +12,7 @@ import {
   type Discount,
   type VisitHours,
   type WalletDeliveries,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -291,7 +292,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         .forUpdate()
         .executeTakeFirst();
       if (current === undefined) {
-        throw new ApiError("NOT_FOUND", "This order type does not exist. Reload the page to see the current list.");
+        throw new ApiError("NOT_FOUND", apiText("This order type does not exist. Reload the page to see the current list."));
       }
       const next = {
         name_ar: body.nameAr ?? current.name_ar,

@@ -1,10 +1,13 @@
-import { errorDetailSchema, interpretErrorResponse, type ErrorDetail, type InterpretedError } from "@cafe-loyalty/shared";
+import { apiText, errorDetailSchema, interpretErrorResponse, type ErrorDetail, type InterpretedError } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
 /** Requests give up after this long, so a stalled connection never leaves a form waiting forever. */
 const REQUEST_TIMEOUT_MS = 15_000;
 
-/** A failed API request, with the server's message (or one for the network failure) and any per-field problems. */
+/**
+ * A failed API request, with the server's message (or one for the network failure) and any per-field problems, in
+ * English as listed in API_MESSAGES_AR: pages show them with useApiText.
+ */
 export class ApiRequestError extends Error {
   readonly failure: InterpretedError;
   readonly details: readonly ErrorDetail[];
@@ -44,7 +47,7 @@ export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
-    throw new ApiRequestError({ code: null, message: "Could not reach the server. Check your connection and try again.", retryable: true, status: null });
+    throw new ApiRequestError({ code: null, message: apiText("Could not reach the server. Check your connection and try again."), retryable: true, status: null });
   }
   const text = await response.text();
   if (!response.ok) {
@@ -52,7 +55,7 @@ export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "
   }
   const unreadable = new ApiRequestError({
     code: null,
-    message: "The server sent a response this page cannot read. Reload the page and try again.",
+    message: apiText("The server sent a response this page cannot read. Reload the page and try again."),
     retryable: true,
     status: response.status,
   });

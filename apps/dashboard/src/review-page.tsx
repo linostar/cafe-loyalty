@@ -2,61 +2,123 @@ import { reviewDecisionSchema, reviewQueueSchema, type ReviewItem, type SyncHold
 import { useEffect, useRef, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, FormError, Notice, useSubmit } from "./forms.js";
+import { dateFormat, useLang, useT, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
-// To the second, so two items from the same phone and barista still get different button names.
-const timeFormat = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "medium" });
+const AR = {
+  Visit: "زيارة",
+  "PIN lockout report": "تقرير قفل الرمز السري",
+  "from a phone you removed": "من هاتف أزلته",
+  "by a barista you removed": "من باريستا أزلته",
+  "that reached the server more than two days later": "وصل إلى الخادم بعد أكثر من يومين",
+  "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)":
+    "بخصم لم تسمح به حملته أو عرض الاسترجاع على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك)",
+  "the card got stamps less than 30 minutes before it": "حصلت البطاقة على أختام قبلها بأقل من 30 دقيقة",
+  "that phone had already added its most stamps for that day": "كان ذلك الهاتف قد أضاف الحد الأقصى من الأختام لذلك اليوم",
+  "the customer deleted the card": "حذف الزبون البطاقة",
+  "the server answered {code}": "أجاب الخادم {code}",
+  "Accepted: {what}.": "مقبول: {what}.",
+  "Discarded: {what}.": "مُهمل: {what}.",
+  "{done} It counts as a visit, but the card got no stamps: {why}.": "{done} تُحتسب زيارةً، لكن البطاقة لم تحصل على أختام: {why}.",
+  "{type} by {staff} on {device} at {time}": "{type} من {staff} على {device} في {time}",
+  "at {time} {reason}: {staff} on {device}.": "في {time} {reason}: {staff} على {device}.",
+  "It also has a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).":
+    "وفيه أيضاً خصم لم تسمح به حملته أو عرض الاسترجاع على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك).",
+  "Accept {what}": "قبول {what}",
+  "Yes, accept {what}": "نعم، اقبل {what}",
+  "Discard {what}": "إهمال {what}",
+  "Yes, discard {what}": "نعم، أهمل {what}",
+  Review: "المراجعة",
+  "When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example). Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for nothing.":
+    "عندما تزيل هاتفاً أو باريستا، ينتظر هنا ما سجّلوه ولم يرسلوه بعد بدل أن يُحتسب، وكذلك الزيارات التي أرسلها هاتف بعد أكثر من يومين من حدوثها، والزيارات التي فيها خصم لم تسمح به حملتها أو عرض الاسترجاع (هاتف لم يعلم بانتهاء الحملة، أو بطاقة بلا عرض، مثلاً). اقبل ما تثق به وأهمل الباقي: الزيارة المقبولة تُحتسب وتضيف أختامها ويبقى خصمها مسجّلاً، والمُهملة لا تُحتسب.",
+  "Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.":
+    "لا شيء للمراجعة. ما ترسله الهواتف أو الباريستا الذين أُزيلوا، والزيارات المحتجزة عند المزامنة، ينتظرك هنا.",
+  "Show more": "عرض المزيد",
+} as const;
 
-const TYPE_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };
+type T = Translate<typeof AR>;
 
-const REASONS: Readonly<Record<SyncHoldReason, string>> = {
+const TYPE_LABELS: Readonly<Record<string, "Visit" | "PIN lockout report">> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };
+
+const REASONS = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
   late_sync: "that reached the server more than two days later",
   campaign_check: "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)",
-};
+} as const satisfies Readonly<Record<SyncHoldReason, keyof typeof AR>>;
 
 /** Why an accepted visit still added no stamps, by its result code. */
-const NO_STAMPS: Readonly<Record<string, string>> = {
+const NO_STAMPS: Readonly<Record<string, keyof typeof AR>> = {
   STAMP_COOLDOWN: "the card got stamps less than 30 minutes before it",
   DAILY_STAMP_CAP: "that phone had already added its most stamps for that day",
   CARD_GONE: "the customer deleted the card",
 };
 
 /** The confirmation after a decision; an accepted visit that added no stamps says why (`outcome` is its result code). */
-function decided(decision: "accept" | "discard", item: ReviewItem, outcome: string | null): string {
-  const done = `${decision === "accept" ? "Accepted" : "Discarded"}: ${describe(item)}.`;
+function decided(t: T, timeFormat: Intl.DateTimeFormat, decision: "accept" | "discard", item: ReviewItem, outcome: string | null): string {
+  const what = describe(t, timeFormat, item);
+  const done = decision === "accept" ? t("Accepted: {what}.", { what }) : t("Discarded: {what}.", { what });
   if (outcome === null || outcome === "OK") {
     return done;
   }
-  return `${done} It counts as a visit, but the card got no stamps: ${NO_STAMPS[outcome] ?? `the server answered ${outcome}`}.`;
+  const reason = NO_STAMPS[outcome];
+  return t("{done} It counts as a visit, but the card got no stamps: {why}.", {
+    done,
+    why: reason === undefined ? t("the server answered {code}", { code: outcome }) : t(reason),
+  });
 }
+
+const typeLabel = (t: T, item: ReviewItem): string => {
+  const label = TYPE_LABELS[item.type];
+  return label === undefined ? item.type : t(label);
+};
 
 /** What an item is, for its buttons and for the confirmation after a decision. */
-function describe(item: ReviewItem): string {
-  return `${TYPE_LABELS[item.type] ?? item.type} by ${item.staffName} on ${item.deviceName} at ${timeFormat.format(new Date(item.occurredAt))}`;
+function describe(t: T, timeFormat: Intl.DateTimeFormat, item: ReviewItem): string {
+  return t("{type} by {staff} on {device} at {time}", {
+    type: typeLabel(t, item),
+    staff: item.staffName,
+    device: item.deviceName,
+    time: timeFormat.format(new Date(item.occurredAt)),
+  });
 }
 
+// To the second, so two items from the same phone and barista still get different button names.
+const TIME_OPTIONS = { dateStyle: "medium", timeStyle: "medium" } as const;
+
 function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: boolean; onDecide: (decision: "accept" | "discard") => void }) {
+  const t = useT(AR);
+  const timeFormat = dateFormat(useLang(), TIME_OPTIONS);
+  const what = describe(t, timeFormat, item);
   return (
     <li tabIndex={-1} data-review-id={item.id} className="review-item">
-      <strong>{TYPE_LABELS[item.type] ?? item.type}</strong> at {timeFormat.format(new Date(item.occurredAt))} {REASONS[item.reason]}: {item.staffName} on{" "}
-      {item.deviceName}.
+      <strong>{typeLabel(t, item)}</strong>{" "}
+      {t("at {time} {reason}: {staff} on {device}.", {
+        time: timeFormat.format(new Date(item.occurredAt)),
+        reason: t(REASONS[item.reason]),
+        staff: item.staffName,
+        device: item.deviceName,
+      })}
       {item.discountRefused && item.reason !== "campaign_check" ? (
-        <> It also has a discount its campaign or the card&apos;s win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).</>
+        <>
+          {" "}
+          {t(
+            "It also has a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).",
+          )}
+        </>
       ) : null}
       <div className="actions">
         <ConfirmButton
-          label={`Accept ${describe(item)}`}
-          confirmLabel={`Yes, accept ${describe(item)}`}
+          label={t("Accept {what}", { what })}
+          confirmLabel={t("Yes, accept {what}", { what })}
           pending={pending}
           onConfirm={() => {
             onDecide("accept");
           }}
         />
         <ConfirmButton
-          label={`Discard ${describe(item)}`}
-          confirmLabel={`Yes, discard ${describe(item)}`}
+          label={t("Discard {what}", { what })}
+          confirmLabel={t("Yes, discard {what}", { what })}
           pending={pending}
           onConfirm={() => {
             onDecide("discard");
@@ -69,6 +131,8 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
 
 /** `/review`: what removed phones and baristas recorded, held until the owner accepts or discards it (AC 21). */
 export function ReviewPage() {
+  const t = useT(AR);
+  const lang = useLang();
   const [reload, setReload] = useState(0);
   const [state] = useApiData("/api/review-queue", reviewQueueSchema, reload);
   /** Every item loaded so far (the first page, then each "Show more"), less the ones decided here. */
@@ -99,18 +163,17 @@ export function ReviewPage() {
   return (
     <section aria-labelledby="review-page-title">
       <h2 id="review-page-title" tabIndex={-1} data-focus-after-change>
-        Review
+        {t("Review")}
       </h2>
       <p className="page-intro">
-        When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two
-        days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example).
-        Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for
-        nothing.
+        {t(
+          "When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example). Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for nothing.",
+        )}
       </p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />
       {shown.length === 0 ? (
-        <p className="empty">Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.</p>
+        <p className="empty">{t("Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.")}</p>
       ) : (
         <ul className="items" ref={list}>
           {shown.map((item) => (
@@ -125,7 +188,7 @@ export function ReviewPage() {
                     // Taken off the list in place, so the owner keeps every page already loaded.
                     setItems(shown.filter((entry) => entry.id !== item.id));
                     setNextCursor(cursor);
-                    setNotice(decided(decision, item, result.value.outcome));
+                    setNotice(decided(t, dateFormat(lang, TIME_OPTIONS), decision, item, result.value.outcome));
                   } else if (isStale(result.error)) {
                     startOver();
                   }
@@ -156,7 +219,7 @@ export function ReviewPage() {
             });
           }}
         >
-          Show more
+          {t("Show more")}
         </button>
       )}
     </section>

@@ -8,6 +8,7 @@ import {
   passwordResetRequestSchema,
   signupRequestSchema,
   type OwnerSession,
+  apiText,
 } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
 import type { Kysely, Transaction } from "kysely";
@@ -24,7 +25,7 @@ const HOUR = 60 * MINUTE;
 /** A password reset link works for this long (AC 16). */
 export const RESET_TOKEN_TTL_SECONDS = 30 * MINUTE;
 
-export const RESET_REQUESTED_MESSAGE = "If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.";
+export const RESET_REQUESTED_MESSAGE = apiText("If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.");
 
 export interface OwnerAuthOptions {
   db: Kysely<Database>;
@@ -34,9 +35,9 @@ export interface OwnerAuthOptions {
   dashboardUrl: string;
 }
 
-const inviteExpired = () => new ApiError("LINK_EXPIRED", "This invite link has expired or was already used. Ask for a new invite.");
+const inviteExpired = () => new ApiError("LINK_EXPIRED", apiText("This invite link has expired or was already used. Ask for a new invite."));
 const resetExpired = () =>
-  new ApiError("LINK_EXPIRED", "This password reset link has expired, was already used, or was replaced by a newer one. Use the newest email's link, or request a new one.");
+  new ApiError("LINK_EXPIRED", apiText("This password reset link has expired, was already used, or was replaced by a newer one. Use the newest email's link, or request a new one."));
 /** An audit entry about the owner's own account. */
 const auditOwner = (trx: Transaction<Database>, cafeId: string, ownerId: string, action: string, actorType: AuditActorType = "owner") =>
   audit(trx, { cafeId, actorType, actorId: actorType === "owner" ? ownerId : null, action, entityType: "owner", entityId: ownerId });
@@ -200,7 +201,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     } catch (error) {
       // The transaction rolled back, so the invite is still unused.
       if (isUniqueViolation(error, "owners_email_key")) {
-        throw new ApiError("CONFLICT", "This email already has an account. Sign in instead, or use another email.");
+        throw new ApiError("CONFLICT", apiText("This email already has an account. Sign in instead, or use another email."));
       }
       throw error;
     }
@@ -228,7 +229,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     const valid = await verifyPassword(owner?.password_hash, body.password);
     if (owner === undefined || !valid) {
       request.log.info({ cafeId: owner?.cafe_id ?? null }, "owner sign-in failed");
-      throw new ApiError("UNAUTHENTICATED", "The email or password is wrong. Try again, or reset your password.");
+      throw new ApiError("UNAUTHENTICATED", apiText("The email or password is wrong. Try again, or reset your password."));
     }
     limits.loginFailuresPerAccountAndIp.refund(accountAndClient);
     limits.loginFailuresPerAccount.refund(body.email);
@@ -237,7 +238,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
       // sign-in against a concurrent password change or reset, so no session made with the old password outlives it.
       const current = await trx.selectFrom("owners").select("password_hash").where("id", "=", owner.id).forShare().executeTakeFirst();
       if (current?.password_hash !== owner.password_hash) {
-        throw new ApiError("UNAUTHENTICATED", "The email or password is wrong. Try again, or reset your password.");
+        throw new ApiError("UNAUTHENTICATED", apiText("The email or password is wrong. Try again, or reset your password."));
       }
       const token = await startSession(trx, owner.cafe_id, owner.id);
       await auditOwner(trx, owner.cafe_id, owner.id, "owner.signed_in");
@@ -275,7 +276,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
       trx.selectFrom("owners").select("password_hash").where("id", "=", owner.ownerId).executeTakeFirstOrThrow(),
     );
     if (!(await verifyPassword(current.password_hash, body.currentPassword))) {
-      throw new ApiError("VALIDATION_FAILED", "The current password is wrong.", [{ path: "currentPassword", issue: "The current password is wrong." }]);
+      throw new ApiError("VALIDATION_FAILED", apiText("The current password is wrong. Check it and try again."), [{ path: "currentPassword", issue: apiText("The current password is wrong. Check it and try again.") }]);
     }
     const passwordHash = await hashPassword(body.newPassword);
     await withCafe(db, owner.cafeId, async (trx) => {
@@ -283,7 +284,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
       // between must not be overwritten by someone holding the old password.
       const locked = await trx.selectFrom("owners").select("password_hash").where("id", "=", owner.ownerId).forNoKeyUpdate().executeTakeFirstOrThrow();
       if (locked.password_hash !== current.password_hash) {
-        throw new ApiError("CONFLICT", "Your password was changed somewhere else just now. Sign in again with the new password.");
+        throw new ApiError("CONFLICT", apiText("Your password was changed somewhere else just now. Sign in again with the new password."));
       }
       await setPassword(trx, owner.cafeId, owner.ownerId, passwordHash, "owner.password_changed");
     });

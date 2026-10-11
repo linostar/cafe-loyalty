@@ -1,7 +1,17 @@
-import { PRODUCT_NAME, deviceCatalogSchema, deviceStaffSchema, normalizePairingCode, type DeviceCatalog } from "@cafe-loyalty/shared";
+import {
+  PRODUCT_NAME,
+  apiText,
+  deviceCatalogSchema,
+  deviceStaffSchema,
+  normalizePairingCode,
+  plural,
+  toLatinDigits,
+  type DeviceCatalog,
+} from "@cafe-loyalty/shared";
 import logoUrl from "@cafe-loyalty/ui/logo.svg";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequestFor, pairDevice } from "./device.js";
+import { LangProvider, LanguageSwitch, dateFormat, useApiText, useLang, useT } from "./i18n.js";
 import { attemptPin } from "./pin.js";
 import {
   clearRejected,
@@ -14,6 +24,7 @@ import {
   setMeta,
   storeCatalog,
   storeStaff,
+  STORAGE_BUSY,
   type DeviceRecord,
   type RejectedEvent,
   type StaffEntry,
@@ -28,8 +39,103 @@ const SYNC_INTERVAL_MS = 30_000;
 /** How often a counter reloads its baristas, so a removed one can no longer sign in. */
 const STAFF_REFRESH_MS = 5 * 60 * 1000;
 
-const clock = new Intl.DateTimeFormat("en-GB", { timeStyle: "short" });
-const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
+const AR = {
+  Counter: "الكاونتر",
+  "Build {id}": "الإصدار {id}",
+  "Counter status": "حالة الكاونتر",
+  Online: "متصل",
+  "Offline: stamps are saved on this phone and sync when the connection returns.": "غير متصل: تُحفظ الأختام على هذا الهاتف وتُزامَن حين يعود الاتصال.",
+  "Nothing waiting to send.": "لا شيء بانتظار الإرسال.",
+  "An update is ready. It installs once everything is sent and nobody is typing.": "تحديث جاهز. يُثبَّت بعد إرسال كل شيء وحين لا يكتب أحد.",
+  Visit: "زيارة",
+  "PIN lockout report": "تقرير قفل الرمز السري",
+  "the card is not a card of this café; scan the customer's card again next time": "البطاقة ليست بطاقة لهذا المقهى؛ امسح بطاقة الزبون مجدداً في المرة القادمة",
+  "the card was moved to another phone; ask the customer to show the card on their new phone": "نُقلت البطاقة إلى هاتف آخر؛ اطلب من الزبون إظهار البطاقة على هاتفه الجديد",
+  "this number is not confirmed yet; scan the customer's card once, then their number works too": "هذا الرقم غير مؤكَّد بعد؛ امسح بطاقة الزبون مرة واحدة، فيعمل رقمه بعدها أيضاً",
+  "another card at this café signed up with this number, so it cannot be stamped by number; scan the customer's card":
+    "سُجّلت بطاقة أخرى في هذا المقهى بهذا الرقم، فلا يمكن الختم بالرقم؛ امسح بطاقة الزبون",
+  "something ordered is no longer on the café's menu; record the visit again without it": "أحد الأصناف المطلوبة لم يعد في قائمة المقهى؛ سجّل الزيارة مجدداً من دونه",
+  "its discount named a campaign this café does not have; record the visit again": "خصمها ذكر حملة لا يملكها هذا المقهى؛ سجّل الزيارة مجدداً",
+  "the server could not accept it as recorded": "لم يستطع الخادم قبولها كما سُجّلت",
+  "this phone's signature did not check out": "لم يتحقق توقيع هذا الهاتف",
+  "the phone's clock was wrong; set its date and time to automatic": "كانت ساعة الهاتف خاطئة؛ اضبط تاريخه ووقته على التلقائي",
+  "it clashed with something this phone sent before": "تعارضت مع شيء أرسله هذا الهاتف من قبل",
+  "refused ({code})": "رُفضت ({code})",
+  "{event} from {time}: {reason}.": "{event} من {time}: {reason}.",
+  "Not accepted by the server": "لم يقبلها الخادم",
+  "These were not recorded. Show this list to the owner.": "لم تُسجَّل هذه. أظهر هذه القائمة للمالك.",
+  "The list could not be cleared. Reload the page and try again.": "تعذّر مسح القائمة. أعد تحميل الصفحة وحاول مجدداً.",
+  "Clear list": "مسح القائمة",
+  "Pairing failed on this phone. Reload the page and try again.": "فشل الربط على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
+  "The owner removed this phone. Ask them for a new pairing code to use it again. Its waiting stamps are kept and sent once it is paired.":
+    "أزال المالك هذا الهاتف. اطلب منه رمز ربط جديداً لاستخدامه مجدداً. الأختام المنتظرة محفوظة وتُرسل بعد ربطه.",
+  "This phone was offline too long and must be paired again. Its waiting stamps are kept and sent once it is paired.":
+    "بقي هذا الهاتف دون اتصال مدة طويلة ويجب ربطه مجدداً. الأختام المنتظرة محفوظة وتُرسل بعد ربطه.",
+  "This phone is paired as {device} at {cafe}. Pairing it again replaces that.": "هذا الهاتف مربوط باسم {device} في {cafe}. ربطه مجدداً يستبدل ذلك.",
+  "Pair this phone": "اربط هذا الهاتف",
+  "On the owner's dashboard, open Devices and create a pairing code. Scan its QR code with this phone's camera, or type the code here.":
+    "في لوحة تحكم المالك، افتح «الأجهزة» وأنشئ رمز ربط. امسح رمز QR الخاص به بكاميرا هذا الهاتف، أو اكتب الرمز هنا.",
+  "This phone is still paired with {cafe} and has 1 item waiting to send there. Pair it with {cafe} first to send it. Starting over here discards it for good.":
+    "هذا الهاتف لا يزال مربوطاً بـ{cafe} وفيه عنصر واحد بانتظار الإرسال إليه. اربطه بـ{cafe} أولاً لإرساله. البدء من جديد هنا يحذفه نهائياً.",
+  "This phone is still paired with {cafe} and has {items} waiting to send there. Pair it with {cafe} first to send them. Starting over here discards them for good.":
+    "هذا الهاتف لا يزال مربوطاً بـ{cafe} وفيه {items} بانتظار الإرسال إليه. اربطه بـ{cafe} أولاً لإرسالها. البدء من جديد هنا يحذفها نهائياً.",
+  "Start over and discard it": "ابدأ من جديد واحذفه",
+  "Start over and discard them": "ابدأ من جديد واحذفها",
+  "Pairing code": "رمز الربط",
+  "Pairing…": "جارٍ الربط…",
+  "This phone's storage could not be read. Reload the page and try again.": "تعذّرت قراءة ذاكرة هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
+  "Too many wrong PINs. {name} can try again at {time}.": "رموز سرية خاطئة كثيرة. يمكن لـ{name} المحاولة مجدداً عند {time}.",
+  "PIN for {name}": "الرمز السري لـ{name}",
+  "Enter the 6 to 12 digit PIN the owner set for you.": "أدخل الرمز السري المؤلف من 6 إلى 12 رقماً الذي حدّده لك المالك.",
+  "The PIN could not be checked on this phone. Reload the page and try again.": "تعذّر التحقق من الرمز السري على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
+  PIN: "الرمز السري",
+  "Checking…": "جارٍ التحقق…",
+  "Sign in": "تسجيل الدخول",
+  Back: "رجوع",
+  "Who is working?": "من يعمل الآن؟",
+  "No baristas yet. Ask the owner to add staff on the dashboard.": "لا باريستا بعد. اطلب من المالك إضافة الموظفين من لوحة التحكم.",
+  "Connect to the internet once to load the baristas.": "اتصل بالإنترنت مرة واحدة لتحميل قائمة الباريستا.",
+  "This phone's storage could not be read. Reload the page; if it keeps failing, check that the browser allows site data.":
+    "تعذّرت قراءة ذاكرة هذا الهاتف. أعد تحميل الصفحة؛ وإذا تكرر الفشل، فتحقق من أن المتصفح يسمح ببيانات المواقع.",
+  "Something went wrong on this phone. Reload the page; waiting stamps are kept.": "حدث خطأ على هذا الهاتف. أعد تحميل الصفحة؛ الأختام المنتظرة محفوظة.",
+  "Signing in could not be saved on this phone. Reload the page and try again.": "تعذّر حفظ تسجيل الدخول على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
+  "Signed in as {name} on {device}.": "مسجّل الدخول باسم {name} على {device}.",
+  "Switching barista failed on this phone. Reload the page and try again.": "فشل تبديل الباريستا على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
+  "Switch barista": "تبديل الباريستا",
+} as const;
+
+type AppText = keyof typeof AR;
+
+/**
+ * Text kept in state in English, in the page's language when shown: the counter's own (this file's catalog) or the
+ * API's, so a message already on screen follows a language switch.
+ */
+function useSay(): (text: string) => string {
+  const t = useT(AR);
+  const api = useApiText();
+  return (text) => (Object.hasOwn(AR, text) ? t(text as AppText) : api(text));
+}
+
+const WAITING = {
+  en: { one: "{n} waiting to send.", other: "{n} waiting to send." },
+  ar: {
+    one: "عنصر واحد بانتظار الإرسال.",
+    two: "عنصران بانتظار الإرسال.",
+    few: "{n} عناصر بانتظار الإرسال.",
+    many: "{n} عنصراً بانتظار الإرسال.",
+    other: "{n} عنصر بانتظار الإرسال.",
+  },
+};
+const ITEMS = { en: { one: "{n} item", other: "{n} items" }, ar: { one: "عنصر واحد", two: "عنصران", few: "{n} عناصر", many: "{n} عنصراً", other: "{n} عنصر" } };
+const TRIES = {
+  en: { one: "Wrong PIN. {n} try left before a pause.", other: "Wrong PIN. {n} tries left before a pause." },
+  ar: {
+    one: "رمز سري خاطئ. بقيت محاولة واحدة قبل الإيقاف المؤقت.",
+    two: "رمز سري خاطئ. بقيت محاولتان قبل الإيقاف المؤقت.",
+    few: "رمز سري خاطئ. بقيت {n} محاولات قبل الإيقاف المؤقت.",
+    other: "رمز سري خاطئ. بقيت {n} محاولة قبل الإيقاف المؤقت.",
+  },
+};
 
 interface Stored {
   device: DeviceRecord | undefined;
@@ -61,14 +167,14 @@ async function readStored(): Promise<Stored> {
   };
 }
 
-const EVENT_LABELS: Readonly<Record<string, string>> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };
+const EVENT_LABELS: Readonly<Record<string, AppText>> = { "visit.recorded": "Visit", "staff.pin_lockout": "PIN lockout report" };
 
-const REJECTION_REASONS: Readonly<Record<string, string>> = {
+const REJECTION_REASONS: Readonly<Record<string, AppText>> = {
   CARD_NOT_FOUND: "the card is not a card of this café; scan the customer's card again next time",
   CARD_REPLACED: "the card was moved to another phone; ask the customer to show the card on their new phone",
   PHONE_NOT_CONFIRMED: "this number is not confirmed yet; scan the customer's card once, then their number works too",
   PHONE_DISPUTED: "another card at this café signed up with this number, so it cannot be stamped by number; scan the customer's card",
-  UNKNOWN_ORDER_TYPE: "something ordered is no longer on the café's menu",
+  UNKNOWN_ORDER_TYPE: "something ordered is no longer on the café's menu; record the visit again without it",
   CAMPAIGN_REFUSED: "its discount named a campaign this café does not have; record the visit again",
   INVALID_EVENT: "the server could not accept it as recorded",
   SIGNATURE_INVALID: "this phone's signature did not check out",
@@ -78,58 +184,73 @@ const REJECTION_REASONS: Readonly<Record<string, string>> = {
 
 /** Always visible in the header: connectivity and what waits to be sent (AC 29). */
 function ConnectionStatus({ online, pending }: { online: boolean; pending: number }) {
+  const t = useT(AR);
+  const lang = useLang();
   return (
-    <section aria-label="Counter status" className="connection">
+    <section aria-label={t("Counter status")} className="connection">
       <p role="status" aria-live="polite" className={`pill ${online ? "pill-online" : "pill-offline"}`}>
-        {online ? "Online" : "Offline: stamps are saved on this phone and sync when the connection returns."}
+        {online ? t("Online") : t("Offline: stamps are saved on this phone and sync when the connection returns.")}
       </p>
       {/* Not live: it changes with every sync, and the count is there to look at, not to hear. */}
-      <p className={`pill ${pending === 0 ? "pill-idle" : "pill-waiting"}`}>{pending === 0 ? "Nothing waiting to send." : `${String(pending)} waiting to send.`}</p>
+      <p className={`pill ${pending === 0 ? "pill-idle" : "pill-waiting"}`}>{pending === 0 ? t("Nothing waiting to send.") : plural(lang, WAITING, pending)}</p>
     </section>
   );
 }
 
 /** Problems, notices and updates, under the header so they are seen (AC 29). */
 function StatusMessages({ problem, notice, update }: { problem: string | null; notice: string | null; update: UpdateState }) {
+  const t = useT(AR);
+  const say = useSay();
   // Always in the page, so screen readers announce what appears in it.
   return (
     <div aria-live="polite" className="messages">
-      {problem === null ? null : <p className="warning-box">{problem}</p>}
-      {notice === null ? null : <p className="warning-box">{notice}</p>}
-      {update.waiting ? <p className="notice">An update is ready. It installs once everything is sent and nobody is typing.</p> : null}
-      {update.error === null ? null : <p className="warning-box">{update.error}</p>}
+      {problem === null ? null : <p className="warning-box">{say(problem)}</p>}
+      {notice === null ? null : <p className="warning-box">{say(notice)}</p>}
+      {update.waiting ? <p className="notice">{t("An update is ready. It installs once everything is sent and nobody is typing.")}</p> : null}
+      {update.error === null ? null : <p className="warning-box">{say(update.error)}</p>}
     </div>
   );
 }
 
 /** Events the server refused for good, kept on screen until cleared (AC 23). */
 function RejectedList({ rejected }: { rejected: RejectedEvent[] }) {
+  const t = useT(AR);
+  const say = useSay();
+  const lang = useLang();
   const [error, setError] = useState<string | null>(null);
   if (rejected.length === 0) {
     return null;
   }
   return (
     <section aria-labelledby="rejected-title" className="rejected form-error">
-      <h2 id="rejected-title">Not accepted by the server</h2>
-      <p>These were not recorded. Show this list to the owner.</p>
+      <h2 id="rejected-title">{t("Not accepted by the server")}</h2>
+      <p>{t("These were not recorded. Show this list to the owner.")}</p>
       <ul>
-        {rejected.map((entry) => (
-          <li key={entry.eventId}>
-            {EVENT_LABELS[entry.type] ?? entry.type} from {dateTime.format(new Date(entry.occurredAt))}: {REJECTION_REASONS[entry.code] ?? `refused (${entry.code})`}.
-          </li>
-        ))}
+        {rejected.map((entry) => {
+          const label = EVENT_LABELS[entry.type];
+          const reason = REJECTION_REASONS[entry.code];
+          return (
+            <li key={entry.eventId}>
+              {t("{event} from {time}: {reason}.", {
+                event: label === undefined ? entry.type : t(label),
+                time: dateFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.occurredAt)),
+                reason: reason === undefined ? t("refused ({code})", { code: entry.code }) : t(reason),
+              })}
+            </li>
+          );
+        })}
       </ul>
-      {error === null ? null : <p role="alert">{error}</p>}
+      {error === null ? null : <p role="alert">{say(error)}</p>}
       <button
         type="button"
         onClick={() => {
           clearRejected().catch((caught: unknown) => {
             console.error("Clearing the error list failed", caught);
-            setError("The list could not be cleared. Reload the page and try again.");
+            setError("The list could not be cleared. Reload the page and try again." satisfies AppText);
           });
         }}
       >
-        Clear list
+        {t("Clear list")}
       </button>
     </section>
   );
@@ -155,6 +276,9 @@ interface PairScreenProps {
 }
 
 function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
+  const t = useT(AR);
+  const say = useSay();
+  const lang = useLang();
   const fromLink = useFragmentCode();
   const [code, setCode] = useState(fromLink);
   const [pending, setPending] = useState(false);
@@ -183,7 +307,7 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
           setError(caught.message);
         } else {
           console.error("Pairing failed", caught);
-          setError("Pairing failed on this phone. Reload the page and try again.");
+          setError("Pairing failed on this phone. Reload the page and try again." satisfies AppText);
         }
       },
     );
@@ -204,29 +328,37 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
 
   let intro: ReactNode = null;
   if (device?.unpairedReason === "revoked") {
-    intro = <p className="warning-box">The owner removed this phone. Ask them for a new pairing code to use it again. Its waiting stamps are kept and sent once it is paired.</p>;
-  } else if (device?.unpairedReason === "pairing_required") {
-    intro = <p className="warning-box">This phone was offline too long and must be paired again. Its waiting stamps are kept and sent once it is paired.</p>;
-  } else if (device?.paired === true) {
     intro = (
-      <p>
-        This phone is paired as {device.deviceName} at {device.cafe.name}. Pairing it again replaces that.
+      <p className="warning-box">
+        {t("The owner removed this phone. Ask them for a new pairing code to use it again. Its waiting stamps are kept and sent once it is paired.")}
       </p>
     );
+  } else if (device?.unpairedReason === "pairing_required") {
+    intro = <p className="warning-box">{t("This phone was offline too long and must be paired again. Its waiting stamps are kept and sent once it is paired.")}</p>;
+  } else if (device?.paired === true) {
+    intro = <p>{t("This phone is paired as {device} at {cafe}. Pairing it again replaces that.", { device: device.deviceName, cafe: device.cafe.name })}</p>;
   }
 
   return (
     <section aria-labelledby="pair-title" className="card screen-card">
       <h2 id="pair-title" tabIndex={-1}>
-        Pair this phone
+        {t("Pair this phone")}
       </h2>
       {intro}
-      <p className="hint">On the owner&apos;s dashboard, open Devices and create a pairing code. Scan its QR code with this phone&apos;s camera, or type the code here.</p>
+      <p className="hint">
+        {t("On the owner's dashboard, open Devices and create a pairing code. Scan its QR code with this phone's camera, or type the code here.")}
+      </p>
       {elsewhere === null ? null : (
         <div role="alert" className="warning-box">
           <p>
-            This phone is still paired with {elsewhere.cafeName} and has {String(waiting)} {waiting === 1 ? "item" : "items"} waiting to send there. Pair it with{" "}
-            {elsewhere.cafeName} first to send {waiting === 1 ? "it" : "them"}. Starting over here discards {waiting === 1 ? "it" : "them"} for good.
+            {waiting === 1
+              ? t("This phone is still paired with {cafe} and has 1 item waiting to send there. Pair it with {cafe} first to send it. Starting over here discards it for good.", {
+                  cafe: elsewhere.cafeName,
+                })
+              : t(
+                  "This phone is still paired with {cafe} and has {items} waiting to send there. Pair it with {cafe} first to send them. Starting over here discards them for good.",
+                  { cafe: elsewhere.cafeName, items: plural(lang, ITEMS, waiting) },
+                )}
           </p>
           <div className="actions">
             <button
@@ -237,7 +369,7 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
                 pair(elsewhere.code, true);
               }}
             >
-              Start over and discard {waiting === 1 ? "it" : "them"}
+              {waiting === 1 ? t("Start over and discard it") : t("Start over and discard them")}
             </button>
             <button
               type="button"
@@ -246,7 +378,7 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
                 setElsewhere(null);
               }}
             >
-              Cancel
+              {t("Cancel")}
             </button>
           </div>
         </div>
@@ -256,13 +388,13 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
           event.preventDefault();
           const normalized = normalizePairingCode(code);
           if (normalized === null) {
-            setError("Enter the 12-character code shown on the owner's dashboard.");
+            setError(apiText("Enter the 12-character code shown on the owner's dashboard."));
             return;
           }
           pair(normalized, false);
         }}
       >
-        <label htmlFor={inputId}>Pairing code</label>
+        <label htmlFor={inputId}>{t("Pairing code")}</label>
         <input
           id={inputId}
           className="code-input"
@@ -281,11 +413,11 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
         />
         {error === null ? null : (
           <p id={errorId} role="alert" className="field-error">
-            {error}
+            {say(error)}
           </p>
         )}
         <button type="submit" disabled={pending}>
-          {pending ? "Pairing…" : "Pair this phone"}
+          {pending ? t("Pairing…") : t("Pair this phone")}
         </button>
       </form>
     </section>
@@ -293,6 +425,9 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
 }
 
 function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; onSignedIn: () => void; onBack: () => void; onBusy: (busy: boolean) => void }) {
+  const t = useT(AR);
+  const say = useSay();
+  const lang = useLang();
   const [pin, setPin] = useState("");
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -321,7 +456,7 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
       (caught: unknown) => {
         console.error("Reading the PIN lockout failed", caught);
         if (current) {
-          setMessage("This phone's storage could not be read. Reload the page and try again.");
+          setMessage("This phone's storage could not be read. Reload the page and try again." satisfies AppText);
         }
       },
     );
@@ -347,7 +482,11 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
   }, [lockedUntil]);
 
   const locked = lockedUntil !== null;
-  const shown = locked ? `Too many wrong PINs. ${staff.name} can try again at ${clock.format(new Date(lockedUntil))}.` : message;
+  const shown = locked
+    ? t("Too many wrong PINs. {name} can try again at {time}.", { name: staff.name, time: dateFormat(lang, { timeStyle: "short" }).format(new Date(lockedUntil)) })
+    : message === null
+      ? null
+      : say(message);
 
   // The PIN field is disabled while locked out: keep focus on the screen, and back in the field when it ends.
   const heading = useRef<HTMLHeadingElement>(null);
@@ -365,13 +504,14 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
   return (
     <section aria-labelledby="pin-title" className="card screen-card">
       <h2 id="pin-title" tabIndex={-1} ref={heading}>
-        PIN for {staff.name}
+        {t("PIN for {name}", { name: staff.name })}
       </h2>
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (!/^\d{6,12}$/.test(pin)) {
-            setMessage("Enter the 6 to 12 digit PIN the owner set for you.");
+          // Arabic-Indic digits are the same digits (pinMatches reads them so too).
+          if (!/^\d{6,12}$/.test(toLatinDigits(pin))) {
+            setMessage("Enter the 6 to 12 digit PIN the owner set for you." satisfies AppText);
             return;
           }
           setChecking(true);
@@ -385,18 +525,18 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
               } else if (attempt.status === "locked") {
                 setLockedUntil(attempt.lockedUntil);
               } else {
-                setMessage(`Wrong PIN. ${String(attempt.attemptsLeft)} ${attempt.attemptsLeft === 1 ? "try" : "tries"} left before a pause.`);
+                setMessage(plural(lang, TRIES, attempt.attemptsLeft));
               }
             },
             (caught: unknown) => {
               console.error("Checking the PIN failed", caught);
               setChecking(false);
-              setMessage("The PIN could not be checked on this phone. Reload the page and try again.");
+              setMessage("The PIN could not be checked on this phone. Reload the page and try again." satisfies AppText);
             },
           );
         }}
       >
-        <label htmlFor={inputId}>PIN</label>
+        <label htmlFor={inputId}>{t("PIN")}</label>
         <input
           ref={input}
           id={inputId}
@@ -422,10 +562,10 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
         )}
         <div className="actions">
           <button type="submit" disabled={checking || locked}>
-            {checking ? "Checking…" : "Sign in"}
+            {checking ? t("Checking…") : t("Sign in")}
           </button>
           <button type="button" onClick={onBack}>
-            Back
+            {t("Back")}
           </button>
         </div>
       </form>
@@ -434,13 +574,14 @@ function PinScreen({ staff, onSignedIn, onBack, onBusy }: { staff: StaffEntry; o
 }
 
 function BaristaPicker({ staff, online, onChoose }: { staff: StaffEntry[]; online: boolean; onChoose: (staff: StaffEntry) => void }) {
+  const t = useT(AR);
   return (
     <section aria-labelledby="who-title" className="who">
       <h2 id="who-title" tabIndex={-1}>
-        Who is working?
+        {t("Who is working?")}
       </h2>
       {staff.length === 0 ? (
-        <p className="empty">{online ? "No baristas yet. Ask the owner to add staff on the dashboard." : "Connect to the internet once to load the baristas."}</p>
+        <p className="empty">{online ? t("No baristas yet. Ask the owner to add staff on the dashboard.") : t("Connect to the internet once to load the baristas.")}</p>
       ) : (
         <ul className="staff-tiles">
           {staff.map((member) => (
@@ -454,7 +595,7 @@ function BaristaPicker({ staff, online, onChoose }: { staff: StaffEntry[]; onlin
                 <span className="initial" aria-hidden="true">
                   {Array.from(member.name)[0]?.toUpperCase()}
                 </span>
-                {member.name}
+                <bdi>{member.name}</bdi>
               </button>
             </li>
           ))}
@@ -467,6 +608,19 @@ function BaristaPicker({ staff, online, onChoose }: { staff: StaffEntry[]; onlin
 type Screen = "loading" | "pair" | "who" | "pin" | "home";
 
 export function App() {
+  return (
+    <LangProvider>
+      <Counter />
+    </LangProvider>
+  );
+}
+
+function Counter() {
+  const t = useT(AR);
+  const appName = t("Counter");
+  useEffect(() => {
+    document.title = `${PRODUCT_NAME} ${appName}`;
+  }, [appName]);
   const online = useOnlineStatus();
   const [stored, setStored] = useState<Stored | null>(null);
   const [path, setPath] = useState(window.location.pathname);
@@ -482,7 +636,11 @@ export function App() {
   const reload = useCallback(() => {
     readStored().then(setStored, (caught: unknown) => {
       console.error("Reading this phone's storage failed", caught);
-      setProblem("This phone's storage could not be read. Reload the page; if it keeps failing, check that the browser allows site data.");
+      if (caught instanceof Error && caught.message === STORAGE_BUSY) {
+        setProblem(STORAGE_BUSY);
+        return;
+      }
+      setProblem("This phone's storage could not be read. Reload the page; if it keeps failing, check that the browser allows site data." satisfies AppText);
     });
   }, []);
 
@@ -506,7 +664,7 @@ export function App() {
         setProblem(caught.message);
       } else {
         console.error("Counter work failed", caught);
-        setProblem("Something went wrong on this phone. Reload the page; waiting stamps are kept.");
+        setProblem("Something went wrong on this phone. Reload the page; waiting stamps are kept." satisfies AppText);
       }
     }
   }, []);
@@ -583,7 +741,7 @@ export function App() {
   let content: ReactNode;
   switch (screen) {
     case "loading":
-      content = <p className="empty">Loading…</p>;
+      content = <p className="empty">{t("Loading…")}</p>;
       break;
     case "pair":
       content = (
@@ -629,7 +787,7 @@ export function App() {
                 },
                 (caught: unknown) => {
                   console.error("Saving the barista failed", caught);
-                  setProblem("Signing in could not be saved on this phone. Reload the page and try again.");
+                  setProblem("Signing in could not be saved on this phone. Reload the page and try again." satisfies AppText);
                 },
               );
             }}
@@ -644,18 +802,18 @@ export function App() {
           </h2>
           <div className="session-bar">
             <p>
-              Signed in as <strong>{barista?.name}</strong> on {stored?.device?.deviceName}.
+              {t("Signed in as {name} on {device}.", { name: barista?.name ?? "", device: stored?.device?.deviceName ?? "" })}
             </p>
             <button
               type="button"
               onClick={() => {
                 deleteMeta("barista").catch((caught: unknown) => {
                   console.error("Signing out the barista failed", caught);
-                  setProblem("Switching barista failed on this phone. Reload the page and try again.");
+                  setProblem("Switching barista failed on this phone. Reload the page and try again." satisfies AppText);
                 });
               }}
             >
-              Switch barista
+              {t("Switch barista")}
             </button>
           </div>
           {device === undefined || barista === undefined ? null : (
@@ -672,10 +830,15 @@ export function App() {
         <div className="brand">
           <img src={logoUrl} alt="" width={36} height={36} />
           <h1>
-            {PRODUCT_NAME} <span className="brand-app">Counter</span>
+            {/* The product name is a Latin brand in both languages. */}
+            <span lang="en" dir="ltr">
+              {PRODUCT_NAME}
+            </span>{" "}
+            <span className="brand-app">{appName}</span>
           </h1>
         </div>
         <ConnectionStatus online={online} pending={pending} />
+        <LanguageSwitch />
       </header>
       <main>
         <StatusMessages problem={problem} notice={notice} update={update} />
@@ -683,7 +846,7 @@ export function App() {
         <RejectedList rejected={stored?.rejected ?? []} />
       </main>
       <footer className="app-footer">
-        <p>Build {__BUILD_ID__}</p>
+        <p>{t("Build {id}", { id: __BUILD_ID__ })}</p>
       </footer>
     </>
   );

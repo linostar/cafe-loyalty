@@ -1,6 +1,7 @@
-import { linkTokenSchema } from "@cafe-loyalty/shared";
+import { apiText, linkTokenSchema } from "@cafe-loyalty/shared";
 import { useContext, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ApiRequestError } from "./api.js";
+import { useApiText, useCommonT } from "./i18n.js";
 import { SessionEndedContext } from "./session.js";
 
 interface FieldProps {
@@ -18,8 +19,8 @@ interface FieldProps {
   maxLength?: number;
   /** The on-screen keyboard to show: digits for PINs and counts, decimals for prices. */
   inputMode?: "numeric" | "decimal";
-  /** For Arabic text: lang "ar" and right-to-left. */
-  lang?: "ar";
+  /** For text in one language whatever the page's: Arabic right to left, English left to right. */
+  lang?: "ar" | "en";
   /** May be left empty (fields are required otherwise). */
   optional?: boolean;
 }
@@ -30,6 +31,7 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [hint === undefined ? null : hintId, error === undefined ? null : errorId].filter((part) => part !== null).join(" ");
+  const api = useApiText();
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
@@ -43,7 +45,7 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
         maxLength={maxLength}
         inputMode={inputMode}
         lang={lang}
-        dir={lang === "ar" ? "rtl" : undefined}
+        dir={lang === undefined ? undefined : lang === "ar" ? "rtl" : "ltr"}
         value={value}
         onChange={(event) => {
           onChange(event.target.value);
@@ -58,7 +60,7 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
       )}
       {error === undefined ? null : (
         <p id={errorId} className="field-error">
-          {error}
+          {api(error)}
         </p>
       )}
     </div>
@@ -67,9 +69,9 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
 
 export interface SubmitState {
   pending: boolean;
-  /** The message to show for the last failure, if any. */
+  /** The message to show for the last failure, if any, in English as the API sent it (FormError translates it). */
   error: string | null;
-  /** Per-field messages from the last failure, by field name. */
+  /** Per-field messages from the last failure, by field name, in English (Field translates them). */
   fieldErrors: Readonly<Record<string, string>>;
   /** Runs `action`, tracking pending and errors. */
   submit: <T>(action: () => Promise<T>) => Promise<SubmitResult<T>>;
@@ -94,15 +96,16 @@ export function useSubmit(): SubmitState {
         onSessionEnded(caught.message);
       } else if (caught instanceof ApiRequestError) {
         setError(caught.message);
-        // Several issues of one field (such as each order type below a campaign's floor) are all shown.
+        // Several issues of one field (such as each order type below a campaign's floor) are all shown: kept in English,
+        // one per line, so each is translated on its own when shown (useSay).
         const byField: Record<string, string> = {};
         for (const detail of caught.details) {
           const earlier = byField[detail.path];
-          byField[detail.path] = earlier === undefined ? detail.issue : `${earlier} ${detail.issue}`;
+          byField[detail.path] = earlier === undefined ? detail.issue : `${earlier}\n${detail.issue}`;
         }
         setFieldErrors(byField);
       } else {
-        setError("Something went wrong on this page. Reload it and try again.");
+        setError(apiText("Something went wrong on this page. Reload it and try again."));
       }
       return { ok: false, error: caught };
     } finally {
@@ -113,11 +116,12 @@ export function useSubmit(): SubmitState {
   return { pending, error, fieldErrors, submit };
 }
 
-/** The form's failure message, announced when it appears. */
+/** The form's failure message in the page's language, announced when it appears. */
 export function FormError({ message }: { message: string | null }) {
+  const api = useApiText();
   return message === null ? null : (
     <p role="alert" className="form-error">
-      {message}
+      {api(message)}
     </p>
   );
 }
@@ -156,6 +160,7 @@ export function useLinkToken(name: string): string | null {
  * The second step is in the page, not a browser dialog, so it works with a keyboard and screen readers.
  */
 export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { label: string; confirmLabel: string; pending: boolean; onConfirm: () => void }) {
+  const t = useCommonT();
   const [asking, setAsking] = useState(false);
   const container = useRef<HTMLSpanElement>(null);
   /** Where focus goes once the step has rendered: Cancel while asking (the safe choice), the button after cancelling. */
@@ -199,7 +204,7 @@ export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { lab
             {confirmLabel}
           </button>
           <button type="button" data-confirm-cancel disabled={pending} onKeyDown={cancelOnEscape} onClick={cancel}>
-            Cancel
+            {t("Cancel")}
           </button>
         </>
       ) : (

@@ -9,6 +9,8 @@ afterEach(async () => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // The language choice is the viewer's; each test starts from the browser's (English in jsdom).
+  localStorage.clear();
   // Each test starts with an empty IndexedDB.
   await closeStorage();
   globalThis.indexedDB = new IDBFactory();

@@ -1,6 +1,8 @@
+import { apiText } from "@cafe-loyalty/shared";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { z } from "zod";
 import { ApiRequestError, apiRequest } from "./api.js";
+import { useApiText, useCommonT } from "./i18n.js";
 
 /**
  * Inside the signed-in pages: returns the owner to the sign-in form with a message, for any request answered
@@ -10,7 +12,7 @@ export const SessionEndedContext = createContext<((message: string) => void) | n
 
 export type ApiData<T> = { status: "loading" } | { status: "loaded"; data: T } | { status: "failed"; message: string };
 
-/** Loads `path` for a page, again whenever `reloadKey` changes; an ended session goes back to sign-in. */
+/** Loads `path` for a page (a failure's message in English as the API sent it; PageStatus translates it), again whenever `reloadKey` changes; an ended session goes back to sign-in. */
 export function useApiData<T extends z.ZodType>(path: string, schema: T, reloadKey = 0): [ApiData<z.output<T>>, (data: z.output<T>) => void] {
   const onSessionEnded = useContext(SessionEndedContext);
   const [state, setState] = useState<ApiData<z.output<T>>>({ status: "loading" });
@@ -30,7 +32,7 @@ export function useApiData<T extends z.ZodType>(path: string, schema: T, reloadK
         if (error instanceof ApiRequestError && error.failure.code === "UNAUTHENTICATED" && onSessionEnded !== null) {
           onSessionEnded(error.message);
         } else {
-          setState({ status: "failed", message: error instanceof Error ? error.message : "Could not load this page. Reload it and try again." });
+          setState({ status: "failed", message: error instanceof Error ? error.message : apiText("Could not load this page. Reload it and try again.") });
         }
       },
     );
@@ -49,11 +51,13 @@ export function useApiData<T extends z.ZodType>(path: string, schema: T, reloadK
 
 /** The loading and failure states every page shows before its content. */
 export function PageStatus({ state }: { state: ApiData<unknown> }) {
+  const t = useCommonT();
+  const api = useApiText();
   return state.status === "failed" ? (
     <p role="alert" className="form-error">
-      {state.message}
+      {api(state.message)}
     </p>
   ) : (
-    <p role="status">Loading…</p>
+    <p role="status">{t("Loading…")}</p>
   );
 }

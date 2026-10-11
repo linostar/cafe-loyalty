@@ -1,10 +1,13 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expectEveryControlNamed, expectLanguageAndFit } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { FAKE_TOKEN, SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
 /**
- * Screenshots of every dashboard page at three widths, with fake data, attached to the report for review (Step 13b).
- * They assert no pixels: font rendering differs between machines, so a pixel test would only flake.
+ * Screenshots of every dashboard page at three widths in English and Arabic, with fake data, attached to the report for
+ * review (Steps 13b and 16). They assert no pixels: font rendering differs between machines, so a pixel test would only
+ * flake. Each screen is checked for its language's direction, for fitting the width, and for controls without a name
+ * (AC 41).
  */
 test.use({ timezoneId: "UTC" });
 
@@ -120,6 +123,11 @@ const ADMIN = {
 };
 
 const WIDTHS = [1440, 1024, 390] as const;
+/** The browser locale that makes the dashboard pick each language (it follows the browser's languages). */
+const LANGS = [
+  { lang: "en", locale: "en-US" },
+  { lang: "ar", locale: "ar-LB" },
+] as const;
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
@@ -132,48 +140,61 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
   await testInfo.attach(name, { path, contentType: "image/png" });
 }
 
-for (const width of WIDTHS) {
-  test.describe(`at ${String(width)} px`, () => {
-    test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
+for (const { lang, locale } of LANGS) {
+  for (const width of WIDTHS) {
+    test.describe(`${lang} at ${String(width)} px`, () => {
+      test.use({ locale, viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
+      const suffix = `${lang === "ar" ? "-ar" : ""}-${String(width)}`;
 
-    for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"]) {
-      test(`signed in at ${path}`, async ({ page }, testInfo) => {
-        await mockApi(page, SIGNED_IN);
-        await page.goto(path);
-        await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
-        await expect(page.getByRole("status")).toHaveCount(0);
-        await capture(page, testInfo, `dashboard${path === "/" ? "-home" : path.replace("/", "-")}-${String(width)}`);
+      /** What every screen must do in this language and at this width, after its screenshot. */
+      const check = async (page: Page) => {
+        await expectLanguageAndFit(page, lang);
+        await expectEveryControlNamed(page);
+      };
+
+      for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"]) {
+        test(`signed in at ${path}`, async ({ page }, testInfo) => {
+          await mockApi(page, SIGNED_IN);
+          await page.goto(path);
+          await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
+          await expect(page.getByRole("status")).toHaveCount(0);
+          await capture(page, testInfo, `dashboard${path === "/" ? "-home" : path.replace("/", "-")}${suffix}`);
+          await check(page);
+          await expectFocusNeverHidden(page);
+        });
+      }
+
+      test("operator signed in at /admin", async ({ page }, testInfo) => {
+        await mockApi(page, ADMIN);
+        await page.goto("/admin");
+        await expect(page.getByRole("heading", { level: 3, name: SESSION.cafe.name })).toBeVisible();
+        await capture(page, testInfo, `dashboard-admin${suffix}`);
+        await check(page);
         await expectFocusNeverHidden(page);
       });
-    }
 
-    test("operator signed in at /admin", async ({ page }, testInfo) => {
-      await mockApi(page, ADMIN);
-      await page.goto("/admin");
-      await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
-      await capture(page, testInfo, `dashboard-admin-${String(width)}`);
-      await expectFocusNeverHidden(page);
-    });
-
-    test("operator signed out at /admin", async ({ page }, testInfo) => {
-      await mockApi(page, { "GET /api/admin/session": reply(401, UNAUTHENTICATED) });
-      await page.goto("/admin");
-      await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
-      await capture(page, testInfo, `dashboard-admin-sign-in-${String(width)}`);
-    });
-
-    for (const [name, path] of [
-      ["sign-in", "/"],
-      ["signup", `/signup#invite=${FAKE_TOKEN}`],
-      ["forgot-password", "/forgot-password"],
-      ["reset-password", `/reset-password#token=${FAKE_TOKEN}`],
-    ] as const) {
-      test(`signed out: ${name}`, async ({ page }, testInfo) => {
-        await mockApi(page, { "GET /api/auth/session": reply(401, UNAUTHENTICATED) });
-        await page.goto(path);
+      test("operator signed out at /admin", async ({ page }, testInfo) => {
+        await mockApi(page, { "GET /api/admin/session": reply(401, UNAUTHENTICATED) });
+        await page.goto("/admin");
         await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
-        await capture(page, testInfo, `dashboard-${name}-${String(width)}`);
+        await capture(page, testInfo, `dashboard-admin-sign-in${suffix}`);
+        await check(page);
       });
-    }
-  });
+
+      for (const [name, path] of [
+        ["sign-in", "/"],
+        ["signup", `/signup#invite=${FAKE_TOKEN}`],
+        ["forgot-password", "/forgot-password"],
+        ["reset-password", `/reset-password#token=${FAKE_TOKEN}`],
+      ] as const) {
+        test(`signed out: ${name}`, async ({ page }, testInfo) => {
+          await mockApi(page, { "GET /api/auth/session": reply(401, UNAUTHENTICATED) });
+          await page.goto(path);
+          await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+          await capture(page, testInfo, `dashboard-${name}${suffix}`);
+          await check(page);
+        });
+      }
+    });
+  }
 }

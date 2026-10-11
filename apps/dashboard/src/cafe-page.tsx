@@ -4,6 +4,7 @@ import {
   cafeSetupSchema,
   formatUsd,
   joinLinkSchema,
+  plural,
   type CafeSetup,
   type OrderType,
   type WinBackSettings,
@@ -12,12 +13,88 @@ import { useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import { useLang, useT, type Later, type Translate } from "./i18n.js";
 import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
+
+const AR = {
+  "Café name": "اسم المقهى",
+  Name: "الاسم",
+  "Save name": "حفظ الاسم",
+  "Google review link": "رابط التقييم على Google",
+  'About two hours after a visit, each customer\'s card links to a feedback page. Every customer sees this link there, beside a private message to you. Find it in your Google Business Profile under "Ask for reviews".':
+    "بعد نحو ساعتين من الزيارة، تعرض بطاقة كل زبون رابطاً إلى صفحة الملاحظات. يرى كل زبون هذا الرابط هناك، إلى جانب رسالة خاصة إليك. تجده في ملفك على Google Business Profile تحت \"Ask for reviews\" (اطلب تقييمات).",
+  "Review link": "رابط التقييم",
+  "Leave it empty to show no review link.": "اتركه فارغاً كي لا يظهر أي رابط تقييم.",
+  "Save review link": "حفظ رابط التقييم",
+  "Enter a whole number, such as 9.": "أدخل عدداً صحيحاً، مثل 9.",
+  "Loyalty program": "برنامج الولاء",
+  "Set the program before baristas start giving stamps.": "اضبط البرنامج قبل أن يبدأ الباريستا بمنح الأختام.",
+  "Stamps for a reward": "الأختام اللازمة للمكافأة",
+  "1 to 50.": "من 1 إلى 50.",
+  "Reward (English)": "المكافأة (بالإنكليزية)",
+  "Reward (Arabic)": "المكافأة (بالعربية)",
+  "Save program": "حفظ البرنامج",
+  "Enter a whole percentage from 0 to 1000, such as 30.": "أدخل نسبة مئوية صحيحة من 0 إلى 1000، مثل 30.",
+  "Minimum margin": "الحد الأدنى لهامش الربح",
+  "Minimum margin over cost (%)": "الحد الأدنى لهامش الربح فوق التكلفة (%)",
+  "Campaigns never sell an item for less than its cost plus this much: 30% keeps a drink that costs $1.00 at $1.30 or more. Running campaigns keep the margin they started with.":
+    "لا تبيع الحملات أي صنف بأقل من تكلفته زائد هذه النسبة: 30% تُبقي مشروباً تكلفته $1.00 بسعر $1.30 أو أكثر. تحتفظ الحملات الجارية بالهامش الذي بدأت به.",
+  "Save margin": "حفظ الهامش",
+  "Enter a whole percentage from 1 to 100.": "أدخل نسبة مئوية صحيحة من 1 إلى 100.",
+  "Enter an amount in dollars, such as 0.50.": "أدخل مبلغاً بالدولار، مثل 0.50.",
+  "Enter a whole number of days from {min} to {max}.": "أدخل عدداً صحيحاً من الأيام، من {min} إلى {max}.",
+  "Win-back offer": "عرض الاسترجاع",
+  "When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for {days} days, if they agreed to receive offers. It never takes an item below its minimum margin.":
+    "حين يغيب زبون دائم (3 زيارات أو أكثر) أطول بكثير من المعتاد، أسبوعين على الأقل، تعرض بطاقته هذا الخصم على زيارته التالية لمدة {days} يوماً، إن وافق على تلقي العروض. لا ينزل العرض بأي صنف دون الحد الأدنى لهامش ربحه.",
+  Discount: "الخصم",
+  "No offer": "بلا عرض",
+  "Percent off": "خصم بنسبة مئوية",
+  "Amount off each item": "خصم مبلغ عن كل صنف",
+  Percentage: "النسبة المئوية",
+  "Amount (USD)": "المبلغ (بالدولار)",
+  "A whole number, such as 15.": "عدد صحيح، مثل 15.",
+  "Such as 0.50.": "مثل 0.50.",
+  "Days before the same card can get it again": "الأيام قبل أن تحصل البطاقة نفسها عليه مجدداً",
+  "At least {days}, how long an offer lasts. Offers already given keep their terms.": "{days} على الأقل، وهي مدة العرض. تحتفظ العروض الممنوحة سابقاً بشروطها.",
+  "Save win-back offer": "حفظ عرض الاسترجاع",
+  "Enter a price in dollars up to 1,000,000, such as 2.50.": "أدخل سعراً بالدولار حتى 1,000,000، مثل 2.50.",
+  "Enter a cost in dollars up to 1,000,000, such as 0.70.": "أدخل تكلفة بالدولار حتى 1,000,000، مثل 0.70.",
+  "Enter a whole number, such as 1.": "أدخل عدداً صحيحاً، مثل 1.",
+  "Add an order type": "إضافة نوع طلب",
+  "Edit {name}": "تعديل {name}",
+  "Price (USD)": "السعر (بالدولار)",
+  "Cost to make (USD)": "تكلفة التحضير (بالدولار)",
+  "What one costs you in ingredients and cup. Offers never go below cost.": "كلفة الصنف الواحد عليك من مكوّنات وكوب. لا تنزل العروض أبداً دون التكلفة.",
+  "Stamps earned": "الأختام المكتسبة",
+  "0 to 10.": "من 0 إلى 10.",
+  "On sale (shown at the counter)": "معروض للبيع (يظهر على الكاونتر)",
+  "Add order type": "إضافة نوع الطلب",
+  "Save changes": "حفظ التغييرات",
+  "· ": "· ",
+  "not on sale": "غير معروض للبيع",
+  "{price} · cost {cost} · {stamps}": "{price} · التكلفة {cost} · {stamps}",
+  "Customer signup QR": "رمز QR لتسجيل الزبائن",
+  "Print this and put it at the counter. Customers scan it to get their loyalty card.": "اطبعه وضعه على الكاونتر. يمسحه الزبائن للحصول على بطاقة الولاء.",
+  "QR code customers scan to get a loyalty card": "رمز QR يمسحه الزبائن للحصول على بطاقة ولاء",
+  "Replace the code only if the printed one was misused: the old one stops working at once.": "لا تستبدل الرمز إلا إذا أُسيء استخدام الرمز المطبوع: يتوقف الرمز القديم عن العمل فوراً.",
+  "Replace code": "استبدال الرمز",
+  "Yes, replace the code": "نعم، استبدل الرمز",
+  Café: "المقهى",
+  "Your café's name, loyalty program, margin, win-back offer, Google review link and menu.": "اسم مقهاك، وبرنامج الولاء، والهامش، وعرض الاسترجاع، ورابط التقييم على Google، وقائمة الأصناف.",
+  "Order types": "أنواع الطلبات",
+  "No order types yet. Add what baristas stamp, such as an espresso drink.": "لا أنواع طلبات بعد. أضف ما يمنح الباريستا عليه أختاماً، مثل مشروب إسبريسو.",
+} as const;
+
+const STAMPS = {
+  en: { one: "{n} stamp", other: "{n} stamps" },
+  ar: { zero: "بلا أختام", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختماً", other: "{n} ختم" },
+};
 
 type Save = (method: "PATCH" | "PUT" | "POST", path: string, body: unknown) => Promise<boolean>;
 
 function CafeNameForm({ name, save }: { name: string; save: Save }) {
+  const t = useT(AR);
   const [value, setValue] = useState(name);
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
@@ -29,11 +106,11 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
         void submit(() => save("PATCH", "/api/cafe", { name: value }));
       }}
     >
-      <h3 id="cafe-name-title">Café name</h3>
+      <h3 id="cafe-name-title">{t("Café name")}</h3>
       <FormError message={error} />
-      <Field label="Name" name="name" type="text" value={value} onChange={setValue} maxLength={120} error={fieldErrors.name} />
+      <Field label={t("Name")} name="name" type="text" value={value} onChange={setValue} maxLength={120} error={fieldErrors.name} />
       <button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save name"}
+        {pending ? t("Saving…") : t("Save name")}
       </button>
     </form>
   );
@@ -41,6 +118,7 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
 
 /** The café's Google review link, offered to every customer on the feedback page (AC 37); empty removes it. */
 function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | null; save: Save }) {
+  const t = useT(AR);
   const [value, setValue] = useState(googleReviewUrl ?? "");
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
@@ -52,31 +130,33 @@ function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | n
         void submit(() => save("PATCH", "/api/cafe", { googleReviewUrl: value }));
       }}
     >
-      <h3 id="review-link-title">Google review link</h3>
+      <h3 id="review-link-title">{t("Google review link")}</h3>
       <p className="hint">
-        About two hours after a visit, each customer&apos;s card links to a feedback page. Every customer sees this link there, beside a private message to
-        you. Find it in your Google Business Profile under &quot;Ask for reviews&quot;.
+        {t(
+          'About two hours after a visit, each customer\'s card links to a feedback page. Every customer sees this link there, beside a private message to you. Find it in your Google Business Profile under "Ask for reviews".',
+        )}
       </p>
       <FormError message={error} />
       <Field
-        label="Review link"
+        label={t("Review link")}
         name="googleReviewUrl"
         type="url"
         value={value}
         onChange={setValue}
         maxLength={500}
         optional
-        hint="Leave it empty to show no review link."
+        hint={t("Leave it empty to show no review link.")}
         error={fieldErrors.googleReviewUrl}
       />
       <button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save review link"}
+        {pending ? t("Saving…") : t("Save review link")}
       </button>
     </form>
   );
 }
 
 function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: Save }) {
+  const t = useT(AR);
   const [stamps, setStamps] = useState(program === null ? "" : String(program.stampsRequired));
   const [rewardEn, setRewardEn] = useState(program?.rewardNameEn ?? "");
   const [rewardAr, setRewardAr] = useState(program?.rewardNameAr ?? "");
@@ -89,30 +169,39 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
       onSubmit={(event) => {
         event.preventDefault();
         const stampsRequired = parseWholeNumberInput(stamps);
-        setStampsError(stampsRequired === null ? "Enter a whole number, such as 9." : undefined);
+        setStampsError(stampsRequired === null ? t("Enter a whole number, such as 9.") : undefined);
         if (stampsRequired === null) {
           return;
         }
         void submit(() => save("PUT", "/api/cafe/program", { stampsRequired, rewardNameEn: rewardEn, rewardNameAr: rewardAr }));
       }}
     >
-      <h3 id="program-title">Loyalty program</h3>
-      {program === null ? <p>Set the program before baristas start giving stamps.</p> : null}
+      <h3 id="program-title">{t("Loyalty program")}</h3>
+      {program === null ? <p>{t("Set the program before baristas start giving stamps.")}</p> : null}
       <FormError message={error} />
       <Field
-        label="Stamps for a reward"
+        label={t("Stamps for a reward")}
         name="stampsRequired"
         type="text"
         inputMode="numeric"
         value={stamps}
         onChange={setStamps}
-        hint="1 to 50."
+        hint={t("1 to 50.")}
         error={stampsError ?? fieldErrors.stampsRequired}
       />
-      <Field label="Reward (English)" name="rewardNameEn" type="text" value={rewardEn} onChange={setRewardEn} maxLength={80} error={fieldErrors.rewardNameEn} />
-      <Field label="Reward (Arabic)" name="rewardNameAr" type="text" lang="ar" value={rewardAr} onChange={setRewardAr} maxLength={80} error={fieldErrors.rewardNameAr} />
+      <Field label={t("Reward (English)")} name="rewardNameEn" type="text" lang="en" value={rewardEn} onChange={setRewardEn} maxLength={80} error={fieldErrors.rewardNameEn} />
+      <Field
+        label={t("Reward (Arabic)")}
+        name="rewardNameAr"
+        type="text"
+        lang="ar"
+        value={rewardAr}
+        onChange={setRewardAr}
+        maxLength={80}
+        error={fieldErrors.rewardNameAr}
+      />
       <button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save program"}
+        {pending ? t("Saving…") : t("Save program")}
       </button>
     </form>
   );
@@ -120,6 +209,7 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
 
 /** The café's minimum margin over cost, below which no campaign may discount (AC 35). */
 function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save: Save }) {
+  const t = useT(AR);
   const [value, setValue] = useState(String(minMarginPercent));
   const [invalid, setInvalid] = useState<string | undefined>(undefined);
   const { pending, error, fieldErrors, submit } = useSubmit();
@@ -130,26 +220,28 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
       onSubmit={(event) => {
         event.preventDefault();
         const percent = parseWholeNumberInput(value);
-        setInvalid(percent === null || percent > 1000 ? "Enter a whole percentage from 0 to 1000, such as 30." : undefined);
+        setInvalid(percent === null || percent > 1000 ? t("Enter a whole percentage from 0 to 1000, such as 30.") : undefined);
         if (percent !== null && percent <= 1000) {
           void submit(() => save("PATCH", "/api/cafe", { minMarginPercent: percent }));
         }
       }}
     >
-      <h3 id="margin-title">Minimum margin</h3>
+      <h3 id="margin-title">{t("Minimum margin")}</h3>
       <FormError message={error} />
       <Field
-        label="Minimum margin over cost (%)"
+        label={t("Minimum margin over cost (%)")}
         name="minMarginPercent"
         type="text"
         inputMode="numeric"
         value={value}
         onChange={setValue}
-        hint="Campaigns never sell an item for less than its cost plus this much: 30% keeps a drink that costs $1.00 at $1.30 or more. Running campaigns keep the margin they started with."
+        hint={t(
+          "Campaigns never sell an item for less than its cost plus this much: 30% keeps a drink that costs $1.00 at $1.30 or more. Running campaigns keep the margin they started with.",
+        )}
         error={invalid ?? fieldErrors.minMarginPercent}
       />
       <button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save margin"}
+        {pending ? t("Saving…") : t("Save margin")}
       </button>
     </form>
   );
@@ -160,6 +252,7 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
  * long before the same card can get it again.
  */
 function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }) {
+  const t = useT(AR);
   const [kind, setKind] = useState<"none" | "percent" | "amount">(winBack.discount?.kind ?? "none");
   const [value, setValue] = useState(winBack.discount === null ? "" : winBack.discount.kind === "percent" ? String(winBack.discount.value) : centsToInput(winBack.discount.value));
   const [cooldown, setCooldown] = useState(String(winBack.cooldownDays));
@@ -175,10 +268,10 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         const days = parseWholeNumberInput(cooldown);
         const invalid: Record<string, string> = {
           ...(kind !== "none" && (amount === null || amount < 1 || (kind === "percent" && amount > 100))
-            ? { discount: kind === "percent" ? "Enter a whole percentage from 1 to 100." : "Enter an amount in dollars, such as 0.50." }
+            ? { discount: kind === "percent" ? t("Enter a whole percentage from 1 to 100.") : t("Enter an amount in dollars, such as 0.50.") }
             : {}),
           ...(days === null || days < WIN_BACK_OFFER_DAYS || days > WIN_BACK_MAX_COOLDOWN_DAYS
-            ? { cooldownDays: `Enter a whole number of days from ${String(WIN_BACK_OFFER_DAYS)} to ${String(WIN_BACK_MAX_COOLDOWN_DAYS)}.` }
+            ? { cooldownDays: t("Enter a whole number of days from {min} to {max}.", { min: WIN_BACK_OFFER_DAYS, max: WIN_BACK_MAX_COOLDOWN_DAYS }) }
             : {}),
         };
         setProblems(invalid);
@@ -189,14 +282,16 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         void submit(() => save("PUT", "/api/cafe/win-back", body));
       }}
     >
-      <h3 id="win-back-title">Win-back offer</h3>
+      <h3 id="win-back-title">{t("Win-back offer")}</h3>
       <p className="hint">
-        When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for{" "}
-        {WIN_BACK_OFFER_DAYS} days, if they agreed to receive offers. It never takes an item below its minimum margin.
+        {t(
+          "When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for {days} days, if they agreed to receive offers. It never takes an item below its minimum margin.",
+          { days: WIN_BACK_OFFER_DAYS },
+        )}
       </p>
       <FormError message={error} />
       <fieldset>
-        <legend>Discount</legend>
+        <legend>{t("Discount")}</legend>
         <div className="choices">
           {(
             [
@@ -214,35 +309,35 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
                   setKind(option);
                 }}
               />{" "}
-              {label}
+              {t(label)}
             </label>
           ))}
         </div>
         {kind === "none" ? null : (
           <Field
-            label={kind === "percent" ? "Percentage" : "Amount (USD)"}
+            label={kind === "percent" ? t("Percentage") : t("Amount (USD)")}
             name="winBackDiscount"
             type="text"
             inputMode={kind === "percent" ? "numeric" : "decimal"}
             value={value}
             onChange={setValue}
-            hint={kind === "percent" ? "A whole number, such as 15." : "Such as 0.50."}
+            hint={kind === "percent" ? t("A whole number, such as 15.") : t("Such as 0.50.")}
             error={problems.discount ?? fieldErrors["discount.value"]}
           />
         )}
       </fieldset>
       <Field
-        label="Days before the same card can get it again"
+        label={t("Days before the same card can get it again")}
         name="cooldownDays"
         type="text"
         inputMode="numeric"
         value={cooldown}
         onChange={setCooldown}
-        hint={`At least ${String(WIN_BACK_OFFER_DAYS)}, how long an offer lasts. Offers already given keep their terms.`}
+        hint={t("At least {days}, how long an offer lasts. Offers already given keep their terms.", { days: WIN_BACK_OFFER_DAYS })}
         error={problems.cooldownDays ?? fieldErrors.cooldownDays}
       />
       <button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save win-back offer"}
+        {pending ? t("Saving…") : t("Save win-back offer")}
       </button>
     </form>
   );
@@ -250,6 +345,8 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
 
 /** Adds an order type, or edits one when `orderType` is given. */
 function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: () => void }) {
+  const t = useT(AR);
+  const lang = useLang();
   const [nameEn, setNameEn] = useState(orderType?.nameEn ?? "");
   const [nameAr, setNameAr] = useState(orderType?.nameAr ?? "");
   const [price, setPrice] = useState(orderType === undefined ? "" : centsToInput(orderType.priceCents));
@@ -270,9 +367,9 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         const costCents = parseUsdInput(cost);
         const stampsEarned = parseWholeNumberInput(stamps);
         const invalid = {
-          ...(priceCents === null ? { priceCents: "Enter a price in dollars up to 1,000,000, such as 2.50." } : {}),
-          ...(costCents === null ? { costCents: "Enter a cost in dollars up to 1,000,000, such as 0.70." } : {}),
-          ...(stampsEarned === null ? { stampsEarned: "Enter a whole number, such as 1." } : {}),
+          ...(priceCents === null ? { priceCents: t("Enter a price in dollars up to 1,000,000, such as 2.50.") } : {}),
+          ...(costCents === null ? { costCents: t("Enter a cost in dollars up to 1,000,000, such as 0.70.") } : {}),
+          ...(stampsEarned === null ? { stampsEarned: t("Enter a whole number, such as 1.") } : {}),
         };
         setAmountErrors(invalid);
         if (priceCents === null || costCents === null || stampsEarned === null) {
@@ -295,12 +392,14 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         });
       }}
     >
-      <h4 id={titleId}>{orderType === undefined ? "Add an order type" : `Edit ${orderType.nameEn}`}</h4>
+      <h4 id={titleId}>
+        {orderType === undefined ? t("Add an order type") : t("Edit {name}", { name: lang === "ar" ? orderType.nameAr : orderType.nameEn })}
+      </h4>
       <FormError message={error} />
-      <Field label="Name (English)" name="nameEn" type="text" value={nameEn} onChange={setNameEn} maxLength={60} error={fieldErrors.nameEn} />
-      <Field label="Name (Arabic)" name="nameAr" type="text" lang="ar" value={nameAr} onChange={setNameAr} maxLength={60} error={fieldErrors.nameAr} />
+      <Field label={t("Name (English)")} name="nameEn" type="text" lang="en" value={nameEn} onChange={setNameEn} maxLength={60} error={fieldErrors.nameEn} />
+      <Field label={t("Name (Arabic)")} name="nameAr" type="text" lang="ar" value={nameAr} onChange={setNameAr} maxLength={60} error={fieldErrors.nameAr} />
       <Field
-        label="Price (USD)"
+        label={t("Price (USD)")}
         name="price"
         type="text"
         inputMode="decimal"
@@ -309,23 +408,23 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         error={amountErrors.priceCents ?? fieldErrors.priceCents}
       />
       <Field
-        label="Cost to make (USD)"
+        label={t("Cost to make (USD)")}
         name="cost"
         type="text"
         inputMode="decimal"
         value={cost}
         onChange={setCost}
-        hint="What one costs you in ingredients and cup. Offers never go below cost."
+        hint={t("What one costs you in ingredients and cup. Offers never go below cost.")}
         error={amountErrors.costCents ?? fieldErrors.costCents}
       />
       <Field
-        label="Stamps earned"
+        label={t("Stamps earned")}
         name="stampsEarned"
         type="text"
         inputMode="numeric"
         value={stamps}
         onChange={setStamps}
-        hint="0 to 10."
+        hint={t("0 to 10.")}
         error={amountErrors.stampsEarned ?? fieldErrors.stampsEarned}
       />
       <div className="field">
@@ -337,16 +436,16 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
               setActive(event.target.checked);
             }}
           />{" "}
-          On sale (shown at the counter)
+          {t("On sale (shown at the counter)")}
         </label>
       </div>
       <div className="actions">
         <button type="submit" disabled={pending}>
-          {pending ? "Saving…" : orderType === undefined ? "Add order type" : "Save changes"}
+          {pending ? t("Saving…") : orderType === undefined ? t("Add order type") : t("Save changes")}
         </button>
         {onDone === undefined || orderType === undefined ? null : (
           <button type="button" onClick={onDone}>
-            Cancel
+            {t("Cancel")}
           </button>
         )}
       </div>
@@ -355,6 +454,8 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
 }
 
 function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }) {
+  const t = useT(AR);
+  const lang = useLang();
   const [editing, setEditing] = useState(false);
   const item = useFocusOnChange<HTMLLIElement>(editing);
   if (editing) {
@@ -373,28 +474,47 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
   return (
     <li ref={item} className="row">
       <span className="row-main">
-        <strong>{orderType.nameEn}</strong> <span lang="ar">{orderType.nameAr}</span>
+        {/* Both names: the page's language first, the other marked as such. */}
+        {lang === "ar" ? (
+          <>
+            <strong>{orderType.nameAr}</strong>{" "}
+            <span lang="en" dir="ltr">
+              {orderType.nameEn}
+            </span>
+          </>
+        ) : (
+          <>
+            <strong>{orderType.nameEn}</strong>{" "}
+            <span lang="ar" dir="rtl">
+              {orderType.nameAr}
+            </span>
+          </>
+        )}
         {orderType.active ? null : (
           <>
             {" "}
             <span className="badge">
-              <span className="visually-hidden">· </span>not on sale
+              <span className="visually-hidden">{t("· ")}</span>
+              {t("not on sale")}
             </span>
           </>
         )}
         <span className="row-meta">
-          {formatUsd(orderType.priceCents, "en")} · cost {formatUsd(orderType.costCents, "en")} · {orderType.stampsEarned} stamp
-          {orderType.stampsEarned === 1 ? "" : "s"}
+          {t("{price} · cost {cost} · {stamps}", {
+            price: formatUsd(orderType.priceCents, "en"),
+            cost: formatUsd(orderType.costCents, "en"),
+            stamps: plural(lang, STAMPS, orderType.stampsEarned),
+          })}
         </span>
       </span>
       <button
         type="button"
-        aria-label={`Edit ${orderType.nameEn}`}
+        aria-label={t("Edit {name}", { name: lang === "ar" ? orderType.nameAr : orderType.nameEn })}
         onClick={() => {
           setEditing(true);
         }}
       >
-        Edit
+        {t("Edit")}
       </button>
     </li>
   );
@@ -402,6 +522,7 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
 
 /** The QR customers scan at the counter to get a card (AC 4), for printing; replacing it retires the old one. */
 function SignupQr() {
+  const t = useT(AR);
   const [state, setLink] = useApiData("/api/cafe/join", joinLinkSchema);
   const { pending, error, submit } = useSubmit();
   if (state.status !== "loaded") {
@@ -411,18 +532,20 @@ function SignupQr() {
   return (
     <section aria-labelledby="signup-qr-title" className="card">
       <h3 id="signup-qr-title" tabIndex={-1} data-focus-after-change>
-        Customer signup QR
+        {t("Customer signup QR")}
       </h3>
-      <p className="hint">Print this and put it at the counter. Customers scan it to get their loyalty card.</p>
+      <p className="hint">{t("Print this and put it at the counter. Customers scan it to get their loyalty card.")}</p>
       <div className="signup-qr-box">
-        <img className="signup-qr" src={qr} alt="QR code customers scan to get a loyalty card" width={200} height={200} />
-        <p className="link">{state.data.joinUrl}</p>
+        <img className="signup-qr" src={qr} alt={t("QR code customers scan to get a loyalty card")} width={200} height={200} />
+        <p className="link" dir="ltr">
+          {state.data.joinUrl}
+        </p>
       </div>
       <FormError message={error} />
-      <p className="hint">Replace the code only if the printed one was misused: the old one stops working at once.</p>
+      <p className="hint">{t("Replace the code only if the printed one was misused: the old one stops working at once.")}</p>
       <ConfirmButton
-        label="Replace code"
-        confirmLabel="Yes, replace the code"
+        label={t("Replace code")}
+        confirmLabel={t("Yes, replace the code")}
         pending={pending}
         onConfirm={() => {
           void submit(() => apiRequest("POST", "/api/cafe/join/rotate", joinLinkSchema)).then((result) => {
@@ -438,8 +561,10 @@ function SignupQr() {
 
 /** `/cafe`: the café's name, loyalty program and order types (AC 1). */
 export function CafePage() {
+  const t = useT(AR);
   const [state, setSetup] = useApiData("/api/cafe", cafeSetupSchema);
-  const [saved, setSaved] = useState<string | null>(null);
+  const lang = useLang();
+  const [saved, setSaved] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
@@ -448,15 +573,15 @@ export function CafePage() {
   const save: Save = async (method, path, body) => {
     setSaved(null);
     setSetup(await apiRequest(method, path, cafeSetupSchema, body));
-    setSaved("Saved.");
+    setSaved(() => (say: Translate<typeof AR>) => say("Saved."));
     return true;
   };
 
   return (
     <section aria-labelledby="cafe-page-title">
-      <h2 id="cafe-page-title">Café</h2>
-      <p className="page-intro">Your café&apos;s name, loyalty program, margin, win-back offer, Google review link and menu.</p>
-      {saved === null ? null : <Notice>{saved}</Notice>}
+      <h2 id="cafe-page-title">{t("Café")}</h2>
+      <p className="page-intro">{t("Your café's name, loyalty program, margin, win-back offer, Google review link and menu.")}</p>
+      {saved === null ? null : <Notice>{saved(t, lang)}</Notice>}
       <div className="card-grid">
         <CafeNameForm name={setup.cafe.name} save={save} />
         <SignupQr />
@@ -466,9 +591,9 @@ export function CafePage() {
         <ReviewLinkForm googleReviewUrl={setup.cafe.googleReviewUrl} save={save} />
       </div>
       <section aria-labelledby="order-types-title" className="card">
-        <h3 id="order-types-title">Order types</h3>
+        <h3 id="order-types-title">{t("Order types")}</h3>
         {setup.orderTypes.length === 0 ? (
-          <p className="empty">No order types yet. Add what baristas stamp, such as an espresso drink.</p>
+          <p className="empty">{t("No order types yet. Add what baristas stamp, such as an espresso drink.")}</p>
         ) : (
           <ul className="items">
             {setup.orderTypes.map((orderType) => (

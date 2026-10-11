@@ -1,23 +1,24 @@
 import { z } from "zod";
+import { apiMessage, apiText } from "./api-messages.js";
 import { cafePlanSchema } from "./admin.js";
 import { WIN_BACK_MAX_COOLDOWN_DAYS, WIN_BACK_OFFER_DAYS } from "./campaigns.js";
 import { centsSchema } from "./money.js";
 import { syncSignatureSchema } from "./sync.js";
 
 const id = z.uuid().transform((value) => value.toLowerCase());
-const text = (max: number) => z.string().trim().min(1, "Fill this in.").max(max, `Use at most ${String(max)} characters.`);
+const text = (max: number) => z.string().trim().min(1, apiText("Fill this in.")).max(max, apiMessage("Use at most {max} characters.", { max }));
 const timestamp = z.iso.datetime({ offset: false });
 
 /** Changes to a request object must name at least one field. */
 const atLeastOneField = (value: Record<string, unknown>) => Object.values(value).some((entry) => entry !== undefined);
 
 /** The least a discounted price may be, as a percentage over cost (AC 35). */
-export const minMarginPercentSchema = z.int("Use a whole percentage.").min(0, "Use 0% or more.").max(1000, "Use at most 1000%.");
+export const minMarginPercentSchema = z.int(apiText("Use a whole percentage.")).min(0, apiText("Use 0% or more.")).max(1000, apiText("Use at most 1000%."));
 
 /** A campaign's or win-back offer's discount: percent off each eligible unit (1-100), or a fixed amount off each, in cents. */
 export const discountSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("percent"), value: z.int("Use a whole percentage.").min(1, "Use 1% to 100%.").max(100, "Use 1% to 100%.") }),
-  z.object({ kind: z.literal("amount"), value: centsSchema.min(1, "Use an amount of $0.01 or more.") }),
+  z.object({ kind: z.literal("percent"), value: z.int(apiText("Use a whole percentage.")).min(1, apiText("Use 1% to 100%.")).max(100, apiText("Use 1% to 100%.")) }),
+  z.object({ kind: z.literal("amount"), value: centsSchema.min(1, apiText("Use an amount of $0.01 or more.")) }),
 ]);
 
 /**
@@ -27,9 +28,9 @@ export const discountSchema = z.discriminatedUnion("kind", [
 export const winBackSettingsSchema = z.object({
   discount: discountSchema.nullable(),
   cooldownDays: z
-    .int("Use a whole number of days.")
-    .min(WIN_BACK_OFFER_DAYS, `Use at least ${String(WIN_BACK_OFFER_DAYS)} days, how long an offer lasts.`)
-    .max(WIN_BACK_MAX_COOLDOWN_DAYS, `Use at most ${String(WIN_BACK_MAX_COOLDOWN_DAYS)} days.`),
+    .int(apiText("Use a whole number of days."))
+    .min(WIN_BACK_OFFER_DAYS, apiMessage("Use at least {days} days, how long an offer lasts.", { days: WIN_BACK_OFFER_DAYS }))
+    .max(WIN_BACK_MAX_COOLDOWN_DAYS, apiMessage("Use at most {days} days.", { days: WIN_BACK_MAX_COOLDOWN_DAYS })),
 });
 
 /** A path segment of a Maps place link (a name with + for spaces, percent-encoded when not ASCII, or "@33.89,35.50,17z"). */
@@ -56,7 +57,7 @@ const GOOGLE_REVIEW_PATHS = new Map<string, RegExp>([
 export const googleReviewUrlSchema = z
   .string()
   .trim()
-  .max(500, "Use at most 500 characters.")
+  .max(500, apiMessage("Use at most {max} characters.", { max: 500 }))
   .transform((value, context) => {
     if (value === "") {
       return null;
@@ -74,16 +75,16 @@ export const googleReviewUrlSchema = z
       // The scheme and host in lower case, as the database's check expects.
       return `https://${host}${rest}`;
     }
-    context.addIssue({ code: "custom", message: "Paste the review link from your Google Business Profile, such as https://g.page/r/…/review." });
+    context.addIssue({ code: "custom", message: apiText("Paste the review link from your Google Business Profile, such as https://g.page/r/…/review.") });
     return z.NEVER;
   });
 
 export const cafeUpdateSchema = z
   .object({ name: text(120).optional(), minMarginPercent: minMarginPercentSchema.optional(), googleReviewUrl: googleReviewUrlSchema.optional() })
-  .refine(atLeastOneField, "Change at least one field.");
+  .refine(atLeastOneField, apiText("Change at least one field."));
 
 export const loyaltyProgramSchema = z.object({
-  stampsRequired: z.int().min(1, "Use at least 1 stamp.").max(50, "Use at most 50 stamps."),
+  stampsRequired: z.int().min(1, apiText("Use at least 1 stamp.")).max(50, apiText("Use at most 50 stamps.")),
   rewardNameAr: text(80),
   rewardNameEn: text(80),
 });
@@ -94,12 +95,12 @@ const orderTypeFields = {
   /** USD in integer cents. */
   priceCents: centsSchema,
   costCents: centsSchema,
-  stampsEarned: z.int().min(0, "Use 0 to 10 stamps.").max(10, "Use 0 to 10 stamps."),
+  stampsEarned: z.int().min(0, apiText("Use 0 to 10 stamps.")).max(10, apiText("Use 0 to 10 stamps.")),
   active: z.boolean(),
 };
 
 export const orderTypeCreateSchema = z.object({ ...orderTypeFields, active: orderTypeFields.active.default(true) });
-export const orderTypeUpdateSchema = z.object(orderTypeFields).partial().refine(atLeastOneField, "Change at least one field.");
+export const orderTypeUpdateSchema = z.object(orderTypeFields).partial().refine(atLeastOneField, apiText("Change at least one field."));
 export const orderTypeSchema = z.object({ id: z.uuid(), ...orderTypeFields });
 
 /** Everything the dashboard's café setup screen shows. */
@@ -133,11 +134,11 @@ function isEasyPin(pin: string): boolean {
 export const staffPinSchema = z
   .string()
   // abort: a PIN of the wrong shape gets only this message, not also the guessability one.
-  .regex(new RegExp(`^\\d{${String(STAFF_PIN_MIN_LENGTH)},${String(STAFF_PIN_MAX_LENGTH)}}$`), { message: "Use 6 to 12 digits.", abort: true })
-  .refine((pin) => !isEasyPin(pin), "Choose a PIN that is harder to guess than a repeated digit or a straight run such as 123456.");
+  .regex(new RegExp(`^\\d{${String(STAFF_PIN_MIN_LENGTH)},${String(STAFF_PIN_MAX_LENGTH)}}$`), { message: apiText("Use 6 to 12 digits."), abort: true })
+  .refine((pin) => !isEasyPin(pin), apiText("Choose a PIN that is harder to guess than a repeated digit or a straight run such as 123456."));
 
 export const staffCreateSchema = z.object({ name: text(60), pin: staffPinSchema });
-export const staffUpdateSchema = z.object({ name: text(60).optional(), pin: staffPinSchema.optional() }).refine(atLeastOneField, "Change at least one field.");
+export const staffUpdateSchema = z.object({ name: text(60).optional(), pin: staffPinSchema.optional() }).refine(atLeastOneField, apiText("Change at least one field."));
 export const staffMemberSchema = z.object({ id: z.uuid(), name: z.string(), revoked: z.boolean(), createdAt: timestamp });
 export const staffListSchema = z.object({ staff: z.array(staffMemberSchema) });
 
@@ -182,7 +183,7 @@ export const devicesSchema = z.object({
   pairingCodes: z.array(z.object({ id: z.uuid(), deviceName: z.string(), expiresAt: timestamp })),
 });
 
-const base64url = (length: number) => z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${String(length)}}$`), "Not a valid key.");
+const base64url = (length: number) => z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${String(length)}}$`), apiText("Not a valid key."));
 
 /** The device's ECDSA P-256 public key, as WebCrypto exports it to JWK; other members are dropped. */
 export const devicePublicKeySchema = z.object({ kty: z.literal("EC"), crv: z.literal("P-256"), x: base64url(43), y: base64url(43) });
@@ -197,7 +198,7 @@ export const pairRequestSchema = z.object({
   code: z.string().max(40).transform((value, context) => {
     const code = normalizePairingCode(value);
     if (code === null) {
-      context.addIssue({ code: "custom", message: "Enter the 12-character code shown on the owner's dashboard." });
+      context.addIssue({ code: "custom", message: apiText("Enter the 12-character code shown on the owner's dashboard.") });
       return z.NEVER;
     }
     return code;
@@ -276,19 +277,19 @@ export const campaignCreateSchema = z
     nameEn: text(60),
     weekdays: z
       .array(z.int().min(1).max(7))
-      .min(1, "Pick at least one day.")
+      .min(1, apiText("Pick at least one day."))
       .max(7)
-      .refine((days) => new Set(days).size === days.length, "Pick each day once."),
+      .refine((days) => new Set(days).size === days.length, apiText("Pick each day once.")),
     startsMinute: minuteOfDay.max(1439),
     endsMinute: minuteOfDay.min(1),
     discount: discountSchema,
     orderTypeIds: z
       .array(id)
-      .min(1, "Pick at least one order type.")
+      .min(1, apiText("Pick at least one order type."))
       .max(100)
-      .refine((ids) => new Set(ids).size === ids.length, "Pick each order type once."),
+      .refine((ids) => new Set(ids).size === ids.length, apiText("Pick each order type once.")),
   })
-  .refine((campaign) => campaign.startsMinute < campaign.endsMinute, { path: ["endsMinute"], message: "End after the start, on the same day." });
+  .refine((campaign) => campaign.startsMinute < campaign.endsMinute, { path: ["endsMinute"], message: apiText("End after the start, on the same day.") });
 
 /** A campaign as the counter applies it (AC 35). */
 export const campaignTermsSchema = z.object({

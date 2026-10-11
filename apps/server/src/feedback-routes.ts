@@ -1,5 +1,5 @@
 import { withCafe, type Database } from "@cafe-loyalty/db";
-import { ApiError, FEEDBACK_INBOX_LIMIT, type FeedbackInbox } from "@cafe-loyalty/shared";
+import { apiText, ApiError, FEEDBACK_INBOX_LIMIT, type FeedbackInbox } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
@@ -58,7 +58,7 @@ export function feedbackRoutes(app: FastifyInstance, options: FeedbackRoutesOpti
       trx.updateTable("feedback").set({ read_at: sql<Date>`coalesce(read_at, now())` }).where("id", "=", id).returning("id").executeTakeFirst(),
     );
     if (found === undefined) {
-      throw new ApiError("NOT_FOUND", "This message does not exist. Reload the inbox.");
+      throw new ApiError("NOT_FOUND", apiText("This message does not exist. Reload the inbox."));
     }
     return { read: true as const };
   });

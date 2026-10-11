@@ -1,6 +1,8 @@
 import {
   bestCampaign,
   formatUsd,
+  localiseApiMessage,
+  plural,
   normalizePhoneInput,
   parseCardQr,
   redemptionSchema,
@@ -8,13 +10,86 @@ import {
   visitRecordedV3PayloadSchema,
   winBackUnitDiscountCents,
   type DeviceCatalog,
+  type Lang,
   type WinBackOffer,
 } from "@cafe-loyalty/shared";
 import { useEffect, useId, useRef, useState } from "react";
 import { DeviceUnpairedError, RequestError, deviceRequest } from "./device.js";
+import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
 import { QrScanner } from "./scanner.js";
 import { deleteMeta, getMeta, setMeta, type DeviceRecord, type MetaValues, type StaffEntry } from "./storage.js";
 import { recordEvent } from "./sync.js";
+
+const AR = {
+  "That QR code is not a loyalty card. Scan the card the customer shows in their wallet or browser.":
+    "رمز QR هذا ليس بطاقة ولاء. امسح البطاقة التي يُظهرها الزبون في محفظته أو متصفحه.",
+  "That card is for another café. Ask for this café's card, or sign the customer up with the counter QR.":
+    "هذه البطاقة لمقهى آخر. اطلب بطاقة هذا المقهى، أو سجّل الزبون عبر رمز QR الخاص بالكاونتر.",
+  "Win-back offer": "عرض الاسترجاع",
+  "{value}% off": "خصم {value}%",
+  "{amount} off": "خصم {amount}",
+  "Scan the customer's card, or enter their mobile number.": "امسح بطاقة الزبون، أو أدخل رقم هاتفه المحمول.",
+  "Enter a Lebanese mobile number, such as 70 123 456.": "أدخل رقم هاتف محمول لبنانياً، مثل 70 123 456.",
+  "Add what the customer ordered first.": "أضف ما طلبه الزبون أولاً.",
+  "This order is too large to record. Split it into two visits.": "هذا الطلب أكبر من أن يُسجَّل. قسّمه على زيارتين.",
+  "Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.": "حُفظت الزيارة، وتكسب حتى {stamps}. تُرسل فور اتصال الهاتف بالإنترنت.",
+  "Visit saved. It is sent as soon as the phone is online.": "حُفظت الزيارة. تُرسل فور اتصال الهاتف بالإنترنت.",
+  "The visit could not be saved on this phone. Reload the page and record it again.": "تعذّر حفظ الزيارة على هذا الهاتف. أعد تحميل الصفحة وسجّلها مجدداً.",
+  "Scan the customer's card": "امسح بطاقة الزبون",
+  "customer's loyalty card QR code": "رمز QR لبطاقة ولاء الزبون",
+  "Enter the customer's mobile number instead.": "أدخل رقم هاتف الزبون المحمول بدلاً من ذلك.",
+  "New visit": "زيارة جديدة",
+  "was ": "كان ",
+  "now ": "الآن ",
+  "One less {name}": "إنقاص {name} بواحد",
+  "One more {name}": "زيادة {name} بواحد",
+  "An item": "صنف",
+  "No longer on sale, so left out of this order: {names}. The total does not include it.": "لم يعد معروضاً للبيع، فاستُبعد من هذا الطلب: {names}. المجموع لا يشمله.",
+  "No longer on sale, so left out of this order: {names}. The total does not include them.": "لم تعد معروضة للبيع، فاستُبعدت من هذا الطلب: {names}. المجموع لا يشملها.",
+  "This card has a win-back offer, {discount}: apply it": "لهذه البطاقة عرض استرجاع، {discount}: طبّقه",
+  "The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.":
+    "لا يخصم العرض شيئاً من هذا الطلب: إما أن حملة تعطي أكثر، وإما أنه سيبيع دون حد الهامش الأدنى. تحتفظ البطاقة بالعرض لزيارتها التالية.",
+  "Total {total} · {stamps}": "المجموع {total} · {stamps}",
+  "Scan card": "امسح البطاقة",
+  "Card scanned.": "مُسحت البطاقة.",
+  "Clear card": "إزالة البطاقة",
+  "Or the customer's mobile number": "أو رقم هاتف الزبون المحمول",
+  "Record visit": "تسجيل الزيارة",
+  "A reward started at {time} was not confirmed. Press Try again to find out whether that customer got it, before giving another.":
+    "لم تُؤكَّد مكافأة بدأت عند {time}. اضغط «حاول مجدداً» لمعرفة ما إذا حصل عليها ذلك الزبون، قبل إعطاء أخرى.",
+  "This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward.":
+    "تعذّرت قراءة ذاكرة هذا الهاتف، فقد تكون هناك مكافأة غير مؤكَّدة. أعد تحميل الصفحة قبل إعطاء مكافأة.",
+  "The reward could not be started on this phone. Reload the page and try again.": "تعذّر بدء المكافأة على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
+  "Reward given: {reward}. {left} left on the card.": "مُنحت المكافأة: {reward}. المتبقّي على البطاقة: {left}.",
+  "The earlier reward, started at {time}, was given: {reward}. {left} left on that card. If that customer did not get it, tell the owner.":
+    "المكافأة السابقة، التي بدأت عند {time}، مُنحت: {reward}. المتبقّي على تلك البطاقة: {left}. إذا لم يحصل عليها ذلك الزبون، فأخبر المالك.",
+  "The reward started at {time} was not confirmed. Do not give it yet: check the connection, then press Try again.":
+    "لم تُؤكَّد المكافأة التي بدأت عند {time}. لا تعطها بعد: تحقق من الاتصال، ثم اضغط «حاول مجدداً».",
+  "The earlier reward, started at {time}, was not given: {reason}": "المكافأة السابقة، التي بدأت عند {time}، لم تُمنح: {reason}",
+  "The reward could not be confirmed on this phone. Reload the page, then press Try again.": "تعذّر تأكيد المكافأة على هذا الهاتف. أعد تحميل الصفحة، ثم اضغط «حاول مجدداً».",
+  "Give a reward": "إعطاء مكافأة",
+  "{reward} for {stamps}.": "{reward} مقابل {stamps}.",
+  "Rewards need the card scanned: give them from a phone with a camera.": "المكافآت تحتاج إلى مسح البطاقة: أعطها من هاتف فيه كاميرا.",
+  "Rewards need an internet connection. Connect the phone, then try again.": "المكافآت تحتاج إلى اتصال بالإنترنت. صِل الهاتف بالإنترنت، ثم حاول مجدداً.",
+  "Scan card for a reward": "امسح البطاقة لإعطاء مكافأة",
+  "Loading the menu…": "جارٍ تحميل القائمة…",
+  "Connect to the internet once to load the menu.": "اتصل بالإنترنت مرة واحدة لتحميل القائمة.",
+  "Nothing is on sale yet. Ask the owner to add order types on the dashboard.": "لا شيء معروض للبيع بعد. اطلب من المالك إضافة أنواع الطلبات من لوحة التحكم.",
+  "{answer} This phone could not forget the reward, so it may offer it again after a reload: do not give it twice.":
+    "{answer} تعذّر على هذا الهاتف نسيان المكافأة، فقد يعرضها مجدداً بعد إعادة التحميل: لا تمنحها مرتين.",
+} as const;
+
+type T = Translate<typeof AR>;
+/** Text kept in state, in the page's language when shown. */
+type Message = Later<typeof AR>;
+
+const STAMPS = {
+  en: { one: "{n} stamp", other: "{n} stamps" },
+  ar: { zero: "{n} أختام", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختماً", other: "{n} ختم" },
+};
+
+/** Something with an Arabic and an English name, by the page's language. */
+const nameIn = (lang: Lang, named: { nameAr: string; nameEn: string }): string => (lang === "ar" ? named.nameAr : named.nameEn);
 
 type CardChoice = { kind: "qr"; token: string } | { kind: "phone"; phone: string };
 type StoredRedemption = MetaValues["pendingRedemption"];
@@ -22,18 +97,16 @@ type StoredRedemption = MetaValues["pendingRedemption"];
 type ScanPurpose = "visit" | "reward";
 
 /** A scanned code that is a loyalty card of this café, or why it is not (read offline from the QR itself). */
-function readCardQr(text: string, cafeId: string): { token: string } | { problem: string } {
+function readCardQr(text: string, cafeId: string): { token: string } | { problem: Message } {
   const fields = parseCardQr(text);
   if (fields === null) {
-    return { problem: "That QR code is not a loyalty card. Scan the card the customer shows in their wallet or browser." };
+    return { problem: (t) => t("That QR code is not a loyalty card. Scan the card the customer shows in their wallet or browser.") };
   }
   if (fields.cafeId !== cafeId) {
-    return { problem: "That card is for another café. Ask for this café's card, or sign the customer up with the counter QR." };
+    return { problem: (t) => t("That card is for another café. Ask for this café's card, or sign the customer up with the counter QR.") };
   }
   return { token: text };
 }
-
-const plural = (count: number, one: string, many: string) => `${String(count)} ${count === 1 ? one : many}`;
 
 const ISO_WEEKDAYS: Readonly<Record<string, number>> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
 
@@ -60,20 +133,21 @@ export function campaignFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTy
 
 /**
  * One order type's discount at `at`: its best running campaign's (AC 35), or the card's win-back offer's when the
- * barista applied it (`winBack`, the offer's own terms) and it gives more (AC 36). Null without a discount.
+ * barista applied it (`winBack`, the offer's own terms) and it gives more (AC 36). Null without a discount; `campaign`
+ * is null for the win-back offer.
  */
 export function discountFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTypes"][number], at: Date, winBack: WinBackOffer | null) {
   const campaign = campaignFor(catalog, type, at);
   const offer = winBack === null ? 0 : winBackUnitDiscountCents(type, winBack);
   if (offer > 0 && offer > (campaign?.unitDiscountCents ?? 0)) {
-    return { campaignId: null, unitDiscountCents: offer, label: "Win-back offer" };
+    return { campaignId: null, unitDiscountCents: offer, campaign: null };
   }
-  return campaign === null ? null : { campaignId: campaign.campaign.id, unitDiscountCents: campaign.unitDiscountCents, label: campaign.campaign.nameEn };
+  return campaign === null ? null : { campaignId: campaign.campaign.id, unitDiscountCents: campaign.unitDiscountCents, campaign: campaign.campaign };
 }
 
 /** A discount as the counter says it: "20% off" or "$0.50 off". */
-const discountText = (discount: { kind: "percent" | "amount"; value: number }) =>
-  discount.kind === "percent" ? `${String(discount.value)}% off` : `${formatUsd(discount.value, "en")} off`;
+const discountText = (discount: { kind: "percent" | "amount"; value: number }, t: T) =>
+  discount.kind === "percent" ? t("{value}% off", { value: discount.value }) : t("{amount} off", { amount: formatUsd(discount.value, "en") });
 
 interface VisitFormProps {
   device: DeviceRecord;
@@ -86,16 +160,18 @@ interface VisitFormProps {
 
 /** Records a visit offline: what was ordered and whose card, by QR or phone number (AC 22, 30, 32). */
 function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: VisitFormProps) {
+  const t = useT(AR);
+  const lang = useLang();
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  /** The name of everything put in the order, to name it if the owner takes it off sale meanwhile. */
-  const [names, setNames] = useState<Record<string, string>>({});
+  /** The names of everything put in the order, to name it if the owner takes it off sale meanwhile. */
+  const [names, setNames] = useState<Record<string, { nameAr: string; nameEn: string }>>({});
   const [scanned, setScanned] = useState<string | null>(null);
   /** The barista applied the scanned card's win-back offer (AC 36). */
   const [applyWinBack, setApplyWinBack] = useState(false);
   const [phone, setPhone] = useState("");
   /** What is wrong, and whether it is the phone number (then tied to that field). */
-  const [problem, setProblem] = useState<{ text: string; phone: boolean } | null>(null);
-  const [notice, setNotice] = useState("");
+  const [problem, setProblem] = useState<{ say: Message; phone: boolean } | null>(null);
+  const [notice, setNotice] = useState<Message | null>(null);
   const [saving, setSaving] = useState(false);
   const phoneId = useId();
   const problemId = useId();
@@ -106,7 +182,10 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   // Taken off sale by the owner while this order was open: left out, and said so by name.
   const dropped = Object.entries(quantities)
     .filter(([id, quantity]) => quantity > 0 && !catalog.orderTypes.some((type) => type.id === id))
-    .map(([id]) => names[id] ?? "An item");
+    .map(([id]) => {
+      const named = names[id];
+      return named === undefined ? t("An item") : nameIn(lang, named);
+    });
   const stamps = items.reduce((sum, item) => sum + item.quantity * item.type.stampsEarned, 0);
   /** The scanned card's open win-back offer, from the catalog (a card typed in by phone cannot be matched offline). */
   const scannedCardId = scanned === null ? null : parseCardQr(scanned)?.cardId;
@@ -147,9 +226,9 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   }, [open, saving, onBusy]);
 
   // Clamped here: the steppers stay focusable at 0 and 50 (aria-disabled), so a click there changes nothing.
-  const change = (type: { id: string; nameEn: string }, delta: number) => {
-    setNotice("");
-    setNames((current) => ({ ...current, [type.id]: type.nameEn }));
+  const change = (type: { id: string; nameAr: string; nameEn: string }, delta: number) => {
+    setNotice(null);
+    setNames((current) => ({ ...current, [type.id]: { nameAr: type.nameAr, nameEn: type.nameEn } }));
     setQuantities((current) => ({ ...current, [type.id]: Math.max(0, Math.min(50, (current[type.id] ?? 0) + delta)) }));
   };
 
@@ -165,7 +244,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       const e164 = normalizePhoneInput(phone);
       if (e164 === null) {
         setProblem({
-          text: phone === "" ? "Scan the customer's card, or enter their mobile number." : "Enter a Lebanese mobile number, such as 70 123 456.",
+          say: phone === "" ? (say) => say("Scan the customer's card, or enter their mobile number.") : (say) => say("Enter a Lebanese mobile number, such as 70 123 456."),
           phone: phone !== "",
         });
         return;
@@ -177,7 +256,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
     const lines = linesAt(at);
     const payload = visitRecordedV3PayloadSchema.safeParse({ card, items: lines, totalCents: visitItemsTotalCents(lines) ?? -1, winBack: winBack !== null });
     if (!payload.success) {
-      setProblem({ text: items.length === 0 ? "Add what the customer ordered first." : "This order is too large to record. Split it into two visits.", phone: false });
+      setProblem({ say: items.length === 0 ? (say) => say("Add what the customer ordered first.") : (say) => say("This order is too large to record. Split it into two visits."), phone: false });
       return;
     }
     setSaving(true);
@@ -189,12 +268,16 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         setPhone("");
         setApplyWinBack(false);
         // The server decides the stamps (cooldown, daily cap), so the counter promises no more than the order earns.
-        setNotice(`Visit saved${stamps > 0 ? `, earning up to ${plural(stamps, "stamp", "stamps")}` : ""}. It is sent as soon as the phone is online.`);
+        setNotice(() =>
+          stamps > 0
+            ? (say: T, shownIn: Lang) => say("Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.", { stamps: plural(shownIn, STAMPS, stamps) })
+            : (say: T) => say("Visit saved. It is sent as soon as the phone is online."),
+        );
       },
       (caught: unknown) => {
         console.error("Recording the visit failed", caught);
         setSaving(false);
-        setProblem({ text: "The visit could not be saved on this phone. Reload the page and record it again.", phone: false });
+        setProblem({ say: (say) => say("The visit could not be saved on this phone. Reload the page and record it again."), phone: false });
       },
     );
   };
@@ -202,10 +285,10 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   if (scanner === "visit") {
     return (
       <section aria-labelledby="scan-title" className="card">
-        <h3 id="scan-title">Scan the customer&apos;s card</h3>
+        <h3 id="scan-title">{t("Scan the customer's card")}</h3>
         <QrScanner
-          purpose="customer's loyalty card QR code"
-          noCamera="Enter the customer's mobile number instead."
+          purpose={t("customer's loyalty card QR code")}
+          noCamera={t("Enter the customer's mobile number instead.")}
           onCancel={() => {
             onScanner(null);
             requestAnimationFrame(() => scanButton.current?.focus());
@@ -214,7 +297,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
             onScanner(null);
             const read = readCardQr(text, device.cafe.id);
             if ("problem" in read) {
-              setProblem({ text: read.problem, phone: false });
+              setProblem({ say: read.problem, phone: false });
               requestAnimationFrame(() => scanButton.current?.focus());
             } else {
               setScanned(read.token);
@@ -232,33 +315,34 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
 
   return (
     <section aria-labelledby="visit-title" className="card visit">
-      <h3 id="visit-title">New visit</h3>
+      <h3 id="visit-title">{t("New visit")}</h3>
       <ul className="menu">
         {catalog.orderTypes.map((type) => {
           const quantity = quantities[type.id] ?? 0;
           const offer = discountFor(catalog, type, shownAt, winBack);
+          const name = nameIn(lang, type);
           return (
             <li key={type.id}>
               <span className="menu-item">
-                <strong>{type.nameEn}</strong> ·{" "}
+                <strong>{name}</strong> ·{" "}
                 {offer === null ? (
                   formatUsd(type.priceCents, "en")
                 ) : (
                   <>
                     <s>
-                      <span className="visually-hidden">was </span>
+                      <span className="visually-hidden">{t("was ")}</span>
                       {formatUsd(type.priceCents, "en")}
                     </s>{" "}
-                    <span className="visually-hidden">now </span>
-                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.label})
+                    <span className="visually-hidden">{t("now ")}</span>
+                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign === null ? t("Win-back offer") : nameIn(lang, offer.campaign)})
                   </>
                 )}
-                {type.stampsEarned > 0 ? ` · ${plural(type.stampsEarned, "stamp", "stamps")}` : ""}
+                {type.stampsEarned > 0 ? ` · ${plural(lang, STAMPS, type.stampsEarned)}` : ""}
               </span>
               <span className="stepper">
                 <button
                   type="button"
-                  aria-label={`One less ${type.nameEn}`}
+                  aria-label={t("One less {name}", { name })}
                   aria-disabled={quantity === 0}
                   onClick={() => {
                     change(type, -1);
@@ -269,7 +353,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 <span className={quantity === 0 ? "count" : "count count-chosen"}>{quantity}</span>
                 <button
                   type="button"
-                  aria-label={`One more ${type.nameEn}`}
+                  aria-label={t("One more {name}", { name })}
                   aria-disabled={quantity === 50}
                   onClick={() => {
                     change(type, 1);
@@ -286,7 +370,9 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
       <div className="order-summary">
         {dropped.length === 0 ? null : (
           <p role="alert" className="warning-box">
-            No longer on sale, so left out of this order: {dropped.join(", ")}. The total does not include {dropped.length === 1 ? "it" : "them"}.
+            {dropped.length === 1
+              ? t("No longer on sale, so left out of this order: {names}. The total does not include it.", { names: dropped.join(", ") })
+              : t("No longer on sale, so left out of this order: {names}. The total does not include them.", { names: dropped.join(lang === "ar" ? "، " : ", ") })}
           </p>
         )}
         {offer === null ? null : (
@@ -297,20 +383,22 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 checked={applyWinBack}
                 onChange={(event) => {
                   setApplyWinBack(event.target.checked);
-                  setNotice("");
+                  setNotice(null);
                 }}
               />{" "}
-              This card has a win-back offer, {discountText(offer.discount)}: apply it
+              {t("This card has a win-back offer, {discount}: apply it", { discount: discountText(offer.discount, t) })}
             </label>
             {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
               <p role="status">
-                The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.
+                {t(
+                  "The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.",
+                )}
               </p>
             ) : null}
           </>
         )}
         <p aria-live="polite" className="total">
-          Total {formatUsd(total ?? 0, "en")} · {plural(stamps, "stamp", "stamps")}
+          {t("Total {total} · {stamps}", { total: formatUsd(total ?? 0, "en"), stamps: plural(lang, STAMPS, stamps) })}
         </p>
         <div className="card-choice">
           {scanned === null ? (
@@ -322,11 +410,11 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 onScanner("visit");
               }}
             >
-              Scan card
+              {t("Scan card")}
             </button>
           ) : (
             <p>
-              Card scanned.{" "}
+              {t("Card scanned.")}{" "}
               <button
                 type="button"
                 onClick={() => {
@@ -336,13 +424,13 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                   requestAnimationFrame(() => scanButton.current?.focus());
                 }}
               >
-                Clear card
+                {t("Clear card")}
               </button>
             </p>
           )}
           {scanned === null ? (
             <div className="field">
-              <label htmlFor={phoneId}>Or the customer&apos;s mobile number</label>
+              <label htmlFor={phoneId}>{t("Or the customer's mobile number")}</label>
               <input
                 id={phoneId}
                 type="tel"
@@ -353,7 +441,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 aria-describedby={problem?.phone === true ? problemId : undefined}
                 onChange={(event) => {
                   setPhone(event.target.value);
-                  setNotice("");
+                  setNotice(null);
                 }}
               />
             </div>
@@ -361,14 +449,14 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         </div>
         {problem === null ? null : (
           <p id={problemId} role="alert" className="field-error">
-            {problem.text}
+            {problem.say(t, lang)}
           </p>
         )}
         {/* Always in the page, so a new notice is announced. */}
-        <p role="status">{notice}</p>
+        <p role="status">{notice?.(t, lang) ?? ""}</p>
         {/* aria-disabled, not disabled: the keyboard stays on it while the visit saves. */}
         <button ref={recordButton} type="button" className="primary record" aria-disabled={saving} onClick={record}>
-          {saving ? "Saving…" : "Record visit"}
+          {saving ? t("Saving…") : t("Record visit")}
         </button>
       </div>
     </section>
@@ -376,15 +464,14 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
 }
 
 interface RewardMessage {
-  text: string;
+  say: Message;
   problem: boolean;
 }
 
 /** A redemption sent without a confirmed answer yet; `earlier` when it was found on the phone after a reload. */
 type PendingReward = StoredRedemption & { earlier: boolean };
 
-const clock = new Intl.DateTimeFormat("en-GB", { timeStyle: "short" });
-const startedAt = (attempt: StoredRedemption) => clock.format(new Date(attempt.startedAt));
+const startedAt = (lang: Lang, attempt: StoredRedemption) => dateFormat(lang, { timeStyle: "short" }).format(new Date(attempt.startedAt));
 
 interface RedeemPanelProps {
   device: DeviceRecord;
@@ -402,6 +489,8 @@ interface RedeemPanelProps {
  * never gives the reward twice.
  */
 function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onBusy }: RedeemPanelProps) {
+  const t = useT(AR);
+  const lang = useLang();
   const [pending, setPending] = useState<PendingReward | null>(null);
   const [message, setMessage] = useState<RewardMessage | null>(null);
   const [sending, setSending] = useState(false);
@@ -423,13 +512,19 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
         if (current && stored !== undefined) {
           setPending({ ...stored, earlier: true });
           setMessage({
-            text: `A reward started at ${startedAt(stored)} was not confirmed. Press Try again to find out whether that customer got it, before giving another.`,
+            say: (say, shownIn) =>
+              say("A reward started at {time} was not confirmed. Press Try again to find out whether that customer got it, before giving another.", {
+                time: startedAt(shownIn, stored),
+              }),
             problem: true,
           });
         }
       },
       (caught: unknown) => {
         console.error("Reading the unconfirmed reward failed", caught);
+        if (current) {
+          setMessage({ say: (say) => say("This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward."), problem: true });
+        }
       },
     );
     return () => {
@@ -442,18 +537,22 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
   }, [pending, sending, scanner, onBusy]);
 
   /** Ends an attempt: the message, and the keyboard back on the panel's button. */
-  const finish = (text: string, problem: boolean) => {
+  const finish = (say: Message, problem: boolean) => {
     setSending(false);
-    setMessage({ text, problem });
+    setMessage({ say, problem });
     setRefocus((turn) => turn + 1);
   };
 
   /** The server's answer, so the redemption is done with either way. */
-  const settle = (text: string, problem: boolean) => {
+  const settle = (answer: Message, problem: boolean) => {
     setPending(null);
-    finish(text, problem);
+    finish(answer, problem);
     deleteMeta("pendingRedemption").catch((caught: unknown) => {
       console.error("Clearing the unconfirmed reward failed", caught);
+      finish(
+        (say, shownIn) => say("{answer} This phone could not forget the reward, so it may offer it again after a reload: do not give it twice.", { answer: answer(say, shownIn) }),
+        true,
+      );
     });
   };
 
@@ -465,30 +564,42 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
       await setMeta("pendingRedemption", { eventId: attempt.eventId, cardQr: attempt.cardQr, startedAt: attempt.startedAt });
     } catch (caught) {
       console.error("Keeping the reward failed", caught);
-      finish("The reward could not be started on this phone. Reload the page and try again.", true);
+      finish((say) => say("The reward could not be started on this phone. Reload the page and try again."), true);
       return;
     }
     setPending(attempt);
     // One from before a reload may be for a customer who has left: the barista is told which one it was.
-    const earlier = attempt.earlier ? `The earlier reward, started at ${startedAt(attempt)},` : null;
     try {
       const redemption = await deviceRequest("POST", "/api/device/redemptions", redemptionSchema, { eventId: attempt.eventId, staffId: barista.id, cardQr: attempt.cardQr });
-      const left = plural(redemption.stampsLeft, "stamp", "stamps");
+      const given = (shownIn: Lang) => ({
+        reward: shownIn === "ar" ? redemption.rewardNameAr : redemption.rewardNameEn,
+        left: plural(shownIn, STAMPS, redemption.stampsLeft),
+      });
       settle(
-        earlier === null
-          ? `Reward given: ${redemption.rewardNameEn}. ${left} left on the card.`
-          : `${earlier} was given: ${redemption.rewardNameEn}. ${left} left on that card. If that customer did not get it, tell the owner.`,
+        attempt.earlier
+          ? (say, shownIn) =>
+              say("The earlier reward, started at {time}, was given: {reward}. {left} left on that card. If that customer did not get it, tell the owner.", {
+                ...given(shownIn),
+                time: startedAt(shownIn, attempt),
+              })
+          : (say, shownIn) => say("Reward given: {reward}. {left} left on the card.", given(shownIn)),
         false,
       );
     } catch (caught) {
       if (caught instanceof RequestError && caught.failure.retryable) {
         // Nothing sends it again by itself, and whether it was given is unknown until it is.
-        finish(`The reward started at ${startedAt(attempt)} was not confirmed. Do not give it yet: check the connection, then press Try again.`, true);
+        finish((say, shownIn) => say("The reward started at {time} was not confirmed. Do not give it yet: check the connection, then press Try again.", { time: startedAt(shownIn, attempt) }), true);
       } else if (caught instanceof RequestError || caught instanceof DeviceUnpairedError) {
-        settle(earlier === null ? caught.message : `${earlier} was not given: ${caught.message}`, true);
+        const reason = caught.message;
+        settle(
+          attempt.earlier
+            ? (say, shownIn) => say("The earlier reward, started at {time}, was not given: {reason}", { time: startedAt(shownIn, attempt), reason: localiseApiMessage(shownIn, reason) })
+            : (_say, shownIn) => localiseApiMessage(shownIn, reason),
+          true,
+        );
       } else {
         console.error("Redeeming failed", caught);
-        finish("The reward could not be confirmed on this phone. Reload the page, then press Try again.", true);
+        finish((say) => say("The reward could not be confirmed on this phone. Reload the page, then press Try again."), true);
       }
     }
   };
@@ -498,14 +609,17 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
   }
   return (
     <section aria-labelledby="redeem-title" className="card">
-      <h3 id="redeem-title">Give a reward</h3>
+      <h3 id="redeem-title">{t("Give a reward")}</h3>
       <p className="hint">
-        {catalog.program.rewardNameEn} for {plural(catalog.program.stampsRequired, "stamp", "stamps")}.
+        {t("{reward} for {stamps}.", {
+          reward: lang === "ar" ? catalog.program.rewardNameAr : catalog.program.rewardNameEn,
+          stamps: plural(lang, STAMPS, catalog.program.stampsRequired),
+        })}
       </p>
       {scanner === "reward" ? (
         <QrScanner
-          purpose="customer's loyalty card QR code"
-          noCamera="Rewards need the card scanned: give them from a phone with a camera."
+          purpose={t("customer's loyalty card QR code")}
+          noCamera={t("Rewards need the card scanned: give them from a phone with a camera.")}
           onCancel={() => {
             onScanner(null);
             setRefocus((turn) => turn + 1);
@@ -524,7 +638,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
         <>
           {/* Always in the page, so going offline is announced. */}
           <p role="status" className={online ? undefined : "field-error"}>
-            {online ? "" : "Rewards need an internet connection. Connect the phone, then try again."}
+            {online ? "" : t("Rewards need an internet connection. Connect the phone, then try again.")}
           </p>
           {pending === null ? (
             <button
@@ -536,7 +650,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
                 onScanner("reward");
               }}
             >
-              Scan card for a reward
+              {t("Scan card for a reward")}
             </button>
           ) : (
             <button
@@ -547,18 +661,18 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
                 void send(pending);
               }}
             >
-              {sending ? "Sending…" : "Try again"}
+              {sending ? t("Sending…") : t("Try again")}
             </button>
           )}
         </>
       )}
       {message?.problem === true ? (
         <p role="alert" className="field-error">
-          {message.text}
+          {message.say(t, lang)}
         </p>
       ) : null}
       {/* Always in the page, so the confirmation is announced. */}
-      <p role="status">{message?.problem === false ? message.text : ""}</p>
+      <p role="status">{message?.problem === false ? message.say(t, lang) : ""}</p>
     </section>
   );
 }
@@ -577,6 +691,7 @@ export function CounterScreen({
   online: boolean;
   onBusy: (busy: boolean) => void;
 }) {
+  const t = useT(AR);
   const [scanner, setScanner] = useState<ScanPurpose | null>(null);
   const [visitBusy, setVisitBusy] = useState(false);
   const [rewardBusy, setRewardBusy] = useState(false);
@@ -592,10 +707,10 @@ export function CounterScreen({
   );
 
   if (catalog === undefined) {
-    return <p className="empty">{online ? "Loading the menu…" : "Connect to the internet once to load the menu."}</p>;
+    return <p className="empty">{online ? t("Loading the menu…") : t("Connect to the internet once to load the menu.")}</p>;
   }
   if (catalog.orderTypes.length === 0) {
-    return <p className="empty">Nothing is on sale yet. Ask the owner to add order types on the dashboard.</p>;
+    return <p className="empty">{t("Nothing is on sale yet. Ask the owner to add order types on the dashboard.")}</p>;
   }
   // Both stay mounted (an open order survives a reward); the other's scan button is disabled while one scans.
   return (

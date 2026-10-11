@@ -2,8 +2,10 @@ import {
   OWNER_PASSWORD_MIN_LENGTH,
   PRODUCT_NAME,
   VISIT_HOURS_WEEKS,
+  apiText,
   cafeSetupSchema,
   ownerSessionSchema,
+  plural,
   visitHoursSchema,
   walletDeliveriesSchema,
   type OperatorSession,
@@ -19,11 +21,70 @@ import { CafePage } from "./cafe-page.js";
 import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { Field, FormError, useSubmit } from "./forms.js";
+import { LangProvider, LanguageSwitch, dateFormat, useApiText, useLang, useT } from "./i18n.js";
 import { InboxPage } from "./inbox-page.js";
 import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
+
+const AR = {
+  Home: "الرئيسية",
+  Café: "المقهى",
+  Campaigns: "الحملات",
+  Staff: "الموظفون",
+  Devices: "الأجهزة",
+  Review: "المراجعة",
+  Inbox: "الوارد",
+  Results: "النتائج",
+  Account: "الحساب",
+  Dashboard: "لوحة التحكم",
+  Admin: "الإدارة",
+  "Account: ": "الحساب: ",
+  "Build {id}": "الإصدار {id}",
+  "Change password": "تغيير كلمة المرور",
+  "Changing your password signs you out everywhere, on this device too.": "تغيير كلمة المرور يسجّل خروجك من كل مكان، ومن هذا الجهاز أيضاً.",
+  "Current password": "كلمة المرور الحالية",
+  "New password": "كلمة المرور الجديدة",
+  "At least {n} characters.": "{n} أحرف على الأقل.",
+  "Could not check wallet card updates: {message}": "تعذّر التحقق من تحديثات بطاقات المحفظة: {message}",
+  "Wallet card updates are failing": "تحديثات بطاقات المحفظة تفشل",
+  "Some customers' wallet cards are not showing their latest stamps:": "بطاقات المحفظة لدى بعض الزبائن لا تُظهر أحدث أختامهم:",
+  "{wallet}: {cards}, last failure {time} (code {code})": "{wallet}: {cards}، آخر فشل {time} (الرمز {code})",
+  "Apple Wallet": "Apple Wallet",
+  "Google Wallet": "محفظة Google",
+  "Stamps are still saved, and the server keeps retrying these cards every 15 minutes: they catch up, and this notice goes away, once updates go through again. If it is still here after a day, contact support with the codes above.":
+    "الأختام لا تزال محفوظة، ويعيد الخادم محاولة تحديث هذه البطاقات كل 15 دقيقة: تلحق البطاقات بالتحديثات ويختفي هذا التنبيه حين تنجح مجدداً. إذا بقي هنا بعد يوم، فتواصل مع الدعم واذكر الرموز أعلاه.",
+  "Could not check your café's plan: {message}": "تعذّر التحقق من خطة مقهاك: {message}",
+  "Your café's plan is suspended": "خطة مقهاك موقوفة",
+  "New customers cannot join from your signup QR. Your counter still records stamps and rewards for existing cards. Contact us to reactivate it.":
+    "لا يمكن لزبائن جدد الانضمام عبر رمز QR للتسجيل. لا يزال الكاونتر يسجّل الأختام والمكافآت للبطاقات الحالية. تواصل معنا لإعادة تفعيل الخطة.",
+  "Busy and quiet hours": "ساعات الذروة والهدوء",
+  "Members only: visits recorded with a loyalty card over the last {weeks} weeks, by the hour they happened in café time. Updated every hour.":
+    "الأعضاء فقط: الزيارات المسجّلة ببطاقة ولاء خلال آخر {weeks} أسابيع، حسب ساعة حدوثها بتوقيت المقهى. تُحدَّث كل ساعة.",
+  "Members only: visits recorded with a loyalty card over the last {weeks} weeks, by the hour they happened in café time ({zone}). Updated every hour.":
+    "الأعضاء فقط: الزيارات المسجّلة ببطاقة ولاء خلال آخر {weeks} أسابيع، حسب ساعة حدوثها بتوقيت المقهى ({zone}). تُحدَّث كل ساعة.",
+  "Could not load the busy and quiet hours: {message} This page tries again in 5 minutes.": "تعذّر تحميل ساعات الذروة والهدوء: {message} ستحاول هذه الصفحة مجدداً بعد 5 دقائق.",
+  "Could not update these hours: {message} Showing the last ones loaded; this page tries again in 5 minutes.":
+    "تعذّر تحديث هذه الساعات: {message} نعرض آخر ما حُمّل؛ ستحاول هذه الصفحة مجدداً بعد 5 دقائق.",
+  "No member visits in the last {weeks} weeks yet.": "لا زيارات أعضاء خلال آخر {weeks} أسابيع بعد.",
+  "Member visits by hour and weekday": "زيارات الأعضاء حسب الساعة ويوم الأسبوع",
+  Hour: "الساعة",
+  Quiet: "هادئ",
+  Busy: "مزدحم",
+  "Signed in as {email}": "مسجّل الدخول باسم {email}",
+  "Name, loyalty program, margin and order types.": "الاسم وبرنامج الولاء والهامش وأنواع الطلبات.",
+  "Discounts at quiet hours, above your minimum margin.": "خصومات في ساعات الهدوء، فوق الحد الأدنى لهامشك.",
+  "Baristas and their PINs.": "الباريستا ورموزهم السرية.",
+  "Pair or remove counter phones.": "اربط هواتف الكاونتر أو أزلها.",
+  "What removed phones and baristas recorded.": "ما سجّلته هواتف وباريستا أُزيلوا.",
+  "Private feedback from your customers.": "ملاحظات خاصة من زبائنك.",
+  "Your first month: customers won back, quiet-hour visits and what offers cost.": "شهرك الأول: الزبائن المسترجَعون، وزيارات ساعات الهدوء، وكلفة العروض.",
+  "Password and signing out.": "كلمة المرور وتسجيل الخروج.",
+  "Sign out": "تسجيل الخروج",
+  "Signing out ends your session on every device.": "تسجيل الخروج ينهي جلستك على كل الأجهزة.",
+  "Signing out…": "جارٍ تسجيل الخروج…",
+} as const;
 
 type SessionState =
   | { status: "loading" }
@@ -49,14 +110,15 @@ type OwnerPath = (typeof OWNER_PAGES)[number]["path"];
 const isOwnerPath = (path: string): path is OwnerPath => OWNER_PAGES.some((page) => page.path === path);
 
 function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
+  const t = useT(AR);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
 
   return (
     <section aria-labelledby="password-title" className="card">
-      <h3 id="password-title">Change password</h3>
-      <p>Changing your password signs you out everywhere, on this device too.</p>
+      <h3 id="password-title">{t("Change password")}</h3>
+      <p>{t("Changing your password signs you out everywhere, on this device too.")}</p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -69,7 +131,7 @@ function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
       >
         <FormError message={error} />
         <Field
-          label="Current password"
+          label={t("Current password")}
           name="currentPassword"
           type="password"
           autoComplete="current-password"
@@ -78,18 +140,18 @@ function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
           error={fieldErrors.currentPassword}
         />
         <Field
-          label="New password"
+          label={t("New password")}
           name="newPassword"
           type="password"
           autoComplete="new-password"
           value={newPassword}
           onChange={setNewPassword}
-          hint={`At least ${String(OWNER_PASSWORD_MIN_LENGTH)} characters.`}
+          hint={t("At least {n} characters.", { n: OWNER_PASSWORD_MIN_LENGTH })}
           minLength={OWNER_PASSWORD_MIN_LENGTH}
           error={fieldErrors.newPassword}
         />
         <button type="submit" disabled={pending}>
-          {pending ? "Saving…" : "Change password"}
+          {pending ? t("Saving…") : t("Change password")}
         </button>
       </form>
     </section>
@@ -97,13 +159,16 @@ function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
 }
 
 const WALLET_NAMES = { apple: "Apple Wallet", google: "Google Wallet" } as const;
-const failureTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
+const CARDS = { en: { one: "{n} card", other: "{n} cards" }, ar: { one: "بطاقة واحدة", two: "بطاقتان", few: "{n} بطاقات", other: "{n} بطاقة" } };
 
 /**
  * Warns when customers' wallet cards keep failing to update (AC 13); shows nothing while all goes through. The worker
  * retries undelivered passes every 15 minutes, so the notice clears itself once updates succeed again.
  */
 function WalletDeliveryNotice() {
+  const t = useT(AR);
+  const api = useApiText();
+  const lang = useLang();
   const [state] = useApiData("/api/cafe/wallet-deliveries", walletDeliveriesSchema);
   if (state.status === "loading") {
     return null;
@@ -111,29 +176,35 @@ function WalletDeliveryNotice() {
   if (state.status === "failed") {
     return (
       <p role="alert" className="form-error">
-        Could not check wallet card updates: {state.message}
+        {t("Could not check wallet card updates: {message}", { message: api(state.message) })}
       </p>
     );
   }
   if (state.data.failing.length === 0) {
     return null;
   }
+  const failureTime = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
   // Part of the page rather than a live alert, so screen readers do not announce it again on every visit.
   return (
     <section aria-labelledby="wallet-updates-title" className="form-error">
-      <h3 id="wallet-updates-title">Wallet card updates are failing</h3>
-      <p>Some customers&apos; wallet cards are not showing their latest stamps:</p>
+      <h3 id="wallet-updates-title">{t("Wallet card updates are failing")}</h3>
+      <p>{t("Some customers' wallet cards are not showing their latest stamps:")}</p>
       <ul>
         {state.data.failing.map((entry) => (
           <li key={entry.wallet}>
-            {WALLET_NAMES[entry.wallet]}: {entry.passes} {entry.passes === 1 ? "card" : "cards"}, last failure{" "}
-            {failureTime.format(new Date(entry.lastFailedAt))} (code {entry.lastError})
+            {t("{wallet}: {cards}, last failure {time} (code {code})", {
+              wallet: t(WALLET_NAMES[entry.wallet]),
+              cards: plural(lang, CARDS, entry.passes),
+              time: failureTime.format(new Date(entry.lastFailedAt)),
+              code: entry.lastError,
+            })}
           </li>
         ))}
       </ul>
       <p>
-        Stamps are still saved, and the server keeps retrying these cards every 15 minutes: they catch up, and this notice goes away, once updates go
-        through again. If it is still here after a day, contact support with the codes above.
+        {t(
+          "Stamps are still saved, and the server keeps retrying these cards every 15 minutes: they catch up, and this notice goes away, once updates go through again. If it is still here after a day, contact support with the codes above.",
+        )}
       </p>
     </section>
   );
@@ -141,11 +212,13 @@ function WalletDeliveryNotice() {
 
 /** Says when the operator suspended the café (AC 39), so the owner knows why nobody can join; nothing otherwise. */
 function PlanNotice() {
+  const t = useT(AR);
+  const api = useApiText();
   const [state] = useApiData("/api/cafe", cafeSetupSchema);
   if (state.status === "failed") {
     return (
       <p role="alert" className="form-error">
-        Could not check your café&apos;s plan: {state.message}
+        {t("Could not check your café's plan: {message}", { message: api(state.message) })}
       </p>
     );
   }
@@ -154,21 +227,18 @@ function PlanNotice() {
   }
   return (
     <section aria-labelledby="plan-notice-title" className="form-error">
-      <h3 id="plan-notice-title">Your café&apos;s plan is suspended</h3>
-      <p>New customers cannot join from your signup QR. Your counter still records stamps and rewards for existing cards. Contact us to reactivate it.</p>
+      <h3 id="plan-notice-title">{t("Your café's plan is suspended")}</h3>
+      <p>
+        {t(
+          "New customers cannot join from your signup QR. Your counter still records stamps and rewards for existing cards. Contact us to reactivate it.",
+        )}
+      </p>
     </section>
   );
 }
 
-const WEEKDAYS = [
-  ["Mon", "Monday"],
-  ["Tue", "Tuesday"],
-  ["Wed", "Wednesday"],
-  ["Thu", "Thursday"],
-  ["Fri", "Friday"],
-  ["Sat", "Saturday"],
-  ["Sun", "Sunday"],
-] as const;
+/** Monday to Sunday, as the days of a week that starts on a Monday (5 January 2026), for their names in each language. */
+const WEEK = Array.from({ length: 7 }, (_, index) => new Date(Date.UTC(2026, 0, 5 + index)));
 /** The busy and quiet hours load again this often while the page stays open (AC 34)... */
 const VISIT_HOURS_REFRESH_MS = 60 * 60 * 1000;
 /** ...and this soon after a load that failed. */
@@ -181,6 +251,9 @@ const VISIT_HOURS_RETRY_MS = 5 * 60 * 1000;
  * again sooner.
  */
 function VisitHours() {
+  const t = useT(AR);
+  const api = useApiText();
+  const lang = useLang();
   const [reloadKey, setReloadKey] = useState(0);
   const [state] = useApiData("/api/cafe/visit-hours", visitHoursSchema, reloadKey);
   const failed = state.status === "failed";
@@ -206,20 +279,29 @@ function VisitHours() {
   const hours = data === null ? [] : [...Array(24).keys()].filter((hour) => data.visits.some((day) => (day[hour] ?? 0) > 0));
   const first = hours[0] ?? 0;
   const shown = [...Array((hours.at(-1) ?? -1) - first + 1).keys()].map((offset) => first + offset);
+  const shortDay = dateFormat(lang, { weekday: "short", timeZone: "UTC" });
+  const longDay = dateFormat(lang, { weekday: "long", timeZone: "UTC" });
+  const weeks = { weeks: VISIT_HOURS_WEEKS };
   return (
     <section aria-labelledby="visit-hours-title" className="card">
-      <h3 id="visit-hours-title">Busy and quiet hours</h3>
+      <h3 id="visit-hours-title">{t("Busy and quiet hours")}</h3>
       <p className="hint">
-        Members only: visits recorded with a loyalty card over the last {VISIT_HOURS_WEEKS} weeks, by the hour they happened in café time
-        {data === null ? "" : ` (${data.timeZone})`}. Updated every hour.
+        {data === null
+          ? t("Members only: visits recorded with a loyalty card over the last {weeks} weeks, by the hour they happened in café time. Updated every hour.", weeks)
+          : t("Members only: visits recorded with a loyalty card over the last {weeks} weeks, by the hour they happened in café time ({zone}). Updated every hour.", {
+              ...weeks,
+              zone: data.timeZone,
+            })}
       </p>
       {state.status === "failed" ? (
         data === null ? (
           <p role="alert" className="form-error">
-            Could not load the busy and quiet hours: {state.message} This page tries again in 5 minutes.
+            {t("Could not load the busy and quiet hours: {message} This page tries again in 5 minutes.", { message: api(state.message) })}
           </p>
         ) : (
-          <p className="form-error">Could not update these hours: {state.message} Showing the last ones loaded; this page tries again in 5 minutes.</p>
+          <p className="form-error">
+            {t("Could not update these hours: {message} Showing the last ones loaded; this page tries again in 5 minutes.", { message: api(state.message) })}
+          </p>
         )
       ) : null}
       {data === null ? (
@@ -227,17 +309,17 @@ function VisitHours() {
           <PageStatus state={state} />
         ) : null
       ) : shown.length === 0 ? (
-        <p className="empty">No member visits in the last {VISIT_HOURS_WEEKS} weeks yet.</p>
+        <p className="empty">{t("No member visits in the last {weeks} weeks yet.", weeks)}</p>
       ) : (
         <div className="visit-hours">
           <table>
-            <caption className="visually-hidden">Member visits by hour and weekday</caption>
+            <caption className="visually-hidden">{t("Member visits by hour and weekday")}</caption>
             <thead>
               <tr>
-                <th scope="col">Hour</th>
-                {WEEKDAYS.map(([short, long]) => (
-                  <th scope="col" key={short}>
-                    <abbr title={long}>{short}</abbr>
+                <th scope="col">{t("Hour")}</th>
+                {WEEK.map((day) => (
+                  <th scope="col" key={day.getTime()}>
+                    <abbr title={longDay.format(day)}>{shortDay.format(day)}</abbr>
                   </th>
                 ))}
               </tr>
@@ -249,7 +331,7 @@ function VisitHours() {
                   {data.visits.map((day, weekday) => {
                     const visits = day[hour] ?? 0;
                     return (
-                      <td key={WEEKDAYS[weekday]?.[0]} className={`level-${String(Math.ceil((visits / busiest) * 4))}`}>
+                      <td key={WEEK[weekday]?.getTime()} className={`level-${String(Math.ceil((visits / busiest) * 4))}`}>
                         {visits}
                       </td>
                     );
@@ -260,11 +342,11 @@ function VisitHours() {
           </table>
           {/* The shades only repeat the numbers in the cells, so the legend is for the eye. */}
           <p className="heat-legend" aria-hidden="true">
-            Quiet
+            {t("Quiet")}
             {[1, 2, 3, 4].map((level) => (
               <span key={level} className={`heat-swatch level-${String(level)}`} />
             ))}
-            Busy
+            {t("Busy")}
           </p>
         </div>
       )}
@@ -272,60 +354,47 @@ function VisitHours() {
   );
 }
 
+const TILES = [
+  { path: "/cafe", label: "Café", text: "Name, loyalty program, margin and order types." },
+  { path: "/campaigns", label: "Campaigns", text: "Discounts at quiet hours, above your minimum margin." },
+  { path: "/staff", label: "Staff", text: "Baristas and their PINs." },
+  { path: "/devices", label: "Devices", text: "Pair or remove counter phones." },
+  { path: "/review", label: "Review", text: "What removed phones and baristas recorded." },
+  { path: "/inbox", label: "Inbox", text: "Private feedback from your customers." },
+  { path: "/results", label: "Results", text: "Your first month: customers won back, quiet-hour visits and what offers cost." },
+  { path: "/account", label: "Account", text: "Password and signing out." },
+] as const;
+
 function HomePage({ session }: { session: OwnerSession }) {
+  const t = useT(AR);
   return (
     <section aria-labelledby="cafe-title">
       <h2 id="cafe-title">{session.cafe.name}</h2>
-      <p className="page-intro">Signed in as {session.owner.email}</p>
+      <p className="page-intro">{t("Signed in as {email}", { email: session.owner.email })}</p>
       <PlanNotice />
       <WalletDeliveryNotice />
       <VisitHours />
       <ul className="tiles">
-        <li>
-          <a href="/cafe">Café</a>
-          <p>Name, loyalty program, margin and order types.</p>
-        </li>
-        <li>
-          <a href="/campaigns">Campaigns</a>
-          <p>Discounts at quiet hours, above your minimum margin.</p>
-        </li>
-        <li>
-          <a href="/staff">Staff</a>
-          <p>Baristas and their PINs.</p>
-        </li>
-        <li>
-          <a href="/devices">Devices</a>
-          <p>Pair or remove counter phones.</p>
-        </li>
-        <li>
-          <a href="/review">Review</a>
-          <p>What removed phones and baristas recorded.</p>
-        </li>
-        <li>
-          <a href="/inbox">Inbox</a>
-          <p>Private feedback from your customers.</p>
-        </li>
-        <li>
-          <a href="/results">Results</a>
-          <p>Your first month: customers won back, quiet-hour visits and what offers cost.</p>
-        </li>
-        <li>
-          <a href="/account">Account</a>
-          <p>Password and signing out.</p>
-        </li>
+        {TILES.map((tile) => (
+          <li key={tile.path}>
+            <a href={tile.path}>{t(tile.label)}</a>
+            <p>{t(tile.text)}</p>
+          </li>
+        ))}
       </ul>
     </section>
   );
 }
 
 function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void }) {
+  const t = useT(AR);
   const { pending, error, submit } = useSubmit();
   return (
     <>
-      <h2 id="account-page-title">Account</h2>
+      <h2 id="account-page-title">{t("Account")}</h2>
       <section aria-labelledby="account-title" className="card">
-        <h3 id="account-title">Sign out</h3>
-        <p>Signing out ends your session on every device.</p>
+        <h3 id="account-title">{t("Sign out")}</h3>
+        <p>{t("Signing out ends your session on every device.")}</p>
         <FormError message={error} />
         <button
           type="button"
@@ -338,7 +407,7 @@ function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void })
             });
           }}
         >
-          {pending ? "Signing out…" : "Sign out"}
+          {pending ? t("Signing out…") : t("Sign out")}
         </button>
       </section>
       <ChangePasswordForm
@@ -351,13 +420,14 @@ function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void })
 }
 
 function OwnerNav({ path }: { path: OwnerPath }) {
+  const t = useT(AR);
   return (
-    <nav aria-label="Dashboard" className="sidenav">
+    <nav aria-label={t("Dashboard")} className="sidenav">
       <ul>
         {OWNER_PAGES.map((page) => (
           <li key={page.path}>
             <a href={page.path} aria-current={page.path === path ? "page" : undefined}>
-              {page.label}
+              {t(page.label)}
             </a>
           </li>
         ))}
@@ -366,32 +436,43 @@ function OwnerNav({ path }: { path: OwnerPath }) {
   );
 }
 
-/** The product's mark and name: the page's one h1. */
-function Brand({ app = "Dashboard" }: { app?: string | undefined }) {
+/** The product's mark and name: the page's one h1, also the window's title. */
+function Brand({ app = "Dashboard" }: { app?: "Dashboard" | "Admin" | undefined }) {
+  const t = useT(AR);
+  const appName = t(app);
+  useEffect(() => {
+    document.title = `${PRODUCT_NAME} ${appName}`;
+  }, [appName]);
   return (
     <div className="brand">
       <img src={logoUrl} alt="" width={36} height={36} />
       <h1>
-        {PRODUCT_NAME} <span className="brand-app">{app}</span>
+        {/* The product name is a Latin brand in both languages. */}
+        <span lang="en" dir="ltr">
+          {PRODUCT_NAME}
+        </span>{" "}
+        <span className="brand-app">{appName}</span>
       </h1>
     </div>
   );
 }
 
 function BuildFooter() {
+  const t = useT(AR);
   return (
     <footer className="app-footer">
-      <p>Build {__BUILD_ID__}</p>
+      <p>{t("Build {id}", { id: __BUILD_ID__ })}</p>
     </footer>
   );
 }
 
 /** The pages before a session (sign-in, signup, password reset, the session check): one card, centred, the brand above it. */
-function AuthLayout({ children, app }: { children: ReactNode; app?: string }) {
+function AuthLayout({ children, app }: { children: ReactNode; app?: "Admin" }) {
   return (
     <div className="auth-layout">
       <header>
         <Brand app={app} />
+        <LanguageSwitch />
       </header>
       <main className="card auth-card">{children}</main>
       <BuildFooter />
@@ -399,19 +480,23 @@ function AuthLayout({ children, app }: { children: ReactNode; app?: string }) {
   );
 }
 
-/** The signed-in pages: the top bar with the café and the account, the navigation, then the page. */
+/** The signed-in pages: the top bar with the café, the account and the language, the navigation, then the page. */
 function OwnerLayout({ session, path, children }: { session: OwnerSession; path: OwnerPath; children: ReactNode }) {
+  const t = useT(AR);
   return (
     <div className="owner-layout">
       <header className="topbar">
         <Brand />
-        <p className="topbar-account">
-          <span className="topbar-cafe">{session.cafe.name}</span>
-          <a href="/account" className="topbar-email" aria-current={path === "/account" ? "page" : undefined}>
-            <span className="visually-hidden">Account: </span>
-            {session.owner.email}
-          </a>
-        </p>
+        <div className="topbar-end">
+          <p className="topbar-account">
+            <span className="topbar-cafe">{session.cafe.name}</span>
+            <a href="/account" className="topbar-email" aria-current={path === "/account" ? "page" : undefined}>
+              <span className="visually-hidden">{t("Account: ")}</span>
+              <bdi>{session.owner.email}</bdi>
+            </a>
+          </p>
+          <LanguageSwitch />
+        </div>
       </header>
       <OwnerNav path={path} />
       <main className="owner-main">{children}</main>
@@ -420,15 +505,18 @@ function OwnerLayout({ session, path, children }: { session: OwnerSession; path:
   );
 }
 
-/** The operator's screen: the top bar with their email, then the page, without the owner's navigation. */
+/** The operator's screen: the top bar with their email and the language, then the page, without the owner's navigation. */
 function AdminLayout({ session, children }: { session: OperatorSession; children: ReactNode }) {
   return (
     <div className="owner-layout admin-layout">
       <header className="topbar">
         <Brand app="Admin" />
-        <p className="topbar-account">
-          <span className="topbar-email">{session.operator.email}</span>
-        </p>
+        <div className="topbar-end">
+          <p className="topbar-account">
+            <bdi className="topbar-email">{session.operator.email}</bdi>
+          </p>
+          <LanguageSwitch />
+        </div>
       </header>
       <main className="owner-main">{children}</main>
       <BuildFooter />
@@ -438,6 +526,8 @@ function AdminLayout({ session, children }: { session: OperatorSession; children
 
 /** The owner's pages: checks the session once, shows sign-in when there is none, and the page with its nav when there is. */
 function OwnerArea({ path }: { path: OwnerPath }) {
+  const t = useT(AR);
+  const api = useApiText();
   const [state, setState] = useState<SessionState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const signOut = useCallback((notice: string) => {
@@ -459,7 +549,7 @@ function OwnerArea({ path }: { path: OwnerPath }) {
         if (error instanceof ApiRequestError && error.failure.code === "UNAUTHENTICATED") {
           setState({ status: "signed-out", notice: null });
         } else {
-          setState({ status: "unavailable", message: error instanceof Error ? error.message : "Could not check your session." });
+          setState({ status: "unavailable", message: error instanceof Error ? error.message : apiText("Something went wrong on this page. Reload it and try again.") });
         }
       },
     );
@@ -473,14 +563,14 @@ function OwnerArea({ path }: { path: OwnerPath }) {
     case "loading":
       return (
         <AuthLayout>
-          <p role="status">Loading…</p>
+          <p role="status">{t("Loading…")}</p>
         </AuthLayout>
       );
     case "unavailable":
       return (
         <AuthLayout>
           <p role="alert" className="form-error">
-            {state.message}
+            {api(state.message)}
           </p>
           <button
             type="button"
@@ -490,7 +580,7 @@ function OwnerArea({ path }: { path: OwnerPath }) {
               setAttempt((value) => value + 1);
             }}
           >
-            Try again
+            {t("Try again")}
           </button>
         </AuthLayout>
       );
@@ -579,5 +669,9 @@ function Page({ path }: { path: string }) {
 }
 
 export function App() {
-  return <Page path={window.location.pathname} />;
+  return (
+    <LangProvider>
+      <Page path={window.location.pathname} />
+    </LangProvider>
+  );
 }
