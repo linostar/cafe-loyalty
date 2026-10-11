@@ -1,5 +1,6 @@
 import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { expect, test } from "@playwright/test";
+import { cspViolations } from "../csp.js";
 import { SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
 test.beforeEach(async ({ page }) => {
@@ -28,7 +29,8 @@ const SIGNED_IN = {
 };
 
 for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/results", "/account"]) {
-  test(`fits a 360 px phone screen when signed in at ${path}`, async ({ page }) => {
+  test(`fits a 360 px phone screen when signed in at ${path}, within the Content-Security-Policy`, async ({ page }) => {
+    const refused = cspViolations(page);
     await page.unrouteAll();
     await mockApi(page, SIGNED_IN);
     await page.goto(path);
@@ -37,6 +39,7 @@ for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review",
     const screenWidth = page.viewportSize()?.width ?? 0;
     const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
     expect(overflow).toBeLessThanOrEqual(0);
+    expect(refused).toEqual([]);
   });
 }
 

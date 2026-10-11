@@ -1,5 +1,6 @@
 import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { expect, test } from "@playwright/test";
+import { cspViolations } from "../csp.js";
 
 test("shows the build and tracks connectivity", async ({ page, context }) => {
   await page.goto("/");
@@ -22,4 +23,13 @@ test("fits a 360 px phone screen without horizontal scrolling", async ({ page })
   const screenWidth = page.viewportSize()?.width ?? 0;
   const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
   expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test("runs within its Content-Security-Policy in both languages", async ({ page }) => {
+  const refused = cspViolations(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: `${PRODUCT_NAME} Counter` })).toBeVisible();
+  await page.getByRole("button", { name: "العربية" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ar");
+  expect(refused).toEqual([]);
 });

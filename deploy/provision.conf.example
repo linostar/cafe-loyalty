@@ -1,0 +1,15 @@
+# Settings for deploy/provision.sh: copy to provision.conf next to it on the VPS. No secrets here; the script generates
+# each environment's secrets on the VPS itself. Run it again with the same file after any change.
+
+# The account CI logs in as to deploy: key login only, no password, no sudo except the scripts in /opt/cafe-loyalty/bin.
+DEPLOY_USER=deploy
+# Its SSH public key (one line of a .pub file), whose private key is a GitHub secret.
+DEPLOY_SSH_PUBLIC_KEY="ssh-ed25519 AAAA... deploy@cafe-loyalty"
+
+# Each app of each environment on its own domain, all pointing at this VPS (Caddy gets their certificates).
+PRODUCTION_DASHBOARD_DOMAIN=dashboard.example.com
+PRODUCTION_COUNTER_DOMAIN=counter.example.com
+PRODUCTION_PUBLIC_DOMAIN=card.example.com
+STAGING_DASHBOARD_DOMAIN=dashboard.staging.example.com
+STAGING_COUNTER_DOMAIN=counter.staging.example.com
+STAGING_PUBLIC_DOMAIN=card.staging.example.com

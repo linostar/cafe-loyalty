@@ -9,6 +9,7 @@ Customers and owners see it as **Qahwa Loyalty**, a working name defined once (`
 - Node.js 22 (see `.nvmrc`)
 - pnpm 11.24, enabled through Corepack: `corepack enable`
 - Docker with Compose, for the local PostgreSQL database
+- ShellCheck, which `pnpm lint` runs on the deploy scripts (`brew install shellcheck`; GitHub's Ubuntu runners have it)
 
 ## Setup
 
@@ -33,11 +34,13 @@ pnpm --filter @cafe-loyalty/server create-invite --cafe-name "Test Café"   # pr
 | `pnpm build` | Builds every package (shared first) |
 | `pnpm build:packages` | Builds `@cafe-loyalty/shared` and `@cafe-loyalty/db`, which the apps import from their `dist` |
 | `pnpm typecheck` | Type-checks every package and the root config files |
-| `pnpm lint` | ESLint across the repo; fails on any warning |
+| `pnpm lint` | ESLint across the repo, then `pnpm lint:shell`; fails on any warning |
+| `pnpm lint:shell` | ShellCheck on the scripts in `deploy/` and `deploy/test/` |
 | `pnpm test:unit` | Vitest unit tests for every package |
 | `pnpm test:db` | Integration tests against PostgreSQL (`TEST_DATABASE_ADMIN_URL`): the database package and the server's API, including the sync contract test that replays the frozen counter fixtures; each test file creates and drops its own database and roles |
 | `pnpm check:migrations` | Static migration check: expand migrations never drop or rename tables or columns, contract migrations name a release in history, and (with `MIGRATIONS_BASE_REF`) existing migrations are unchanged |
-| `pnpm test:e2e` | Builds the apps and runs the Playwright browser tests at phone width |
+| `pnpm test:deploy` | Runs the Caddy configuration `deploy/provision.sh` generates in the pinned Caddy image (Docker): routing, cache and security headers, and that no card, recovery or feedback secret reaches a log (`deploy/test/caddy.sh`) |
+| `pnpm test:e2e` | Builds the apps and runs the Playwright browser tests at phone width, under the dashboard's and counter's Content-Security-Policy (`deploy/spa-csp.txt`, which their preview servers send as Caddy does) |
 | `pnpm db:up` / `pnpm db:down` | Starts or stops the local PostgreSQL container |
 | `pnpm db:bootstrap` | Creates or corrects the roles, the application database and its schemas (idempotent; needs `DATABASE_ADMIN_URL` and the role settings) |
 | `pnpm db:migrate` | Applies pending migrations as the migrator role (`MIGRATOR_DATABASE_URL`) |
@@ -181,6 +184,29 @@ PostgreSQL 18. Everything lives in schema `app`; migration history is in `meta.s
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs `pnpm test` on Ubuntu with the Node version from `.nvmrc`, a frozen lockfile, Playwright Chromium and a PostgreSQL 18 service container (trust authentication, reachable only from the job). It has read-only repository permissions, pins every action to a commit SHA, and uploads the Playwright report (with the screen specs' screenshots) after every run that was not cancelled.
+
+## Provisioning the VPS
+
+`deploy/provision.sh` sets up one Ubuntu VPS (24.04 LTS) for production and staging, and brings it back to that setup when run again; it is safe to rerun at any time, never replaces a secret it generated, and upgrades Docker each time (containers keep running through Docker upgrades and restarts: live-restore; a runtime fix in such an upgrade reaches them when the next deploy recreates them). A run that stops part way is finished by the next one: Docker restarts when its settings are newer than the running daemon, and Caddy always reloads its configuration and must hold ports 80 and 443 before the run reports done. Point the six domains in its settings at the VPS first (Caddy needs them to get certificates), make sure your own SSH key logs in as root or as a sudo user (it turns password logins off and refuses to run otherwise), then from your machine:
+
+```sh
+scp -r deploy root@<vps>:cafe-loyalty-deploy
+ssh root@<vps>
+cd cafe-loyalty-deploy && cp provision.conf.example provision.conf   # then set the deploy user, its key and the domains
+sudo bash -c 'set -a && . ./provision.conf && set +a && ./provision.sh'
+```
+
+It sets up:
+
+- **Access.** A deploy user (`DEPLOY_USER`) for CI, whose only key is `DEPLOY_SSH_PUBLIC_KEY` under `restrict` (no terminal, forwarding or agent), kept in `/etc/ssh/authorized_keys/<user>`, which only root can change (sshd ignores keys in that user's home, and the script never writes there), no password, not in the `sudo` or `docker` groups (both give root; the script refuses to run if it is), and sudo only for the scripts it installs in `/opt/cafe-loyalty/bin` (every `deploy/*.sh` but itself; only root can write there). SSH takes keys only; root may log in with a key. A configuration sshd refuses is taken back before the script stops.
+- **Firewall.** ufw allows 22 (rate-limited: at most 6 connections in 30 seconds from one address), 80 and 443 (TCP, and UDP for HTTP/3) and nothing else; the script fails on any other rule, and before enabling the firewall if sshd listens on another port. Docker's published ports bypass ufw, so the Docker daemon binds them to 127.0.0.1 unless a Compose file names another address.
+- **Docker and Compose** from Docker's apt repository, its signing key file checked to hold exactly one key, with Docker's published fingerprint. Container logs are rotated (20 MB, 5 files), Caddy's access logs too (20 MiB, 10 files, 30 days), and the journal is capped at 1 GB.
+- **Caddy** from its official image, pinned by digest (`CADDY_IMAGE` in the script; bump it to upgrade), run as the Compose project `/opt/cafe-loyalty/edge` with host networking (so ufw applies to it), no capabilities but binding ports 80 and 443, its admin API on a socket inside its own volume rather than a local port, and only the app builds and its configuration mounted. Its configuration (`/etc/caddy/Caddyfile`, generated) has automatic TLS for each environment's three domains: the dashboard and the counter each serve their build from `/srv/cafe-loyalty/<environment>/web/<app>`, with `index.html` for every app path (`/`, `/pair`, `/admin`), `/api` proxied to the server, `/assets/` cached for good and everything else (`index.html`, the counter's `sw.js`) revalidated on every load; the public domain proxies everything to the server (customer pages, PassKit, assets). Production's server is on 127.0.0.1:3100 and staging's on 3200; the dashboard and counter send a strict Content-Security-Policy (`deploy/spa-csp.txt`: no inline script or style, `data:` images for the QR codes and `data:` fonts for the small font subsets the builds inline; the end-to-end tests fail on anything it refuses); staging's sites send `X-Robots-Tag: noindex`. Access logs (`/var/log/caddy/<environment>-<app>.log`) leave out cookies and `Authorization`, and mask every run of 16 or more URL-safe characters in the address, the `Referer` and a response's `Location` (the server's redirects to cards, feedback pages and Google save links), so card, recovery and feedback links (`/c/`, `/r/`, `/f/`) never reach them whole; Caddy's own log (in `docker compose -f /opt/cafe-loyalty/edge/compose.yaml logs caddy`, where a 502 during a restart logs the request) is masked the same way.
+- **Each environment** in `/srv/cafe-loyalty/<environment>`: `.env` for Compose (its project name, `cafe-loyalty-<environment>`, which keeps its containers, network and database volume apart, and `PROXY_PORT`); `database.env` (the PostgreSQL superuser and the bootstrap and migrator settings) and `app.env` (the server's and worker's settings), both mode 0600 and owned by root, with every password, the phone pepper and the phone and QR keys generated on the VPS the first time and never replaced; `web/` for the app builds and `backups/` (mode 0700). `database.env` holds what the bootstrap and migration containers read too (`LOG_LEVEL` included); if it is lost while `app.env` remains, the script refuses to make new passwords (they would no longer match the database) and asks for it from a backup. Each environment runs its own PostgreSQL container, reachable as `postgres` on its own Compose network only, because the `cl_owner` and `cl_app` roles are cluster-wide. The script fails if production and staging share any password, key or credential, and lists each environment's email settings still to fill in `app.env` (as root): `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` and `EMAIL_FROM`, plus the optional Apple and Google Wallet credentials. The dashboard, counter and public addresses in `app.env` follow the domains of each run.
+- **Updates.** Unattended upgrades install Ubuntu's security updates daily and reboot for a kernel update at 02:00 UTC; the clock is set to UTC.
+- **Backup timers.** `cafe-loyalty-backup@<environment>.timer` nightly at 01:30 UTC and `cafe-loyalty-restore-test@<environment>.timer` on the first of each month, running `backup.sh` and `restore-test.sh` from `/opt/cafe-loyalty/bin` (skipped while those scripts do not exist yet; `systemctl list-timers 'cafe-loyalty-*'` lists them).
+
+The generated files are tested without a VPS: `provision.sh caddyfile` prints the Caddy configuration and `provision.sh env-files <dir>` writes a production `database.env` and `app.env` (both from the `*_DOMAIN` settings, no root needed); `pnpm test:deploy` runs the first in Caddy, and unit tests in `packages/db` and `apps/server` check the second against the bootstrap, migration and server settings schemas.
 
 ## Configuration
 

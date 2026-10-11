@@ -36,3 +36,6 @@ backups/
 # Logs and OS files
 *.log
 .DS_Store
+
+# Per-VPS provisioning settings (deploy/provision.conf.example)
+deploy/provision.conf
