@@ -158,8 +158,8 @@ jobs:
 
   production:
     name: Deploy to production
-    # Not on supersede: this job waits in its group until the older run is cancelled, and a failed cleanup must not keep
-    # a release that passed staging out of production.
+    # Not on supersede: this job waits in its group until the older run is cancelled anyway. A failed cleanup leaves the
+    # older run holding the group, so this job waits behind it; re-run the failed supersede job or cancel the older run.
     needs: [build, staging]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
