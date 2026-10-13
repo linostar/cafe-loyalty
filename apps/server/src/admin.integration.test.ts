@@ -133,6 +133,35 @@ describe("operator accounts (AC 39)", () => {
     expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: app.password }, remoteAddress: "198.51.100.10" })).statusCode).toBe(200);
   });
 
+  it("change their password with the current one, ending every session, and refuse a wrong one by its field", async () => {
+    const app = await adminApp();
+    const second = operatorToken(await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: app.password } }));
+    const wrong = await app.asOperator("POST", "/api/admin/password", { currentPassword: "not the password", newPassword: "a brand new password" });
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "currentPassword" }] });
+    expect((await app.asOperator("POST", "/api/admin/password", { currentPassword: app.password, newPassword: "short" })).statusCode).toBe(400);
+    // A refused change leaves the session alone.
+    expect((await app.asOperator("GET", "/api/admin/session")).statusCode).toBe(200);
+
+    const changed = await app.asOperator("POST", "/api/admin/password", { currentPassword: app.password, newPassword: "a brand new password" });
+    expect(changed.statusCode).toBe(204);
+    expect(String(changed.headers["set-cookie"])).toContain("__Host-cl_operator=; ");
+    expect((await app.asOperator("GET", "/api/admin/session")).statusCode).toBe(401);
+    expect((await app.app.inject({ method: "GET", url: "/api/admin/session", headers: { cookie: `__Host-cl_operator=${second}` } })).statusCode).toBe(401);
+    expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: app.password } })).statusCode).toBe(401);
+    expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: "a brand new password" } })).statusCode).toBe(200);
+  });
+
+  it("limit password changes per operator", async () => {
+    const app = await adminApp();
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      statuses.push((await app.asOperator("POST", "/api/admin/password", { currentPassword: "not the password", newPassword: "a brand new password" })).statusCode);
+    }
+    expect(statuses.slice(0, 10).every((status) => status === 400)).toBe(true);
+    expect(statuses[10]).toBe(429);
+  });
+
   it("answer 401 without an operator session, and 403 to an owner or a device, on every operator route", async () => {
     const app = await adminApp();
     const operatorRoutes = app.routes.filter((route) => route.access === "operator" && route.method !== "HEAD");
@@ -143,6 +172,7 @@ describe("operator accounts (AC 39)", () => {
       "POST /api/admin/cafes",
       "POST /api/admin/cafes/:id/invites",
       "POST /api/admin/cafes/:id/payments",
+      "POST /api/admin/password",
     ]);
     for (const route of operatorRoutes) {
       const call = (headers: Record<string, string>) =>

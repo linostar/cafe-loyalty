@@ -64,27 +64,31 @@ for (const path of ["/", `/signup#invite=${FAKE_TOKEN}`, "/forgot-password", `/r
   });
 }
 
-test("works in Arabic on the operator's admin screen", async ({ page }) => {
-  await mockApi(page, {
-    "GET /api/admin/session": reply(200, { operator: { id: "c01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", email: "operator@example.com" } }),
-    "GET /api/admin/cafes": reply(200, {
-      cafes: [
-        {
-          id: SESSION.cafe.id,
-          name: SESSION.cafe.name,
-          plan: "suspended",
-          createdAt: "2026-09-01T08:00:00.000Z",
-          paidCents: 99999999,
-          payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 99999999, paidOn: "2026-10-01", method: "bank_transfer", reference: "R".repeat(100), recordedAt: "2026-10-01T09:00:00.000Z" }],
-        },
-      ],
-    }),
+for (const path of ["/admin", `/admin/cafes/${SESSION.cafe.id}`, "/admin/cafes/new", "/admin/password"]) {
+  test(`works in Arabic on the operator's admin screen at ${path}`, async ({ page }) => {
+    await mockApi(page, {
+      "GET /api/admin/session": reply(200, { operator: { id: "c01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", email: "operator@example.com" } }),
+      "GET /api/admin/cafes": reply(200, {
+        cafes: [
+          {
+            id: SESSION.cafe.id,
+            name: SESSION.cafe.name,
+            plan: "suspended",
+            createdAt: "2026-09-01T08:00:00.000Z",
+            paidCents: 99999999,
+            payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 99999999, paidOn: "2026-10-01", method: "bank_transfer", reference: "R".repeat(100), recordedAt: "2026-10-01T09:00:00.000Z" }],
+          },
+        ],
+      }),
+    });
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+    await page.getByRole("button", { name: "الملف الشخصي: operator@example.com" }).click();
+    await expect(page.getByRole("link", { name: "تغيير كلمة المرور" })).toBeVisible();
+    await expectLanguageAndFit(page, "ar");
+    await expectEveryControlNamed(page);
   });
-  await page.goto("/admin");
-  await expect(page.getByRole("heading", { level: 3, name: SESSION.cafe.name })).toBeVisible();
-  await expectLanguageAndFit(page, "ar");
-  await expectEveryControlNamed(page);
-});
+}
 
 test("shows the suspended plan and failing wallet updates in Arabic on the home page", async ({ page }) => {
   await mockApi(page, {

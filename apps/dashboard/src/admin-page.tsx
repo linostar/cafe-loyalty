@@ -15,10 +15,11 @@ import {
   type Lang,
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ApiRequestError, apiRequest, isStale, noContent } from "./api.js";
+import { ApiRequestError, apiRequest, isStale } from "./api.js";
 import { Field, FormError, Notice, useSubmit } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
+import { ChangePasswordForm } from "./password-form.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 
 const AR = {
@@ -61,8 +62,12 @@ const AR = {
   Amount: "المبلغ",
   By: "الطريقة",
   Cafés: "المقاهي",
-  "Create cafés and their owners' signup links, set each café's plan and record the payments it made. Every change goes in the café's audit log.":
-    "أنشئ المقاهي وروابط تسجيل مالكيها، وحدّد خطة كل مقهى وسجّل الدفعات التي قام بها. يُسجَّل كل تغيير في سجل تدقيق المقهى.",
+  "Open a café to make its owner's signup link, set its plan or record a payment. Every change goes in the café's audit log.":
+    "افتح مقهى لإنشاء رابط تسجيل مالكه أو تحديد خطته أو تسجيل دفعة. يُسجَّل كل تغيير في سجل تدقيق المقهى.",
+  "All cafés": "كل المقاهي",
+  "Open {name}": "افتح {name}",
+  Account: "الحساب",
+  "Signed in as {email}": "مسجّل الدخول باسم {email}",
   "No cafés yet.": "لا مقاهٍ بعد.",
   "New café": "مقهى جديد",
   "Café name": "اسم المقهى",
@@ -76,9 +81,6 @@ const AR = {
   "Copy link": "نسخ الرابط",
   "Copied.": "تم النسخ.",
   "Could not copy. Select the link and copy it.": "تعذّر النسخ. حدّد الرابط وانسخه.",
-  "Sign out": "تسجيل الخروج",
-  "Signing out ends your operator session on every device.": "تسجيل الخروج ينهي جلسة المشغّل على كل الأجهزة.",
-  "Signing out…": "جارٍ تسجيل الخروج…",
 } as const;
 
 const PLAN_LABELS = { pilot: "Pilot", active: "Active", suspended: "Suspended" } as const satisfies Record<CafePlan, keyof typeof AR>;
@@ -313,7 +315,6 @@ function NewCafeForm({ onCreated }: { onCreated: (invite: AdminInvite) => void }
         });
       }}
     >
-      <h3 id="admin-new-cafe-title">{t("New café")}</h3>
       <FormError message={error} />
       <Field label={t("Café name")} name="cafeName" type="text" value={name} onChange={setName} maxLength={120} hint={t("Creates the café on the pilot plan and a signup link for its owner.")} error={fieldErrors.name} />
       <button type="submit" disabled={pending}>
@@ -397,113 +398,213 @@ function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invit
   );
 }
 
-function CafeCard({
-  cafe,
-  invite,
-  onSaved,
-  onInvite,
-}: {
-  cafe: AdminCafe;
-  invite: AdminInvite | null;
-  onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void;
-  onInvite: (invite: AdminInvite) => void;
-}) {
+/** The café's latest payments, newest first. */
+function PaymentsTable({ cafe }: { cafe: AdminCafe }) {
   const t = useT(AR);
   const dayFormat = dateFormat(useLang(), DAY);
-  const titleId = `admin-cafe-${cafe.id}`;
-  return (
-    <li>
-      <section aria-labelledby={titleId} className="card">
-        <h3 id={titleId}>
-          {cafe.name}
-          <span className="visually-hidden">{t(", plan:")}</span>{" "}
-          <span className={cafe.plan === "suspended" ? "badge badge-warning" : cafe.plan === "active" ? "badge badge-success" : "badge"}>{t(PLAN_LABELS[cafe.plan])}</span>
-        </h3>
-        <p className="hint">
-          {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
-        </p>
-        <NewLinkButton cafe={cafe} onCreated={onInvite} />
-        {invite === null ? null : <InviteLink key={invite.link} cafe={cafe} invite={invite} />}
-        <PlanForm cafe={cafe} onSaved={onSaved} />
-        <PaymentForm cafe={cafe} onSaved={onSaved} />
-        {cafe.payments.length === 0 ? (
-          <p className="empty">{t("No payments recorded yet.")}</p>
-        ) : (
-          <div className="table-scroll">
-            <table>
-              <caption>{t("Latest payments of {name}", { name: cafe.name })}</caption>
-              <thead>
-                <tr>
-                  <th scope="col">{t("Paid on")}</th>
-                  <th scope="col">{t("Amount")}</th>
-                  <th scope="col">{t("By")}</th>
-                  <th scope="col">{t("Reference")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cafe.payments.map((payment) => (
-                  <tr key={payment.id}>
-                    <td>{dayFormat.format(new Date(payment.paidOn))}</td>
-                    <td>{formatUsd(payment.amountCents, "en")}</td>
-                    <td>{t(METHOD_LABELS[payment.method])}</td>
-                    <td>{payment.reference === null ? "—" : <bdi>{payment.reference}</bdi>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </li>
+  return cafe.payments.length === 0 ? (
+    <p className="empty">{t("No payments recorded yet.")}</p>
+  ) : (
+    <div className="table-scroll">
+      <table>
+        <caption>{t("Latest payments of {name}", { name: cafe.name })}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{t("Paid on")}</th>
+            <th scope="col">{t("Amount")}</th>
+            <th scope="col">{t("By")}</th>
+            <th scope="col">{t("Reference")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cafe.payments.map((payment) => (
+            <tr key={payment.id}>
+              <td>{dayFormat.format(new Date(payment.paidOn))}</td>
+              <td>{formatUsd(payment.amountCents, "en")}</td>
+              <td>{t(METHOD_LABELS[payment.method])}</td>
+              <td>{payment.reference === null ? "—" : <bdi>{payment.reference}</bdi>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-function CafesPage() {
+const planBadge = (plan: CafePlan) => (plan === "suspended" ? "badge badge-warning" : plan === "active" ? "badge badge-success" : "badge");
+
+function BackToList() {
   const t = useT(AR);
-  const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
-  const lang = useLang();
-  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
-  // One per café: a link not yet sent stays on its café while the operator works on another.
-  const [invites, setInvites] = useState<Record<string, AdminInvite>>({});
+  return (
+    <p>
+      <a href="/admin">{t("All cafés")}</a>
+    </p>
+  );
+}
+
+/** `/admin`: every café as a tile linking to its page, and the way to a new one. */
+function CafeListPage() {
+  const t = useT(AR);
+  const dayFormat = dateFormat(useLang(), DAY);
+  const [state] = useApiData("/api/admin/cafes", adminCafesSchema);
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
   const { cafes } = state.data;
-  const showInvite = (made: AdminInvite) => {
-    // From the latest list, since other responses may have landed meanwhile. A new café joins its end (oldest first); a
-    // café already listed keeps its entry, which a plan or payment response may have made newer than this one's copy.
-    setData((current) => (current.cafes.some((entry) => entry.id === made.cafe.id) ? current : { cafes: [...current.cafes, made.cafe] }));
-    setNotice(null);
-    setInvites((shown) => ({ ...shown, [made.cafe.id]: made }));
-  };
   return (
     <section aria-labelledby="admin-cafes-title">
       <h2 id="admin-cafes-title" tabIndex={-1}>
         {t("Cafés")}
       </h2>
-      <p className="page-intro">{t("Create cafés and their owners' signup links, set each café's plan and record the payments it made. Every change goes in the café's audit log.")}</p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
-      <NewCafeForm onCreated={showInvite} />
+      <p className="page-intro">{t("Open a café to make its owner's signup link, set its plan or record a payment. Every change goes in the café's audit log.")}</p>
+      <p>
+        <a className="action-link" href="/admin/cafes/new">
+          {t("New café")}
+        </a>
+      </p>
       {cafes.length === 0 ? (
         <p className="empty">{t("No cafés yet.")}</p>
       ) : (
-        <ul className="admin-cafes">
+        <ul className="tiles">
           {cafes.map((cafe) => (
-            <CafeCard
-              key={cafe.id}
-              cafe={cafe}
-              invite={invites[cafe.id] ?? null}
-              onInvite={showInvite}
-              onSaved={(saved, message) => {
-                setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === saved.id ? saved : entry)) }));
-                setNotice(() => message);
-              }}
-            />
+            <li key={cafe.id}>
+              <a href={`/admin/cafes/${cafe.id}`}>{cafe.name}</a>
+              <p>
+                <span className="visually-hidden">{t(", plan:")}</span>
+                <span className={planBadge(cafe.plan)}>{t(PLAN_LABELS[cafe.plan])}</span>{" "}
+                {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
+              </p>
+            </li>
           ))}
         </ul>
       )}
     </section>
   );
+}
+
+/** `/admin/cafes/new`: the café's name, then its owner's signup link (shown once here) and the way to its page. */
+function NewCafePage() {
+  const t = useT(AR);
+  const [invite, setInvite] = useState<AdminInvite | null>(null);
+  return (
+    <section aria-labelledby="admin-new-cafe-title">
+      <BackToList />
+      <h2 id="admin-new-cafe-title" tabIndex={-1}>
+        {t("New café")}
+      </h2>
+      <NewCafeForm onCreated={setInvite} />
+      {invite === null ? null : (
+        <div className="card">
+          <InviteLink key={invite.link} cafe={invite.cafe} invite={invite} />
+          <p>
+            <a href={`/admin/cafes/${invite.cafe.id}`}>{t("Open {name}", { name: invite.cafe.name })}</a>
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** `/admin/cafes/<id>`: one café's signup links, plan and payments. It is read from the café list (no route of its own). */
+function CafeDetailPage({ cafeId }: { cafeId: string }) {
+  const t = useT(AR);
+  const api = useApiText();
+  const lang = useLang();
+  const dayFormat = dateFormat(lang, DAY);
+  const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
+  const [invite, setInvite] = useState<AdminInvite | null>(null);
+  if (state.status !== "loaded") {
+    return <PageStatus state={state} />;
+  }
+  const cafe = state.data.cafes.find((entry) => entry.id === cafeId);
+  if (cafe === undefined) {
+    return (
+      <section aria-labelledby="admin-cafe-missing">
+        <BackToList />
+        <p id="admin-cafe-missing" role="alert" className="form-error">
+          {api("This café no longer exists. Reload the list.")}
+        </p>
+      </section>
+    );
+  }
+  const onSaved = (saved: AdminCafe, message: Later<typeof AR>) => {
+    // From the latest list: another response may have landed since this render.
+    setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === saved.id ? saved : entry)) }));
+    setNotice(() => message);
+  };
+  const titleId = `admin-cafe-${cafe.id}`;
+  return (
+    <section aria-labelledby={titleId}>
+      <BackToList />
+      <h2 id={titleId} tabIndex={-1}>
+        {cafe.name}
+        <span className="visually-hidden">{t(", plan:")}</span> <span className={planBadge(cafe.plan)}>{t(PLAN_LABELS[cafe.plan])}</span>
+      </h2>
+      <p className="page-intro">
+        {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
+      </p>
+      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <div className="card">
+        {/* A link leaves the café as listed: its copy of it may be older than a plan or payment saved meanwhile. */}
+        <NewLinkButton
+          cafe={cafe}
+          onCreated={(made) => {
+            setNotice(null);
+            setInvite(made);
+          }}
+        />
+        {invite === null ? null : <InviteLink key={invite.link} cafe={cafe} invite={invite} />}
+      </div>
+      <div className="card">
+        <PlanForm cafe={cafe} onSaved={onSaved} />
+      </div>
+      <div className="card">
+        <PaymentForm cafe={cafe} onSaved={onSaved} />
+        <PaymentsTable cafe={cafe} />
+      </div>
+    </section>
+  );
+}
+
+/** `/admin/password`: the operator's own password; changing it ends every session of theirs. */
+function PasswordPage({ session, onChanged }: { session: OperatorSession; onChanged: () => void }) {
+  const t = useT(AR);
+  return (
+    <section aria-labelledby="admin-account-title">
+      <BackToList />
+      <h2 id="admin-account-title" tabIndex={-1}>
+        {t("Account")}
+      </h2>
+      <p className="page-intro">{t("Signed in as {email}", { email: session.operator.email })}</p>
+      <ChangePasswordForm path="/api/admin/password" onChanged={onChanged} />
+    </section>
+  );
+}
+
+const CAFE_PATH = /^\/admin\/cafes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/** The admin page for `path`; an unknown /admin path shows the café list. */
+function AdminPage({ path, session, signOut }: { path: string; session: OperatorSession; signOut: (notice: string) => void }) {
+  const cafeId = CAFE_PATH.exec(path)?.[1];
+  if (cafeId !== undefined) {
+    return <CafeDetailPage cafeId={cafeId} />;
+  }
+  switch (path) {
+    case "/admin/cafes/new":
+      return <NewCafePage />;
+    case "/admin/password":
+      return (
+        <PasswordPage
+          session={session}
+          onChanged={() => {
+            signOut("Your password is changed. Sign in with the new password.");
+          }}
+        />
+      );
+    default:
+      return <CafeListPage />;
+  }
 }
 
 type AdminState =
@@ -512,8 +613,17 @@ type AdminState =
   | { status: "signed-in"; session: OperatorSession }
   | { status: "unavailable"; message: string };
 
-/** `/admin`: the operator's screen (AC 39), behind its own sign-in. `layout` wraps every state in the page's frame. */
-export function AdminArea({ layout }: { layout: (children: ReactNode, session: OperatorSession | null) => ReactNode }) {
+/**
+ * `/admin` and its pages: the operator's screen (AC 39), behind its own sign-in. `layout` wraps every state in the
+ * page's frame, with the way to sign out once signed in.
+ */
+export function AdminArea({
+  path,
+  layout,
+}: {
+  path: string;
+  layout: (children: ReactNode, session: OperatorSession | null, signOut: (notice: string) => void) => ReactNode;
+}) {
   const t = useT(AR);
   const api = useApiText();
   const [state, setState] = useState<AdminState>({ status: "loading" });
@@ -521,7 +631,6 @@ export function AdminArea({ layout }: { layout: (children: ReactNode, session: O
   const signOut = useCallback((notice: string) => {
     setState({ status: "signed-out", notice });
   }, []);
-  const { pending, error, submit } = useSubmit();
 
   useEffect(() => {
     let current = true;
@@ -549,7 +658,7 @@ export function AdminArea({ layout }: { layout: (children: ReactNode, session: O
 
   switch (state.status) {
     case "loading":
-      return layout(<p role="status">{t("Loading…")}</p>, null);
+      return layout(<p role="status">{t("Loading…")}</p>, null, signOut);
     case "unavailable":
       return layout(
         <>
@@ -568,6 +677,7 @@ export function AdminArea({ layout }: { layout: (children: ReactNode, session: O
           </button>
         </>,
         null,
+        signOut,
       );
     case "signed-out":
       return layout(
@@ -578,34 +688,12 @@ export function AdminArea({ layout }: { layout: (children: ReactNode, session: O
           }}
         />,
         null,
+        signOut,
       );
     case "signed-in":
       return (
         <SessionEndedContext.Provider value={signOut}>
-          {layout(
-            <>
-              <CafesPage />
-              <section aria-labelledby="admin-sign-out-title" className="card">
-                <h3 id="admin-sign-out-title">{t("Sign out")}</h3>
-                <p>{t("Signing out ends your operator session on every device.")}</p>
-                <FormError message={error} />
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => {
-                    void submit(() => apiRequest("POST", "/api/admin/logout", noContent)).then((result) => {
-                      if (result.ok) {
-                        signOut("You signed out on every device.");
-                      }
-                    });
-                  }}
-                >
-                  {pending ? t("Signing out…") : t("Sign out")}
-                </button>
-              </section>
-            </>,
-            state.session,
-          )}
+          {layout(<AdminPage path={path} session={state.session} signOut={signOut} />, state.session, signOut)}
         </SessionEndedContext.Provider>
       );
   }

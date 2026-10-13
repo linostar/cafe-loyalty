@@ -3,9 +3,10 @@ import { UNAUTHENTICATED, mockApi, reply } from "./api-mock.js";
 
 test.use({ timezoneId: "UTC" });
 
-// Fake operator and cafés for the test only.
+// Fake operator, cafés and links for the test only.
 const OPERATOR = { operator: { id: "c01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", email: "operator@example.com" } };
 const CAFE_ID = "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d";
+const CAFE_PAGE = `/admin/cafes/${CAFE_ID}`;
 const cafe = (overrides: Record<string, unknown> = {}) => ({
   id: CAFE_ID,
   name: "Café Najjar",
@@ -15,8 +16,10 @@ const cafe = (overrides: Record<string, unknown> = {}) => ({
   payments: [],
   ...overrides,
 });
+const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+const invite = (token: string, overrides: Record<string, unknown> = {}) => ({ cafe: cafe(overrides), link: link(token), expiresAt: "2026-10-08T08:00:00.000Z" });
 
-test("the operator signs in, suspends a café, records a payment and signs out (AC 39)", async ({ page }) => {
+test("the operator signs in, opens a café, suspends it, records a payment and signs out from the menu (AC 39)", async ({ page }) => {
   const sent: unknown[] = [];
   let signedIn = false;
   await mockApi(page, {
@@ -42,13 +45,23 @@ test("the operator signs in, suspends a café, records a payment and signs out (
         }),
       });
     },
-    "POST /api/admin/logout": reply(204),
+    "POST /api/admin/logout": async (route) => {
+      signedIn = false;
+      await route.fulfill({ status: 204 });
+    },
   });
   await page.goto("/admin");
   await page.getByLabel("Email").fill("operator@example.com");
   await page.getByLabel("Password").fill("fake-operator-password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+  // The list holds the cafés and the way to a new one, nothing else.
+  await expect(page.getByRole("link", { name: "New café" })).toHaveAttribute("href", "/admin/cafes/new");
+  await expect(page.getByRole("button", { name: "Save plan" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeHidden();
+  await expect(page.getByRole("listitem").filter({ hasText: "Café Najjar" })).toContainText("Pilot");
+  await page.getByRole("link", { name: "Café Najjar" }).click();
+  await expect(page).toHaveURL(CAFE_PAGE);
 
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await expect(card.getByRole("button", { name: "Save plan" })).toBeDisabled();
@@ -56,7 +69,7 @@ test("the operator signs in, suspends a café, records a payment and signs out (
   await expect(card.getByText("Its signup page enrols no one; its counter still records and syncs visits.")).toBeVisible();
   await card.getByRole("button", { name: "Save plan" }).click();
   await expect(page.getByRole("status")).toHaveText("Café Najjar is now on the suspended plan.");
-  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
 
   // An amount the form cannot read is caught before anything is sent.
   await card.getByLabel("Amount (USD)").fill("twenty");
@@ -71,6 +84,8 @@ test("the operator signs in, suspends a café, records a payment and signs out (
   await expect(card.getByRole("table", { name: "Latest payments of Café Najjar" }).getByRole("row", { name: /1 Oct 2026 \$25\.00 Whish W-1042/ })).toBeVisible();
   await expect(card.getByLabel("Amount (USD)")).toHaveValue("");
 
+  await page.getByRole("button", { name: "Profile: operator@example.com" }).click();
+  await expect(page.getByRole("link", { name: "Change password" })).toHaveAttribute("href", "/admin/password");
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
   await expect(page.getByText("You signed out on every device.")).toBeVisible();
@@ -81,60 +96,66 @@ test("the operator signs in, suspends a café, records a payment and signs out (
   ]);
 });
 
-test("the operator creates a café, copies its owner's signup link and makes a fresh one", async ({ page, context }) => {
+test("says so when there are no cafés yet, and shows the list for an unknown admin page", async ({ page }) => {
+  await mockApi(page, { "GET /api/admin/session": reply(200, OPERATOR), "GET /api/admin/cafes": reply(200, { cafes: [] }) });
+  await page.goto("/admin/nothing-here");
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+  await expect(page.getByText("No cafés yet.")).toBeVisible();
+});
+
+test("says a café no longer exists, with the way back to the list", async ({ page }) => {
+  await mockApi(page, { "GET /api/admin/session": reply(200, OPERATOR), "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }) });
+  await page.goto("/admin/cafes/9b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d");
+  await expect(page.getByRole("alert")).toHaveText("This café no longer exists. Reload the list.");
+  await page.getByRole("link", { name: "All cafés" }).click();
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+});
+
+test("asks for the operator sign-in on every admin page", async ({ page }) => {
+  await mockApi(page, { "GET /api/admin/session": reply(401, UNAUTHENTICATED) });
+  for (const path of ["/admin/cafes/new", CAFE_PAGE, "/admin/password"]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
+  }
+});
+
+test("the operator creates a café, copies its owner's signup link and opens its page", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const sent: unknown[] = [];
-  let tries = 0;
-  // Fake links for the test only.
-  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
   await mockApi(page, {
     "GET /api/admin/session": reply(200, OPERATOR),
     "GET /api/admin/cafes": reply(200, { cafes: [] }),
     "POST /api/admin/cafes": async (route) => {
-      tries += 1;
       sent.push(route.request().postDataJSON());
       // The first try's answer is lost.
-      await (tries === 1
-        ? route.abort("failed")
-        : route.fulfill({ status: 201, json: { cafe: cafe({ name: "Café Nouveau" }), link: link("fake-invite-token-one"), expiresAt: "2026-10-08T08:00:00.000Z" } }));
-    },
-    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
-      sent.push(route.request().postDataJSON());
-      await route.fulfill({ status: 201, json: { cafe: cafe({ name: "Café Nouveau" }), link: link("fake-invite-token-two"), expiresAt: "2026-10-09T08:00:00.000Z" } });
+      await (sent.length === 1 ? route.abort("failed") : route.fulfill({ status: 201, json: invite("fake-invite-token-one", { name: "Café Nouveau" }) }));
     },
   });
   await page.goto("/admin");
-  await expect(page.getByText("No cafés yet.")).toBeVisible();
+  await page.getByRole("link", { name: "New café" }).click();
+  await expect(page).toHaveURL("/admin/cafes/new");
   const form = page.getByRole("form", { name: "New café" });
   await form.getByLabel("Café name").fill("Café Nouveau");
   await form.getByRole("button", { name: "Create café" }).click();
   await expect(form.getByRole("alert")).toHaveText("Could not reach the server. Check your connection and try again.");
   await form.getByRole("button", { name: "Create café" }).click();
 
-  const card = page.getByRole("region", { name: /Café Nouveau/ });
-  const shown = card.getByLabel("Owner signup link for Café Nouveau");
+  const shown = page.getByLabel("Owner signup link for Café Nouveau");
   await expect(shown).toHaveValue(link("fake-invite-token-one"));
   await expect(shown).toBeFocused();
   await expect(shown).toHaveAccessibleDescription("Send it to the café's owner. It works once, until 8 Oct 2026, 08:00, and is shown only now.");
   await expect(form.getByLabel("Café name")).toHaveValue("");
-  await card.getByRole("button", { name: "Copy link for Café Nouveau" }).click();
-  await expect(card.getByRole("status")).toHaveText("Copied.");
+  await page.getByRole("button", { name: "Copy link for Café Nouveau" }).click();
+  await expect(page.getByRole("status")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link("fake-invite-token-one"));
-
-  await card.getByRole("button", { name: "New signup link for Café Nouveau" }).click();
-  await expect(shown).toHaveValue(link("fake-invite-token-two"));
-  await expect(card.getByRole("status")).toHaveText("");
-  expect(sent).toEqual([{ cafeId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown, name: "Café Nouveau" }, sent[0], {}]);
+  expect(sent).toEqual([{ cafeId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown, name: "Café Nouveau" }, sent[0]]);
+  await expect(page.getByRole("link", { name: "Open Café Nouveau" })).toHaveAttribute("href", CAFE_PAGE);
 });
 
-test("makes a new café id after a conflict, and keeps each café's unsent link while another gets one", async ({ page }) => {
+test("makes a new café id after a conflict", async ({ page }) => {
   const ids: string[] = [];
-  const OTHER_ID = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
-  // Fake links for the test only.
-  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
   await mockApi(page, {
     "GET /api/admin/session": reply(200, OPERATOR),
-    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
     "POST /api/admin/cafes": async (route) => {
       ids.push((route.request().postDataJSON() as { cafeId: string }).cafeId);
       await (ids.length === 1
@@ -142,61 +163,40 @@ test("makes a new café id after a conflict, and keeps each café's unsent link 
             status: 409,
             json: { code: "CONFLICT", message: "This café was already created with another name. Reload the page to see it, then create any other café as a new one.", retryable: false },
           })
-        : route.fulfill({ status: 201, json: { cafe: cafe({ id: OTHER_ID, name: "Café Nouveau" }), link: link("fake-invite-token-new"), expiresAt: "2026-10-08T08:00:00.000Z" } }));
+        : route.fulfill({ status: 201, json: invite("fake-invite-token-new", { name: "Café Nouveau" }) }));
     },
-    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: reply(201, { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" }),
   });
-  await page.goto("/admin");
-  const najjar = page.getByRole("region", { name: /Café Najjar/ });
-  await najjar.getByRole("button", { name: "New signup link for Café Najjar" }).click();
-  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
-
+  await page.goto("/admin/cafes/new");
   const form = page.getByRole("form", { name: "New café" });
   await form.getByLabel("Café name").fill("Café Nouveau");
   await form.getByRole("button", { name: "Create café" }).click();
   await expect(form.getByRole("alert")).toHaveText("This café was already created with another name. Reload the page to see it, then create any other café as a new one.");
   await form.getByRole("button", { name: "Create café" }).click();
-  await expect(page.getByRole("region", { name: /Café Nouveau/ }).getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+  await expect(page.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
   expect(ids).toHaveLength(2);
   expect(ids[1]).not.toBe(ids[0]);
-  // Café Najjar's link, not yet sent, is still there.
-  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
 });
 
-test("keeps a café created while another café's link was on its way", async ({ page }) => {
-  const OTHER_ID = "2d3e4f5a-6b7c-4d8e-9fa0-1b2c3d4e5f6a";
-  // Fake links for the test only.
-  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
-  let release: () => void = () => undefined;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+test("makes fresh signup links on a café's page, each shown once", async ({ page }) => {
+  let made = 0;
   await mockApi(page, {
     "GET /api/admin/session": reply(200, OPERATOR),
     "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
     [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
-      await held;
-      await route.fulfill({ status: 201, json: { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" } });
+      expect(route.request().postDataJSON()).toEqual({});
+      made += 1;
+      await route.fulfill({ status: 201, json: invite(`fake-invite-token-${String(made)}`) });
     },
-    "POST /api/admin/cafes": reply(201, { cafe: cafe({ id: OTHER_ID, name: "Café Nouveau" }), link: link("fake-invite-token-new"), expiresAt: "2026-10-08T08:00:00.000Z" }),
   });
-  await page.goto("/admin");
-  const najjar = page.getByRole("region", { name: /Café Najjar/ });
-  await najjar.getByRole("button", { name: "New signup link for Café Najjar" }).click();
-  await expect(najjar.getByRole("button", { name: "Making a link… for Café Najjar" })).toBeDisabled();
-  const form = page.getByRole("form", { name: "New café" });
-  await form.getByLabel("Café name").fill("Café Nouveau");
-  await form.getByRole("button", { name: "Create café" }).click();
-  const nouveau = page.getByRole("region", { name: /Café Nouveau/ });
-  await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
-  release();
-  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
-  await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+  await page.goto(CAFE_PAGE);
+  await page.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  const shown = page.getByLabel("Owner signup link for Café Najjar");
+  await expect(shown).toHaveValue(link("fake-invite-token-1"));
+  await page.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(shown).toHaveValue(link("fake-invite-token-2"));
 });
 
 test("keeps a plan saved while the café's new link was on its way", async ({ page }) => {
-  // Fake links for the test only.
-  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
   let release: () => void = () => undefined;
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -207,19 +207,19 @@ test("keeps a plan saved while the café's new link was on its way", async ({ pa
     [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
       await held;
       // Its copy of the café was read before the plan changed.
-      await route.fulfill({ status: 201, json: { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" } });
+      await route.fulfill({ status: 201, json: invite("fake-invite-token-najjar") });
     },
     [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(200, cafe({ plan: "suspended" })),
   });
-  await page.goto("/admin");
+  await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
   await card.getByLabel("Suspended").check();
   await card.getByRole("button", { name: "Save plan" }).click();
-  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
   release();
   await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
-  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
 });
 
 test("sends a payment again with the same id after a failed try, and a new id for the next payment", async ({ page }) => {
@@ -235,7 +235,7 @@ test("sends a payment again with the same id after a failed try, and a new id fo
       await (calls === 1 ? route.abort("failed") : route.fulfill({ status: 201, json: cafe({ paidCents: 2500 }) }));
     },
   });
-  await page.goto("/admin");
+  await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await card.getByLabel("Amount (USD)").fill("25");
   await card.getByRole("button", { name: "Record payment" }).click();
@@ -249,7 +249,7 @@ test("sends a payment again with the same id after a failed try, and a new id fo
   expect(ids[2]).not.toBe(ids[0]);
 });
 
-test("shows a refused payment's reason by its field, and a failed sign-out", async ({ page }) => {
+test("shows a refused payment's reason by its field, and a failed sign-out in the menu", async ({ page }) => {
   await mockApi(page, {
     "GET /api/admin/session": reply(200, OPERATOR),
     "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
@@ -261,7 +261,7 @@ test("shows a refused payment's reason by its field, and a failed sign-out", asy
     }),
     "POST /api/admin/logout": reply(503, { code: "SERVICE_UNAVAILABLE", message: "The server is restarting. Try again in a minute.", retryable: true }),
   });
-  await page.goto("/admin");
+  await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await card.getByLabel("Amount (USD)").fill("25");
   await card.getByLabel("Paid on").fill("2025-06-01");
@@ -269,9 +269,47 @@ test("shows a refused payment's reason by its field, and a failed sign-out", asy
   await expect(card.getByLabel("Paid on")).toHaveAttribute("aria-invalid", "true");
   await expect(card.getByLabel("Paid on")).toHaveAccessibleDescription("Use the day the café paid, from 2026 up to today.");
   await expect(card.getByLabel("Amount (USD)")).toHaveValue("25");
+  await page.getByRole("button", { name: "Profile: operator@example.com" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("region", { name: "Sign out" }).getByRole("alert")).toHaveText("The server is restarting. Try again in a minute.");
-  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+  await expect(page.getByRole("banner").getByRole("alert")).toHaveText("The server is restarting. Try again in a minute.");
+  await expect(page.getByRole("heading", { level: 2, name: /Café Najjar/ })).toBeVisible();
+});
+
+test("changes the operator's password and returns to the operator sign-in", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "POST /api/admin/password": async (route) => {
+      expect(route.request().postDataJSON()).toEqual({ currentPassword: "fake-operator-password", newPassword: "a brand new password" });
+      await route.fulfill({ status: 204 });
+    },
+  });
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Profile: operator@example.com" }).click();
+  await page.getByRole("link", { name: "Change password" }).click();
+  await expect(page).toHaveURL("/admin/password");
+  await expect(page.getByText("Signed in as operator@example.com")).toBeVisible();
+  await page.getByLabel("Current password", { exact: true }).fill("fake-operator-password");
+  await page.getByLabel("New password", { exact: true }).fill("a brand new password");
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Your password is changed. Sign in with the new password.");
+});
+
+test("shows a wrong current password by its field", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "POST /api/admin/password": reply(400, {
+      code: "VALIDATION_FAILED",
+      message: "The current password is wrong. Check it and try again.",
+      retryable: false,
+      details: [{ path: "currentPassword", issue: "The current password is wrong. Check it and try again." }],
+    }),
+  });
+  await page.goto("/admin/password");
+  await page.getByLabel("Current password", { exact: true }).fill("not the password");
+  await page.getByLabel("New password", { exact: true }).fill("a brand new password");
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(page.getByLabel("Current password", { exact: true })).toHaveAccessibleDescription("The current password is wrong. Check it and try again.");
 });
 
 test("returns to the operator sign-in when the session ends while working", async ({ page }) => {
@@ -280,7 +318,7 @@ test("returns to the operator sign-in when the session ends while working", asyn
     "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
     [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(401, { code: "UNAUTHENTICATED", message: "Your operator session has ended. Sign in to the admin screen again.", retryable: false }),
   });
-  await page.goto("/admin");
+  await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await card.getByLabel("Active").check();
   await card.getByRole("button", { name: "Save plan" }).click();

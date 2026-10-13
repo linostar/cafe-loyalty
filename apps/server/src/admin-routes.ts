@@ -5,6 +5,7 @@ import {
   cafeCreateSchema,
   cafePlanUpdateSchema,
   loginRequestSchema,
+  passwordChangeRequestSchema,
   paymentRecordSchema,
   type AdminCafe,
   type AdminInvite,
@@ -15,7 +16,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { OPERATOR_SESSION_ABSOLUTE_TIMEOUT_SECONDS, OPERATOR_SESSION_IDLE_TIMEOUT_SECONDS, findOperatorSession, operatorOf } from "./access.js";
-import { clearedOperatorCookie, hashToken, newToken, operatorSessionCookie, readOperatorCookie, verifyPassword } from "./credentials.js";
+import { clearedOperatorCookie, hashPassword, hashToken, newToken, operatorSessionCookie, readOperatorCookie, verifyPassword } from "./credentials.js";
 import { audit, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { insertInvite, inviteLink } from "./invites.js";
@@ -101,6 +102,7 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     // As for owners (owner-auth.ts): failures only, per account and address, with a looser cap per account.
     loginFailuresPerAccountAndIp: new RateLimiter(5, 15 * MINUTE * 1000),
     loginFailuresPerAccount: new RateLimiter(50, HOUR * 1000),
+    passwordChangePerOperator: new RateLimiter(10, 15 * MINUTE * 1000),
   };
 
   function enforce(limiter: RateLimiter, key: string, reply: FastifyReply): void {
@@ -170,6 +172,35 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
       await withOperator(db, session.operatorId, (trx) => trx.deleteFrom("operator_sessions").where("operator_id", "=", session.operatorId).execute());
       request.log.info({ operatorId: session.operatorId }, "operator signed out");
     }
+    return reply.code(204).header("set-cookie", clearedOperatorCookie).send();
+  });
+
+  /**
+   * Changes the operator's password (as owners do, owner-auth.ts) and ends every session of theirs, this one
+   * included. Operators belong to no café, so there is no café audit entry; the log has the operator id only.
+   */
+  app.post("/password", { config: { access: "operator" } }, async (request, reply) => {
+    const operator = operatorOf(request);
+    enforce(limits.passwordChangePerOperator, operator.operatorId, reply);
+    const body = parseInput(passwordChangeRequestSchema, request.body);
+    const current = await withOperator(db, operator.operatorId, (trx) =>
+      trx.selectFrom("operators").select("password_hash").where("id", "=", operator.operatorId).executeTakeFirstOrThrow(),
+    );
+    if (!(await verifyPassword(current.password_hash, body.currentPassword))) {
+      throw new ApiError("VALIDATION_FAILED", apiText("The current password is wrong. Check it and try again."), [{ path: "currentPassword", issue: apiText("The current password is wrong. Check it and try again.") }]);
+    }
+    const passwordHash = await hashPassword(body.newPassword);
+    await withOperator(db, operator.operatorId, async (trx) => {
+      // Compare-and-set: the current password was checked outside this transaction, so a new one from create-operator
+      // in between must not be overwritten by someone holding the old password.
+      const locked = await trx.selectFrom("operators").select("password_hash").where("id", "=", operator.operatorId).forNoKeyUpdate().executeTakeFirstOrThrow();
+      if (locked.password_hash !== current.password_hash) {
+        throw new ApiError("CONFLICT", apiText("Your password was changed somewhere else just now. Sign in again with the new password."));
+      }
+      await trx.updateTable("operators").set({ password_hash: passwordHash, password_changed_at: now() }).where("id", "=", operator.operatorId).execute();
+      await trx.deleteFrom("operator_sessions").where("operator_id", "=", operator.operatorId).execute();
+    });
+    request.log.info({ operatorId: operator.operatorId }, "operator password changed");
     return reply.code(204).header("set-cookie", clearedOperatorCookie).send();
   });
 
