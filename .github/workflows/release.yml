@@ -133,6 +133,8 @@ jobs:
       contents: read
     steps:
       - name: Cancel older runs waiting for production approval
+        # With pipefail (an unset shell is `bash -e`), so a failed listing fails this job instead of cancelling nothing.
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # ponytail: check-then-cancel is not atomic; a run approved in between is cancelled as it starts. Its remote
@@ -145,13 +147,20 @@ jobs:
               grep -qx production <<<"$envs" || continue
               status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$COMMIT" --jq .status)
               [[ $status == ahead || $status == identical ]] || continue
-              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/cancel" >/dev/null
+              # A run that ended since the listing (approved and done, rejected, timed out) answers 409; anything else fails.
+              if ! gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/cancel" >/dev/null; then
+                [[ $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status) == completed ]] || exit 1
+                echo "Run $run ($sha) had already ended." | tee -a "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
               echo "Cancelled run $run ($sha), superseded by $COMMIT." | tee -a "$GITHUB_STEP_SUMMARY"
             done
 
   production:
     name: Deploy to production
-    needs: [build, staging, supersede]
+    # Not on supersede: this job waits in its group until the older run is cancelled, and a failed cleanup must not keep
+    # a release that passed staging out of production.
+    needs: [build, staging]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Its required reviewers approve before this job starts (README, Deploying). See staging for the concurrency group.
