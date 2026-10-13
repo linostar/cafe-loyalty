@@ -31,7 +31,7 @@ describe("the server settings provisioning generates (deploy/provision.sh)", () 
       SMTP_HOST: "smtp.example.test",
       SMTP_USER: "mailer",
       SMTP_PASSWORD: "mail-password",
-      EMAIL_FROM: "Qahwa Loyalty <hello@example.test>",
+      EMAIL_FROM: "Loyalty Everywhere <hello@example.test>",
       BUILT_AT: "2026-10-01T00:00:00.000Z",
     });
     expect(config.NODE_ENV).toBe("production");
