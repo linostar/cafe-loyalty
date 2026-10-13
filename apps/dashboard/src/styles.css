@@ -20,7 +20,7 @@
   min-inline-size: 0;
 }
 
-/* The café and the account: shown from 40rem, where they fit beside the brand (the nav has Account on phones). */
+/* The café's name: shown from 40rem, where it fits beside the brand and the profile menu. */
 .topbar-account {
   display: none;
   align-items: center;
@@ -33,31 +33,6 @@
 .topbar-cafe {
   font-weight: var(--weight-semibold);
   white-space: nowrap;
-}
-
-.topbar-email {
-  display: inline-block;
-  max-inline-size: 16rem;
-  padding: var(--space-1) var(--space-3);
-  overflow: hidden;
-  border: 1px solid var(--color-on-espresso-muted);
-  border-radius: var(--radius-pill);
-  color: var(--color-on-espresso);
-  text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.topbar-email:hover,
-.topbar-email[aria-current="page"] {
-  border-color: var(--color-on-espresso);
-}
-
-/* On the account page: underlined too, like the nav's current page, so it does not rest on colour alone. */
-.topbar-email[aria-current="page"] {
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 0.3em;
 }
 
 .topbar {
@@ -611,15 +586,3 @@ form > .actions {
   grid-template-rows: auto 1fr auto;
 }
 
-.admin-cafes {
-  display: grid;
-  gap: var(--space-4);
-  margin: var(--space-4) 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* A grid item is as wide as its content by default; this lets a card shrink so its table scrolls instead. */
-.admin-cafes > li {
-  min-inline-size: 0;
-}

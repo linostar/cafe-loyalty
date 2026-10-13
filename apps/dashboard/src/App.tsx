@@ -1,5 +1,4 @@
 import {
-  OWNER_PASSWORD_MIN_LENGTH,
   PRODUCT_NAME,
   VISIT_HOURS_WEEKS,
   apiText,
@@ -15,16 +14,17 @@ import {
 import logoUrl from "@cafe-loyalty/ui/logo.svg";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AdminArea } from "./admin-page.js";
-import { ApiRequestError, apiRequest, noContent } from "./api.js";
+import { ApiRequestError, apiRequest } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
 import { CafePage } from "./cafe-page.js";
 import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
-import { Field, FormError, useSubmit } from "./forms.js";
 import { LangProvider, LanguageSwitch, dateFormat, useApiText, useLang, useT } from "./i18n.js";
 import { InboxPage } from "./inbox-page.js";
 import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
+import { ProfileMenu } from "./profile-menu.js";
+import { ChangePasswordForm } from "./password-form.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
@@ -40,13 +40,7 @@ const AR = {
   Account: "الحساب",
   Dashboard: "لوحة التحكم",
   Admin: "الإدارة",
-  "Account: ": "الحساب: ",
   "Build {id}": "الإصدار {id}",
-  "Change password": "تغيير كلمة المرور",
-  "Changing your password signs you out everywhere, on this device too.": "تغيير كلمة المرور يسجّل خروجك من كل مكان، ومن هذا الجهاز أيضاً.",
-  "Current password": "كلمة المرور الحالية",
-  "New password": "كلمة المرور الجديدة",
-  "At least {n} characters.": "{n} أحرف على الأقل.",
   "Could not check wallet card updates: {message}": "تعذّر التحقق من تحديثات بطاقات المحفظة: {message}",
   "Wallet card updates are failing": "تحديثات بطاقات المحفظة تفشل",
   "Some customers' wallet cards are not showing their latest stamps:": "بطاقات المحفظة لدى بعض الزبائن لا تُظهر أحدث أختامهم:",
@@ -80,10 +74,7 @@ const AR = {
   "What removed phones and baristas recorded.": "ما سجّلته هواتف وباريستا أُزيلوا.",
   "Private feedback from your customers.": "ملاحظات خاصة من زبائنك.",
   "Your first month: customers won back, quiet-hour visits and what offers cost.": "شهرك الأول: الزبائن المسترجَعون، وزيارات ساعات الهدوء، وكلفة العروض.",
-  "Password and signing out.": "كلمة المرور وتسجيل الخروج.",
-  "Sign out": "تسجيل الخروج",
-  "Signing out ends your session on every device.": "تسجيل الخروج ينهي جلستك على كل الأجهزة.",
-  "Signing out…": "جارٍ تسجيل الخروج…",
+  "Your email and password.": "بريدك الإلكتروني وكلمة المرور.",
 } as const;
 
 type SessionState =
@@ -108,55 +99,6 @@ const OWNER_PAGES = [
 type OwnerPath = (typeof OWNER_PAGES)[number]["path"];
 
 const isOwnerPath = (path: string): path is OwnerPath => OWNER_PAGES.some((page) => page.path === path);
-
-function ChangePasswordForm({ onChanged }: { onChanged: () => void }) {
-  const t = useT(AR);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const { pending, error, fieldErrors, submit } = useSubmit();
-
-  return (
-    <section aria-labelledby="password-title" className="card">
-      <h3 id="password-title">{t("Change password")}</h3>
-      <p>{t("Changing your password signs you out everywhere, on this device too.")}</p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit(() => apiRequest("POST", "/api/auth/password", noContent, { currentPassword, newPassword })).then((result) => {
-            if (result.ok) {
-              onChanged();
-            }
-          });
-        }}
-      >
-        <FormError message={error} />
-        <Field
-          label={t("Current password")}
-          name="currentPassword"
-          type="password"
-          autoComplete="current-password"
-          value={currentPassword}
-          onChange={setCurrentPassword}
-          error={fieldErrors.currentPassword}
-        />
-        <Field
-          label={t("New password")}
-          name="newPassword"
-          type="password"
-          autoComplete="new-password"
-          value={newPassword}
-          onChange={setNewPassword}
-          hint={t("At least {n} characters.", { n: OWNER_PASSWORD_MIN_LENGTH })}
-          minLength={OWNER_PASSWORD_MIN_LENGTH}
-          error={fieldErrors.newPassword}
-        />
-        <button type="submit" disabled={pending}>
-          {pending ? t("Saving…") : t("Change password")}
-        </button>
-      </form>
-    </section>
-  );
-}
 
 const WALLET_NAMES = { apple: "Apple Wallet", google: "Google Wallet" } as const;
 const CARDS = { en: { one: "{n} card", other: "{n} cards" }, ar: { one: "بطاقة واحدة", two: "بطاقتان", few: "{n} بطاقات", other: "{n} بطاقة" } };
@@ -362,7 +304,7 @@ const TILES = [
   { path: "/review", label: "Review", text: "What removed phones and baristas recorded." },
   { path: "/inbox", label: "Inbox", text: "Private feedback from your customers." },
   { path: "/results", label: "Results", text: "Your first month: customers won back, quiet-hour visits and what offers cost." },
-  { path: "/account", label: "Account", text: "Password and signing out." },
+  { path: "/account", label: "Account", text: "Your email and password." },
 ] as const;
 
 function HomePage({ session }: { session: OwnerSession }) {
@@ -386,30 +328,12 @@ function HomePage({ session }: { session: OwnerSession }) {
   );
 }
 
-function AccountPage({ onSignedOut }: { onSignedOut: (notice: string) => void }) {
+function AccountPage({ session, onSignedOut }: { session: OwnerSession; onSignedOut: (notice: string) => void }) {
   const t = useT(AR);
-  const { pending, error, submit } = useSubmit();
   return (
     <>
       <h2 id="account-page-title">{t("Account")}</h2>
-      <section aria-labelledby="account-title" className="card">
-        <h3 id="account-title">{t("Sign out")}</h3>
-        <p>{t("Signing out ends your session on every device.")}</p>
-        <FormError message={error} />
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => {
-            void submit(() => apiRequest("POST", "/api/auth/logout", noContent)).then((result) => {
-              if (result.ok) {
-                onSignedOut("You signed out on every device.");
-              }
-            });
-          }}
-        >
-          {pending ? t("Signing out…") : t("Sign out")}
-        </button>
-      </section>
+      <p className="page-intro">{t("Signed in as {email}", { email: session.owner.email })}</p>
       <ChangePasswordForm
         onChanged={() => {
           onSignedOut("Your password is changed. Sign in with the new password.");
@@ -481,8 +405,7 @@ function AuthLayout({ children, app }: { children: ReactNode; app?: "Admin" }) {
 }
 
 /** The signed-in pages: the top bar with the café, the account and the language, the navigation, then the page. */
-function OwnerLayout({ session, path, children }: { session: OwnerSession; path: OwnerPath; children: ReactNode }) {
-  const t = useT(AR);
+function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerSession; path: OwnerPath; onSignedOut: (notice: string) => void; children: ReactNode }) {
   return (
     <div className="owner-layout">
       <header className="topbar">
@@ -490,11 +413,13 @@ function OwnerLayout({ session, path, children }: { session: OwnerSession; path:
         <div className="topbar-end">
           <p className="topbar-account">
             <span className="topbar-cafe">{session.cafe.name}</span>
-            <a href="/account" className="topbar-email" aria-current={path === "/account" ? "page" : undefined}>
-              <span className="visually-hidden">{t("Account: ")}</span>
-              <bdi>{session.owner.email}</bdi>
-            </a>
           </p>
+          <ProfileMenu
+            email={session.owner.email}
+            link={{ href: "/account", label: "Account", current: path === "/account" }}
+            logoutPath="/api/auth/logout"
+            onSignedOut={onSignedOut}
+          />
           <LanguageSwitch />
         </div>
       </header>
@@ -505,16 +430,19 @@ function OwnerLayout({ session, path, children }: { session: OwnerSession; path:
   );
 }
 
-/** The operator's screen: the top bar with their email and the language, then the page, without the owner's navigation. */
-function AdminLayout({ session, children }: { session: OperatorSession; children: ReactNode }) {
+/** The operator's screen: the top bar with their profile menu and the language, then the page, without the owner's navigation. */
+function AdminLayout({ session, path, onSignedOut, children }: { session: OperatorSession; path: string; onSignedOut: (notice: string) => void; children: ReactNode }) {
   return (
     <div className="owner-layout admin-layout">
       <header className="topbar">
         <Brand app="Admin" />
         <div className="topbar-end">
-          <p className="topbar-account">
-            <bdi className="topbar-email">{session.operator.email}</bdi>
-          </p>
+          <ProfileMenu
+            email={session.operator.email}
+            link={{ href: "/admin/password", label: "Change password", current: path === "/admin/password" }}
+            logoutPath="/api/admin/logout"
+            onSignedOut={onSignedOut}
+          />
           <LanguageSwitch />
         </div>
       </header>
@@ -622,12 +550,12 @@ function OwnerArea({ path }: { path: OwnerPath }) {
           content = <ResultsPage />;
           break;
         case "/account":
-          content = <AccountPage onSignedOut={signOut} />;
+          content = <AccountPage session={state.session} onSignedOut={signOut} />;
           break;
       }
       return (
         <SessionEndedContext.Provider value={signOut}>
-          <OwnerLayout session={state.session} path={path}>
+          <OwnerLayout session={state.session} path={path} onSignedOut={signOut}>
             {content}
           </OwnerLayout>
         </SessionEndedContext.Provider>
@@ -636,6 +564,22 @@ function OwnerArea({ path }: { path: OwnerPath }) {
 }
 
 function Page({ path }: { path: string }) {
+  if (path === "/admin" || path.startsWith("/admin/")) {
+    return (
+      <AdminArea
+        path={path}
+        layout={(children, session, onSignedOut) =>
+          session === null ? (
+            <AuthLayout app="Admin">{children}</AuthLayout>
+          ) : (
+            <AdminLayout session={session} path={path} onSignedOut={onSignedOut}>
+              {children}
+            </AdminLayout>
+          )
+        }
+      />
+    );
+  }
   switch (path) {
     case "/signup":
       return (
@@ -654,14 +598,6 @@ function Page({ path }: { path: string }) {
         <AuthLayout>
           <ResetPasswordPage />
         </AuthLayout>
-      );
-    case "/admin":
-      return (
-        <AdminArea
-          layout={(children, session) =>
-            session === null ? <AuthLayout app="Admin">{children}</AuthLayout> : <AdminLayout session={session}>{children}</AdminLayout>
-          }
-        />
       );
     default:
       return <OwnerArea path={isOwnerPath(path) ? path : "/"} />;

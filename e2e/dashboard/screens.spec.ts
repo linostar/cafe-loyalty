@@ -164,13 +164,29 @@ for (const { lang, locale } of LANGS) {
         });
       }
 
-      test("operator signed in at /admin", async ({ page }, testInfo) => {
-        await mockApi(page, ADMIN);
-        await page.goto("/admin");
-        await expect(page.getByRole("heading", { level: 3, name: SESSION.cafe.name })).toBeVisible();
-        await capture(page, testInfo, `dashboard-admin${suffix}`);
+      for (const [name, path] of [
+        ["admin", "/admin"],
+        ["admin-cafe", `/admin/cafes/${SESSION.cafe.id}`],
+        ["admin-new-cafe", "/admin/cafes/new"],
+        ["admin-password", "/admin/password"],
+      ] as const) {
+        test(`operator signed in at ${path}`, async ({ page }, testInfo) => {
+          await mockApi(page, ADMIN);
+          await page.goto(path);
+          await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+          await capture(page, testInfo, `dashboard-${name}${suffix}`);
+          await check(page);
+          await expectFocusNeverHidden(page);
+        });
+      }
+
+      test("profile menu open", async ({ page }, testInfo) => {
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/");
+        await page.getByRole("button", { name: /^Profile: |^الملف الشخصي: / }).click();
+        await expect(page.getByRole("link", { name: /^Account$|^الحساب$/ }).first()).toBeVisible();
+        await capture(page, testInfo, `dashboard-profile-menu${suffix}`);
         await check(page);
-        await expectFocusNeverHidden(page);
       });
 
       test("operator signed out at /admin", async ({ page }, testInfo) => {
