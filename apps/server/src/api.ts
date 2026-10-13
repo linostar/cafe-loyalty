@@ -37,7 +37,7 @@ export interface ApiOptions {
 /** Every API route, behind the access control each declares. Register with `{ prefix: "/api" }`. */
 export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (error?: Error) => void): void {
   registerAccessControl(app, options.db);
-  void app.register(adminRoutes, { prefix: "/admin", db: options.db });
+  void app.register(adminRoutes, { prefix: "/admin", db: options.db, dashboardUrl: options.dashboardUrl });
   void app.register(ownerAuthRoutes, { prefix: "/auth", db: options.db, mailer: options.mailer, background: options.background, dashboardUrl: options.dashboardUrl });
   void app.register(cafeRoutes, { db: options.db, publicUrl: options.publicUrl, jobs: options.jobs });
   void app.register(campaignRoutes, { db: options.db, jobs: options.jobs });

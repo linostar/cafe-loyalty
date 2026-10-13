@@ -40,6 +40,16 @@ export const paymentRecordSchema = z.object({
 
 export const cafePlanUpdateSchema = z.object({ plan: cafePlanSchema });
 
+/** A new café: its id (made by the form, so sending it again after a lost response creates it once) and its name. */
+export const cafeCreateSchema = z.object({
+  cafeId: z.uuid(apiText("Reload the page and create the café again.")),
+  name: z
+    .string(apiText("Enter the café's name."))
+    .trim()
+    .min(1, apiText("Enter the café's name."))
+    .max(120, apiMessage("Use at most {max} characters.", { max: 120 })),
+});
+
 export const adminPaymentSchema = z.object({
   id: z.uuid(),
   amountCents: z.int(),
@@ -61,7 +71,11 @@ export const adminCafeSchema = z.object({
 
 export const adminCafesSchema = z.object({ cafes: z.array(adminCafeSchema) });
 
+/** A new owner signup link for a café, shown once: single-use, valid until `expiresAt`. */
+export const adminInviteSchema = z.object({ cafe: adminCafeSchema, link: z.url(), expiresAt: timestamp });
+
 export type OperatorSession = z.output<typeof operatorSessionSchema>;
 export type PaymentRecord = z.input<typeof paymentRecordSchema>;
 export type AdminCafe = z.output<typeof adminCafeSchema>;
 export type AdminPayment = z.output<typeof adminPaymentSchema>;
+export type AdminInvite = z.output<typeof adminInviteSchema>;
