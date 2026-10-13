@@ -2,7 +2,7 @@
 
 A cash-first loyalty tool for independent cafés in Tripoli, Lebanon. Customers get a phone-number loyalty card in Apple Wallet, Google Wallet or a web card; baristas add stamps from an offline-capable counter app; owners see busy and quiet hours, win back lapsed regulars and run quiet-hour offers that never discount below a margin floor.
 
-Customers and owners see it as **Qahwa Loyalty**, a working name defined once (`PRODUCT_NAME`, packages/shared/src/brand.ts).
+Customers and owners see it as **Loyalty Everywhere** (loyaltyeverywhere.com), a name defined once (`PRODUCT_NAME`, packages/shared/src/brand.ts).
 
 ## Requirements
 

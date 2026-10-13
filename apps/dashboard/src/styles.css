@@ -39,6 +39,24 @@
   grid-area: top;
 }
 
+/*
+ * Below 40rem the top bar has room for the product name only, a size smaller: the app's ("Dashboard", "Admin") stays in
+ * the heading for screen readers.
+ */
+@media (max-width: 39.99rem) {
+  .topbar .brand h1 {
+    font-size: var(--text-base);
+  }
+
+  .topbar .brand-app {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
 .app-footer {
   grid-area: foot;
 }
