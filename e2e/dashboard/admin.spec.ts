@@ -163,6 +163,37 @@ test("makes a new café id after a conflict, and keeps each café's unsent link 
   await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
 });
 
+test("keeps a café created while another café's link was on its way", async ({ page }) => {
+  const OTHER_ID = "2d3e4f5a-6b7c-4d8e-9fa0-1b2c3d4e5f6a";
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      await held;
+      await route.fulfill({ status: 201, json: { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" } });
+    },
+    "POST /api/admin/cafes": reply(201, { cafe: cafe({ id: OTHER_ID, name: "Café Nouveau" }), link: link("fake-invite-token-new"), expiresAt: "2026-10-08T08:00:00.000Z" }),
+  });
+  await page.goto("/admin");
+  const najjar = page.getByRole("region", { name: /Café Najjar/ });
+  await najjar.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(najjar.getByRole("button", { name: "Making a link… for Café Najjar" })).toBeDisabled();
+  const form = page.getByRole("form", { name: "New café" });
+  await form.getByLabel("Café name").fill("Café Nouveau");
+  await form.getByRole("button", { name: "Create café" }).click();
+  const nouveau = page.getByRole("region", { name: /Café Nouveau/ });
+  await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+  release();
+  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+  await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+});
+
 test("sends a payment again with the same id after a failed try, and a new id for the next payment", async ({ page }) => {
   const ids: string[] = [];
   let calls = 0;

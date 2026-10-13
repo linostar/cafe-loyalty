@@ -471,7 +471,10 @@ function CafesPage() {
   const { cafes } = state.data;
   const showInvite = (made: AdminInvite) => {
     // A new café joins the end of the list (oldest first); one sent again replaces itself.
-    setData({ cafes: cafes.some((entry) => entry.id === made.cafe.id) ? cafes.map((entry) => (entry.id === made.cafe.id ? made.cafe : entry)) : [...cafes, made.cafe] });
+    // From the latest list: another café's response may have landed since this render.
+    setData((current) => ({
+      cafes: current.cafes.some((entry) => entry.id === made.cafe.id) ? current.cafes.map((entry) => (entry.id === made.cafe.id ? made.cafe : entry)) : [...current.cafes, made.cafe],
+    }));
     setNotice(null);
     setInvites((shown) => ({ ...shown, [made.cafe.id]: made }));
   };
@@ -494,7 +497,7 @@ function CafesPage() {
               invite={invites[cafe.id] ?? null}
               onInvite={showInvite}
               onSaved={(saved, message) => {
-                setData({ cafes: cafes.map((entry) => (entry.id === saved.id ? saved : entry)) });
+                setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === saved.id ? saved : entry)) }));
                 setNotice(() => message);
               }}
             />

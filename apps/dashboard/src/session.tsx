@@ -12,8 +12,16 @@ export const SessionEndedContext = createContext<((message: string) => void) | n
 
 export type ApiData<T> = { status: "loading" } | { status: "loaded"; data: T } | { status: "failed"; message: string };
 
-/** Loads `path` for a page (a failure's message in English as the API sent it; PageStatus translates it), again whenever `reloadKey` changes; an ended session goes back to sign-in. */
-export function useApiData<T extends z.ZodType>(path: string, schema: T, reloadKey = 0): [ApiData<z.output<T>>, (data: z.output<T>) => void] {
+/**
+ * Loads `path` for a page (a failure's message in English as the API sent it; PageStatus translates it), again whenever
+ * `reloadKey` changes; an ended session goes back to sign-in. The setter takes new data, or a function of the latest
+ * loaded data, for responses that may land while another is in flight.
+ */
+export function useApiData<T extends z.ZodType>(
+  path: string,
+  schema: T,
+  reloadKey = 0,
+): [ApiData<z.output<T>>, (data: z.output<T> | ((current: z.output<T>) => z.output<T>)) => void] {
   const onSessionEnded = useContext(SessionEndedContext);
   const [state, setState] = useState<ApiData<z.output<T>>>({ status: "loading" });
 
@@ -44,7 +52,12 @@ export function useApiData<T extends z.ZodType>(path: string, schema: T, reloadK
   return [
     state,
     (data) => {
-      setState({ status: "loaded", data });
+      setState((current) => {
+        if (!(data instanceof Function)) {
+          return { status: "loaded", data };
+        }
+        return current.status === "loaded" ? { status: "loaded", data: data(current.data) } : current;
+      });
     },
   ];
 }
