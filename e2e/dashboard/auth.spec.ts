@@ -28,10 +28,17 @@ test("signs in, shows the café and signs out", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });
 
-test("opens the profile menu, closes it with Escape or a click outside, and shows a failed sign-out in it", async ({ page }) => {
+test("opens the profile menu, closes it with Escape, a click outside or focus leaving, and shows a failed sign-out in it", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await mockApi(page, {
     "GET /api/auth/session": reply(200, SESSION),
-    "POST /api/auth/logout": reply(503, { code: "SERVICE_UNAVAILABLE", message: "The server is restarting. Try again in a minute.", retryable: true }),
+    "POST /api/auth/logout": async (route) => {
+      await held;
+      await route.fulfill({ status: 503, json: { code: "SERVICE_UNAVAILABLE", message: "The server is restarting. Try again in a minute.", retryable: true } });
+    },
   });
   await page.goto("/account");
   const profile = page.getByRole("button", { name: "Profile: rana@example.com" });
@@ -53,8 +60,20 @@ test("opens the profile menu, closes it with Escape or a click outside, and show
   await page.getByRole("heading", { level: 1 }).click();
   await expect(panel).toBeHidden();
 
+  // Tabbing past the last item closes it: on a phone the panel covers what comes next.
+  await profile.click();
+  await panel.getByRole("button", { name: "Sign out" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(panel).toBeHidden();
+
+  // A sign-out on its way keeps the panel open, so its failure is seen.
   await profile.click();
   await panel.getByRole("button", { name: "Sign out" }).click();
+  await expect(panel.getByRole("button", { name: "Signing out…" })).toBeDisabled();
+  await page.getByRole("heading", { level: 1 }).click();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeVisible();
+  release();
   await expect(panel.getByRole("alert")).toHaveText("The server is restarting. Try again in a minute.");
   await expect(page.getByRole("heading", { name: "Account", level: 2 })).toBeVisible();
   // The Account page itself has no sign-out of its own any more.

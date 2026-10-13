@@ -586,15 +586,3 @@ form > .actions {
   grid-template-rows: auto 1fr auto;
 }
 
-.admin-cafes {
-  display: grid;
-  gap: var(--space-4);
-  margin: var(--space-4) 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* A grid item is as wide as its content by default; this lets a card shrink so its table scrolls instead. */
-.admin-cafes > li {
-  min-inline-size: 0;
-}

@@ -12,16 +12,19 @@ const AR = {
   "At least {n} characters.": "{n} أحرف على الأقل.",
 } as const;
 
-/** Changing the owner's (or, with `path`, the operator's) password; the server then ends every session, this one too. */
-export function ChangePasswordForm({ onChanged, path = "/api/auth/password" }: { onChanged: () => void; path?: string }) {
+/**
+ * Changing the owner's (or, with `path`, the operator's) password; the server then ends every session, this one too.
+ * `titled` false leaves the heading to the page (the operator's page is about this form alone).
+ */
+export function ChangePasswordForm({ onChanged, path = "/api/auth/password", titled = true }: { onChanged: () => void; path?: string; titled?: boolean }) {
   const t = useT(AR);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
 
   return (
-    <section aria-labelledby="password-title" className="card">
-      <h3 id="password-title">{t("Change password")}</h3>
+    <section aria-labelledby={titled ? "password-title" : undefined} aria-label={titled ? undefined : t("Change password")} className="card">
+      {titled ? <h3 id="password-title">{t("Change password")}</h3> : null}
       <p>{t("Changing your password signs you out everywhere, on this device too.")}</p>
       <form
         onSubmit={(event) => {

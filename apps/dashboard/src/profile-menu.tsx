@@ -30,12 +30,15 @@ export function ProfileMenu({ email, link, logoutPath, onSignedOut }: { email: s
   const panelId = useId();
   const { pending, error, submit } = useSubmit();
 
+  // Open while signing out, so the outcome (or its error) is seen; otherwise closed by Escape, a click outside, or focus
+  // moving out (on a phone the panel covers the nav, so focus there would be hidden under it).
   useEffect(() => {
-    if (!open) {
+    if (!open || pending) {
       return undefined;
     }
-    const outside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !root.current?.contains(event.target)) {
+    const isOutside = (target: EventTarget | null) => target instanceof Node && !root.current?.contains(target);
+    const outside = (event: Event) => {
+      if (isOutside(event.target)) {
         setOpen(false);
       }
     };
@@ -46,12 +49,14 @@ export function ProfileMenu({ email, link, logoutPath, onSignedOut }: { email: s
       }
     };
     document.addEventListener("pointerdown", outside);
+    document.addEventListener("focusin", outside);
     document.addEventListener("keydown", escape);
     return () => {
       document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("focusin", outside);
       document.removeEventListener("keydown", escape);
     };
-  }, [open]);
+  }, [open, pending]);
 
   return (
     <div ref={root} className="profile-menu">

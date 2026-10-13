@@ -106,7 +106,7 @@ test("says so when there are no cafés yet, and shows the list for an unknown ad
 test("says a café no longer exists, with the way back to the list", async ({ page }) => {
   await mockApi(page, { "GET /api/admin/session": reply(200, OPERATOR), "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }) });
   await page.goto("/admin/cafes/9b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d");
-  await expect(page.getByRole("alert")).toHaveText("This café no longer exists. Reload the list.");
+  await expect(page.getByRole("alert")).toHaveText("There is no café at this address.");
   await page.getByRole("link", { name: "All cafés" }).click();
   await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
 });
@@ -177,7 +177,8 @@ test("makes a new café id after a conflict", async ({ page }) => {
   expect(ids[1]).not.toBe(ids[0]);
 });
 
-test("makes fresh signup links on a café's page, each shown once", async ({ page }) => {
+test("makes fresh signup links on a café's page, each shown once and copied afresh", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   let made = 0;
   await mockApi(page, {
     "GET /api/admin/session": reply(200, OPERATOR),
@@ -192,8 +193,12 @@ test("makes fresh signup links on a café's page, each shown once", async ({ pag
   await page.getByRole("button", { name: "New signup link for Café Najjar" }).click();
   const shown = page.getByLabel("Owner signup link for Café Najjar");
   await expect(shown).toHaveValue(link("fake-invite-token-1"));
+  await page.getByRole("button", { name: "Copy link for Café Najjar" }).click();
+  await expect(page.getByRole("status")).toHaveText("Copied.");
   await page.getByRole("button", { name: "New signup link for Café Najjar" }).click();
   await expect(shown).toHaveValue(link("fake-invite-token-2"));
+  // A fresh link has not been copied yet.
+  await expect(page.getByRole("status")).toHaveText("");
 });
 
 test("keeps a plan saved while the café's new link was on its way", async ({ page }) => {
@@ -287,6 +292,7 @@ test("changes the operator's password and returns to the operator sign-in", asyn
   await page.getByRole("button", { name: "Profile: operator@example.com" }).click();
   await page.getByRole("link", { name: "Change password" }).click();
   await expect(page).toHaveURL("/admin/password");
+  await expect(page.getByRole("heading", { level: 2, name: "Change password" })).toBeVisible();
   await expect(page.getByText("Signed in as operator@example.com")).toBeVisible();
   await page.getByLabel("Current password", { exact: true }).fill("fake-operator-password");
   await page.getByLabel("New password", { exact: true }).fill("a brand new password");

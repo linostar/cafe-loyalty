@@ -66,7 +66,8 @@ const AR = {
     "افتح مقهى لإنشاء رابط تسجيل مالكه أو تحديد خطته أو تسجيل دفعة. يُسجَّل كل تغيير في سجل تدقيق المقهى.",
   "All cafés": "كل المقاهي",
   "Open {name}": "افتح {name}",
-  Account: "الحساب",
+  "Change password": "تغيير كلمة المرور",
+  "There is no café at this address.": "لا يوجد مقهى بهذا العنوان.",
   "Signed in as {email}": "مسجّل الدخول باسم {email}",
   "No cafés yet.": "لا مقاهٍ بعد.",
   "New café": "مقهى جديد",
@@ -508,7 +509,6 @@ function NewCafePage() {
 /** `/admin/cafes/<id>`: one café's signup links, plan and payments. It is read from the café list (no route of its own). */
 function CafeDetailPage({ cafeId }: { cafeId: string }) {
   const t = useT(AR);
-  const api = useApiText();
   const lang = useLang();
   const dayFormat = dateFormat(lang, DAY);
   const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
@@ -523,7 +523,7 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       <section aria-labelledby="admin-cafe-missing">
         <BackToList />
         <p id="admin-cafe-missing" role="alert" className="form-error">
-          {api("This café no longer exists. Reload the list.")}
+          {t("There is no café at this address.")}
         </p>
       </section>
     );
@@ -574,10 +574,10 @@ function PasswordPage({ session, onChanged }: { session: OperatorSession; onChan
     <section aria-labelledby="admin-account-title">
       <BackToList />
       <h2 id="admin-account-title" tabIndex={-1}>
-        {t("Account")}
+        {t("Change password")}
       </h2>
       <p className="page-intro">{t("Signed in as {email}", { email: session.operator.email })}</p>
-      <ChangePasswordForm path="/api/admin/password" onChanged={onChanged} />
+      <ChangePasswordForm path="/api/admin/password" titled={false} onChanged={onChanged} />
     </section>
   );
 }
