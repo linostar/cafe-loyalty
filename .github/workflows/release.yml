@@ -15,11 +15,6 @@ on:
 permissions:
   contents: read
 
-# One release at a time, in order: a newer merge waits for the running release, never cancels it.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 env:
   COMMIT: ${{ github.event.workflow_run.head_sha }}
   TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa # 0.75.0, multi-arch index
@@ -81,6 +76,11 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Per-environment concurrency, per job (a workflow-level group would hold every later release behind one waiting for
+    # production's reviewers): a running deploy is never cancelled, and a newer release replaces one still pending.
+    concurrency:
+      group: release-staging
+      cancel-in-progress: false
     environment:
       name: staging
       url: ${{ vars.DASHBOARD_URL }}
@@ -120,12 +120,53 @@ jobs:
           deploy/ci/remote.sh rollback.sh staging "$COMMIT" || { echo "::error title=Rollback test failed::Staging did not return to $COMMIT."; exit 1; }
           deploy/ci/smoke.sh "$PUBLIC_URL" "$DASHBOARD_URL" "$COUNTER_URL" "$COMMIT"
 
+  # A job waiting for its environment's reviewers holds its concurrency group (it is not pending, so a newer release does
+  # not replace it): once this release has passed staging, cancel the older releases still waiting for production
+  # approval, so this one takes their place. Only runs whose commit this release contains, so none is newer.
+  supersede:
+    name: Drop superseded production approvals
+    needs: staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Cancel older runs waiting for production approval
+        # With pipefail (an unset shell is `bash -e`), so a failed listing fails this job instead of cancelling nothing.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # ponytail: check-then-cancel is not atomic; a run approved in between is cancelled as it starts. Its remote
+        # deploy.sh still finishes (it ignores SIGHUP) and holds the environment's release lock, so no deploy overlaps.
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?status=waiting&per_page=100" \
+            --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | \"\(.id) \(.head_sha)\"" |
+            while read -r run sha; do
+              envs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/pending_deployments" --jq '.[].environment.name')
+              grep -qx production <<<"$envs" || continue
+              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$COMMIT" --jq .status)
+              [[ $status == ahead || $status == identical ]] || continue
+              # A run that ended since the listing (approved and done, rejected, timed out) answers 409; anything else fails.
+              if ! gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/cancel" >/dev/null; then
+                [[ $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status) == completed ]] || exit 1
+                echo "Run $run ($sha) had already ended." | tee -a "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+              echo "Cancelled run $run ($sha), superseded by $COMMIT." | tee -a "$GITHUB_STEP_SUMMARY"
+            done
+
   production:
     name: Deploy to production
+    # Not on supersede: this job waits in its group until the older run is cancelled anyway. A failed cleanup leaves the
+    # older run holding the group, so this job waits behind it; re-run the failed supersede job or cancel the older run.
     needs: [build, staging]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Its required reviewers approve before this job starts (README, Deploying).
+    # Its required reviewers approve before this job starts (README, Deploying). See staging for the concurrency group.
+    concurrency:
+      group: release-production
+      cancel-in-progress: false
     environment:
       name: production
       url: ${{ vars.DASHBOARD_URL }}
