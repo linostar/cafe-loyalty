@@ -76,7 +76,10 @@ describe("Counter App", () => {
     const calls = await workingApi();
     render(<App />);
     expect(await screen.findByLabelText("Pairing code")).toHaveValue("ABCD-1234-EFGH");
-    expect(window.location.hash).toBe("");
+    // Removed by an effect after the first render, which may run after the field is found on a slow runner.
+    await waitFor(() => {
+      expect(window.location.hash).toBe("");
+    });
     fireEvent.click(screen.getByRole("button", { name: "Pair this phone" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Rami" }));
