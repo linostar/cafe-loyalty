@@ -127,6 +127,42 @@ test("the operator creates a café, copies its owner's signup link and makes a f
   expect(sent).toEqual([{ cafeId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown, name: "Café Nouveau" }, sent[0], {}]);
 });
 
+test("makes a new café id after a conflict, and keeps each café's unsent link while another gets one", async ({ page }) => {
+  const ids: string[] = [];
+  const OTHER_ID = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    "POST /api/admin/cafes": async (route) => {
+      ids.push((route.request().postDataJSON() as { cafeId: string }).cafeId);
+      await (ids.length === 1
+        ? route.fulfill({
+            status: 409,
+            json: { code: "CONFLICT", message: "This café was already created with another name. Reload the page to see it, then create any other café as a new one.", retryable: false },
+          })
+        : route.fulfill({ status: 201, json: { cafe: cafe({ id: OTHER_ID, name: "Café Nouveau" }), link: link("fake-invite-token-new"), expiresAt: "2026-10-08T08:00:00.000Z" } }));
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: reply(201, { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" }),
+  });
+  await page.goto("/admin");
+  const najjar = page.getByRole("region", { name: /Café Najjar/ });
+  await najjar.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+
+  const form = page.getByRole("form", { name: "New café" });
+  await form.getByLabel("Café name").fill("Café Nouveau");
+  await form.getByRole("button", { name: "Create café" }).click();
+  await expect(form.getByRole("alert")).toHaveText("This café was already created with another name. Reload the page to see it, then create any other café as a new one.");
+  await form.getByRole("button", { name: "Create café" }).click();
+  await expect(page.getByRole("region", { name: /Café Nouveau/ }).getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+  expect(ids).toHaveLength(2);
+  expect(ids[1]).not.toBe(ids[0]);
+  // Café Najjar's link, not yet sent, is still there.
+  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+});
+
 test("sends a payment again with the same id after a failed try, and a new id for the next payment", async ({ page }) => {
   const ids: string[] = [];
   let calls = 0;

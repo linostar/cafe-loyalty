@@ -4,7 +4,7 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
 import { setOperatorPassword } from "./operators.js";
-import { DASHBOARD_URL, PASSWORD, signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
+import { DASHBOARD_URL, PASSWORD, cookieToken, signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
 
 const context = useApiHarness();
 const { harness, signUp, pairDevice, issueCard, auditActions } = context;
@@ -231,11 +231,16 @@ describe("the admin screen (AC 39)", () => {
     const listed = (await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: { id: string }[] }>().cafes;
     expect(listed.filter((cafe) => cafe.id === cafeId)).toHaveLength(1);
 
-    // Either link signs its owner up for the new café.
-    const token = new URLSearchParams(link.hash.slice(1)).get("invite");
-    const signup = await app.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: `owner-${randomUUID()}@example.com`, password: PASSWORD } });
-    expect(signup.statusCode).toBe(201);
-    expect((await app.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: `owner-${randomUUID()}@example.com`, password: PASSWORD } })).statusCode).not.toBe(201);
+    // Either link signs an owner up for the new café, once.
+    for (const sentLink of [body.link, again.json<{ link: string }>().link]) {
+      const token = new URLSearchParams(new URL(sentLink).hash.slice(1)).get("invite");
+      const signUpWith = () =>
+        app.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: `owner-${randomUUID()}@example.com`, password: PASSWORD } });
+      const signup = await signUpWith();
+      expect(signup.statusCode).toBe(201);
+      expect((await app.app.inject({ method: "GET", url: "/api/cafe", headers: withCookie(cookieToken(signup)) })).json()).toMatchObject({ cafe: { id: cafeId } });
+      expect((await signUpWith()).statusCode).not.toBe(201);
+    }
 
     const operatorId = (await app.asOperator("GET", "/api/admin/session")).json<{ operator: { id: string } }>().operator.id;
     const { rows } = await context.admin.query<{ action: string; actor_type: string; actor_id: string; changes: unknown }>(

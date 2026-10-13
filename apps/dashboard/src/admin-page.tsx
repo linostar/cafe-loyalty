@@ -463,7 +463,8 @@ function CafesPage() {
   const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
   const lang = useLang();
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
-  const [invite, setInvite] = useState<AdminInvite | null>(null);
+  // One per café: a link not yet sent stays on its café while the operator works on another.
+  const [invites, setInvites] = useState<Record<string, AdminInvite>>({});
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
@@ -472,7 +473,7 @@ function CafesPage() {
     // A new café joins the end of the list (oldest first); one sent again replaces itself.
     setData({ cafes: cafes.some((entry) => entry.id === made.cafe.id) ? cafes.map((entry) => (entry.id === made.cafe.id ? made.cafe : entry)) : [...cafes, made.cafe] });
     setNotice(null);
-    setInvite(made);
+    setInvites((shown) => ({ ...shown, [made.cafe.id]: made }));
   };
   return (
     <section aria-labelledby="admin-cafes-title">
@@ -490,7 +491,7 @@ function CafesPage() {
             <CafeCard
               key={cafe.id}
               cafe={cafe}
-              invite={invite?.cafe.id === cafe.id ? invite : null}
+              invite={invites[cafe.id] ?? null}
               onInvite={showInvite}
               onSaved={(saved, message) => {
                 setData({ cafes: cafes.map((entry) => (entry.id === saved.id ? saved : entry)) });
