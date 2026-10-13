@@ -3,16 +3,18 @@ import {
   PAYMENT_METHODS,
   adminCafeSchema,
   adminCafesSchema,
+  adminInviteSchema,
   apiText,
   formatUsd,
   operatorSessionSchema,
   type AdminCafe,
+  type AdminInvite,
   type CafePlan,
   type OperatorSession,
   type PaymentMethod,
   type Lang,
 } from "@cafe-loyalty/shared";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale, noContent } from "./api.js";
 import { Field, FormError, Notice, useSubmit } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useLang, useT } from "./i18n.js";
@@ -59,8 +61,21 @@ const AR = {
   Amount: "المبلغ",
   By: "الطريقة",
   Cafés: "المقاهي",
-  "Set each café's plan and record the payments it made. Every change goes in the café's audit log.": "حدّد خطة كل مقهى وسجّل الدفعات التي قام بها. يُسجَّل كل تغيير في سجل تدقيق المقهى.",
-  "No cafés yet. Create one with create-invite.": "لا مقاهٍ بعد. أنشئ واحداً عبر create-invite.",
+  "Create cafés and their owners' signup links, set each café's plan and record the payments it made. Every change goes in the café's audit log.":
+    "أنشئ المقاهي وروابط تسجيل مالكيها، وحدّد خطة كل مقهى وسجّل الدفعات التي قام بها. يُسجَّل كل تغيير في سجل تدقيق المقهى.",
+  "No cafés yet.": "لا مقاهٍ بعد.",
+  "New café": "مقهى جديد",
+  "Café name": "اسم المقهى",
+  "Creating…": "جارٍ الإنشاء…",
+  "Create café": "إنشاء المقهى",
+  "Creates the café on the pilot plan and a signup link for its owner.": "يُنشئ المقهى على الخطة التجريبية ورابط تسجيل لمالكه.",
+  "New signup link": "رابط تسجيل جديد",
+  "Making a link…": "جارٍ إنشاء الرابط…",
+  "Owner signup link for {name}": "رابط تسجيل المالك لـ{name}",
+  "Send it to the café's owner. It works once, until {day}, and is shown only now.": "أرسله إلى مالك المقهى. يعمل مرة واحدة حتى {day}، ولا يظهر إلا الآن.",
+  "Copy link": "نسخ الرابط",
+  "Copied.": "تم النسخ.",
+  "Could not copy. Select the link and copy it.": "تعذّر النسخ. حدّد الرابط وانسخه.",
   "Sign out": "تسجيل الخروج",
   "Signing out ends your operator session on every device.": "تسجيل الخروج ينهي جلسة المشغّل على كل الأجهزة.",
   "Signing out…": "جارٍ تسجيل الخروج…",
@@ -274,7 +289,125 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   );
 }
 
-function CafeCard({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
+/** A new café's form; its id is kept until the café is created, so sending it again after a lost response creates it once. */
+function NewCafeForm({ onCreated }: { onCreated: (invite: AdminInvite) => void }) {
+  const t = useT(AR);
+  const [name, setName] = useState("");
+  const [cafeId, setCafeId] = useState(() => crypto.randomUUID());
+  const { pending, error, fieldErrors, submit } = useSubmit();
+  return (
+    <form
+      aria-labelledby="admin-new-cafe-title"
+      className="card"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(() => apiRequest("POST", "/api/admin/cafes", adminInviteSchema, { cafeId, name })).then((result) => {
+          if (result.ok) {
+            setName("");
+            setCafeId(crypto.randomUUID());
+            onCreated(result.value);
+          } else if (isStale(result.error)) {
+            // Created already with another name (CONFLICT): what is in the form now is a new café.
+            setCafeId(crypto.randomUUID());
+          }
+        });
+      }}
+    >
+      <h3 id="admin-new-cafe-title">{t("New café")}</h3>
+      <FormError message={error} />
+      <Field label={t("Café name")} name="cafeName" type="text" value={name} onChange={setName} maxLength={120} hint={t("Creates the café on the pilot plan and a signup link for its owner.")} error={fieldErrors.name} />
+      <button type="submit" disabled={pending}>
+        {pending ? t("Creating…") : t("Create café")}
+      </button>
+    </form>
+  );
+}
+
+/** A signup link just made (keyed by it, so a fresh one starts afresh): the server keeps only its hash, so this is the one time it is shown. */
+function InviteLink({ cafe, invite }: { cafe: AdminCafe; invite: AdminInvite }) {
+  const t = useT(AR);
+  const lang = useLang();
+  const input = useRef<HTMLInputElement>(null);
+  const [copied, setCopied] = useState<"Copied." | "Could not copy. Select the link and copy it." | null>(null);
+  const id = `invite-${cafe.id}`;
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  return (
+    <div className="field">
+      <label htmlFor={id}>{t("Owner signup link for {name}", { name: cafe.name })}</label>
+      <input
+        id={id}
+        ref={input}
+        type="text"
+        readOnly
+        dir="ltr"
+        value={invite.link}
+        aria-describedby={`${id}-hint`}
+        onFocus={(event) => {
+          event.target.select();
+        }}
+      />
+      <p id={`${id}-hint`} className="hint">
+        {t("Send it to the café's owner. It works once, until {day}, and is shown only now.", { day: dateFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(invite.expiresAt)) })}
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(invite.link).then(
+            () => {
+              setCopied("Copied.");
+            },
+            () => {
+              setCopied("Could not copy. Select the link and copy it.");
+            },
+          );
+        }}
+      >
+        {t("Copy link")}
+        {forCafe(t("for {name}", { name: cafe.name }))}
+      </button>
+      <p role="status">{copied === null ? null : t(copied)}</p>
+    </div>
+  );
+}
+
+function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invite: AdminInvite) => void }) {
+  const t = useT(AR);
+  const { pending, error, submit } = useSubmit();
+  return (
+    <div>
+      <FormError message={error} />
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/invites`, adminInviteSchema, {})).then((result) => {
+            if (result.ok) {
+              onCreated(result.value);
+            }
+          });
+        }}
+      >
+        {pending ? t("Making a link…") : t("New signup link")}
+        {forCafe(t("for {name}", { name: cafe.name }))}
+      </button>
+    </div>
+  );
+}
+
+function CafeCard({
+  cafe,
+  invite,
+  onSaved,
+  onInvite,
+}: {
+  cafe: AdminCafe;
+  invite: AdminInvite | null;
+  onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void;
+  onInvite: (invite: AdminInvite) => void;
+}) {
   const t = useT(AR);
   const dayFormat = dateFormat(useLang(), DAY);
   const titleId = `admin-cafe-${cafe.id}`;
@@ -289,6 +422,8 @@ function CafeCard({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
         <p className="hint">
           {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
         </p>
+        <NewLinkButton cafe={cafe} onCreated={onInvite} />
+        {invite === null ? null : <InviteLink key={invite.link} cafe={cafe} invite={invite} />}
         <PlanForm cafe={cafe} onSaved={onSaved} />
         <PaymentForm cafe={cafe} onSaved={onSaved} />
         {cafe.payments.length === 0 ? (
@@ -328,27 +463,39 @@ function CafesPage() {
   const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
   const lang = useLang();
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
+  // One per café: a link not yet sent stays on its café while the operator works on another.
+  const [invites, setInvites] = useState<Record<string, AdminInvite>>({});
   if (state.status !== "loaded") {
     return <PageStatus state={state} />;
   }
   const { cafes } = state.data;
+  const showInvite = (made: AdminInvite) => {
+    // From the latest list, since other responses may have landed meanwhile. A new café joins its end (oldest first); a
+    // café already listed keeps its entry, which a plan or payment response may have made newer than this one's copy.
+    setData((current) => (current.cafes.some((entry) => entry.id === made.cafe.id) ? current : { cafes: [...current.cafes, made.cafe] }));
+    setNotice(null);
+    setInvites((shown) => ({ ...shown, [made.cafe.id]: made }));
+  };
   return (
     <section aria-labelledby="admin-cafes-title">
       <h2 id="admin-cafes-title" tabIndex={-1}>
         {t("Cafés")}
       </h2>
-      <p className="page-intro">{t("Set each café's plan and record the payments it made. Every change goes in the café's audit log.")}</p>
+      <p className="page-intro">{t("Create cafés and their owners' signup links, set each café's plan and record the payments it made. Every change goes in the café's audit log.")}</p>
       {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <NewCafeForm onCreated={showInvite} />
       {cafes.length === 0 ? (
-        <p className="empty">{t("No cafés yet. Create one with create-invite.")}</p>
+        <p className="empty">{t("No cafés yet.")}</p>
       ) : (
         <ul className="admin-cafes">
           {cafes.map((cafe) => (
             <CafeCard
               key={cafe.id}
               cafe={cafe}
+              invite={invites[cafe.id] ?? null}
+              onInvite={showInvite}
               onSaved={(saved, message) => {
-                setData({ cafes: cafes.map((entry) => (entry.id === saved.id ? saved : entry)) });
+                setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === saved.id ? saved : entry)) }));
                 setNotice(() => message);
               }}
             />

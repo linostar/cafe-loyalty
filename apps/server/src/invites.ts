@@ -18,7 +18,12 @@ export interface OwnerInvite {
 /** Who the invite is for: a new café with this name, or another owner (or a fresh link) for an existing café. */
 export type InviteTarget = { newCafeName: string } | { cafeId: string };
 
-async function insertInvite(trx: Transaction<Database>, cafeId: string): Promise<OwnerInvite> {
+/** Who made an invite, for the audit log: create-invite (system) or the operator on the admin screen. */
+export type InviteActor = { actorType: "system"; actorId: null } | { actorType: "operator"; actorId: string };
+const SYSTEM: InviteActor = { actorType: "system", actorId: null };
+
+/** Adds an owner invite to the café of the withCafe transaction, audited as made by `actor`. */
+export async function insertInvite(trx: Transaction<Database>, cafeId: string, actor: InviteActor = SYSTEM): Promise<OwnerInvite> {
   const token = newToken();
   const invite = await trx
     .insertInto("owner_invites")
@@ -27,7 +32,7 @@ async function insertInvite(trx: Transaction<Database>, cafeId: string): Promise
     .executeTakeFirstOrThrow();
   await trx
     .insertInto("audit_log")
-    .values({ cafe_id: cafeId, actor_type: "system", action: "owner_invite.created", entity_type: "owner_invite", entity_id: invite.id })
+    .values({ cafe_id: cafeId, actor_type: actor.actorType, actor_id: actor.actorId, action: "owner_invite.created", entity_type: "owner_invite", entity_id: invite.id })
     .execute();
   return { cafeId, token, expiresAt: invite.expires_at };
 }
@@ -36,8 +41,9 @@ async function insertInvite(trx: Transaction<Database>, cafeId: string): Promise
  * Creates a single-use owner invite, and for a new café the café itself.
  *
  * Café creation is the one place a café id does not come from an authenticated session, device or job (plan
- * Step 5): only the operator creates cafés, through this function's command-line tool, so the id is generated
- * here and set with withCafe before the café row is inserted. An existing café's id comes from the operator.
+ * Step 5): only the operator creates cafés, through this function's command-line tool (or the admin screen,
+ * admin-routes.ts), so the id is generated here and set with withCafe before the café row is inserted. An existing
+ * café's id comes from the operator.
  */
 export async function createOwnerInvite(db: Kysely<Database>, target: InviteTarget): Promise<OwnerInvite> {
   const cafeId = "cafeId" in target ? target.cafeId : randomUUID();

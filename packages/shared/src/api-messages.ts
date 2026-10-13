@@ -41,6 +41,10 @@ export const API_MESSAGES_AR = {
   "Enter the date as YYYY-MM-DD.": "أدخل التاريخ بصيغة YYYY-MM-DD.",
   "Reload the page and record the payment again.": "أعد تحميل الصفحة وسجّل الدفعة مجدداً.",
   "Choose how the café paid.": "اختر طريقة دفع المقهى.",
+  "Reload the page and create the café again.": "أعد تحميل الصفحة وأنشئ المقهى مجدداً.",
+  "Enter the café's name.": "أدخل اسم المقهى.",
+  "This café was already created with another name. Reload the page to see it, then create any other café as a new one.":
+    "أُنشئ هذا المقهى سابقاً باسم آخر. أعد تحميل الصفحة لرؤيته، ثم أنشئ أي مقهى آخر كمقهى جديد.",
   // Café setup.
   "This order type does not exist. Reload the page to see the current list.": "نوع الطلب هذا غير موجود. أعد تحميل الصفحة لرؤية القائمة الحالية.",
   "This staff member does not exist. Reload the page to see the current list.": "هذا الموظف غير موجود. أعد تحميل الصفحة لرؤية القائمة الحالية.",

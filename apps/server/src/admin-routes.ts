@@ -2,10 +2,12 @@ import { withCafe, withLookup, withOperator, type Database } from "@cafe-loyalty
 import {
   ADMIN_PAYMENTS_SHOWN,
   ApiError,
+  cafeCreateSchema,
   cafePlanUpdateSchema,
   loginRequestSchema,
   paymentRecordSchema,
   type AdminCafe,
+  type AdminInvite,
   type OperatorSession,
   apiText,
 } from "@cafe-loyalty/shared";
@@ -16,10 +18,13 @@ import { OPERATOR_SESSION_ABSOLUTE_TIMEOUT_SECONDS, OPERATOR_SESSION_IDLE_TIMEOU
 import { clearedOperatorCookie, hashToken, newToken, operatorSessionCookie, readOperatorCookie, verifyPassword } from "./credentials.js";
 import { audit, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
+import { insertInvite, inviteLink } from "./invites.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 export interface AdminRoutesOptions {
   db: Kysely<Database>;
+  /** Public dashboard address, for owner signup links. */
+  dashboardUrl: string;
 }
 
 const MINUTE = 60;
@@ -84,12 +89,13 @@ const utcDay = (days: number): string => new Date(Date.now() + days * 24 * HOUR 
 
 /**
  * The operator's admin screen (AC 39), under `/api/admin`: signing in with an operator account (made by
- * create-operator), each café's plan and the payments it made by hand. Operator routes answer 403 to owners and
+ * create-operator), new cafés and their owner signup links (as create-invite makes), each café's plan and the
+ * payments it made by hand. Operator routes answer 403 to owners and
  * devices. The operator may act on any café, so a café id here comes from the route, checked against the cafés that
  * exist; each café is then read and changed in its own withCafe, and every change goes in that café's audit log.
  */
 export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, done: (error?: Error) => void): void {
-  const { db } = options;
+  const { db, dashboardUrl } = options;
   const limits = {
     loginPerIp: new RateLimiter(20, 15 * MINUTE * 1000),
     // As for owners (owner-auth.ts): failures only, per account and address, with a looser cap per account.
@@ -178,6 +184,54 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
       }
     }
     return { cafes };
+  });
+
+  /** A new owner invite for the café, audited as the operator's, with the café as the list shows it. */
+  async function invite(trx: Transaction<Database>, cafeId: string, operatorId: string): Promise<AdminInvite> {
+    const created = await insertInvite(trx, cafeId, { actorType: "operator", actorId: operatorId });
+    const cafe = await loadCafe(trx, cafeId);
+    if (cafe === undefined) {
+      throw cafeNotFound();
+    }
+    // The link carries the invite's secret: it is in this no-store response only, never logged.
+    return { cafe, link: inviteLink(dashboardUrl, created.token), expiresAt: created.expiresAt.toISOString() };
+  }
+
+  /**
+   * Creates a café and its owner's signup link. The form makes the café's id, so a request sent again (its response
+   * lost) creates the café once, and answers with a fresh link: the lost one stays valid until it expires or is used.
+   */
+  app.post("/cafes", { config: { access: "operator" } }, async (request, reply) => {
+    const operator = operatorOf(request);
+    const body = parseInput(cafeCreateSchema, request.body);
+    const created = await withCafe(db, body.cafeId, async (trx) => {
+      const inserted = await trx
+        .insertInto("cafes")
+        .values({ id: body.cafeId, name: body.name })
+        .onConflict((conflict) => conflict.column("id").doNothing())
+        .returning("id")
+        .executeTakeFirst();
+      if (inserted === undefined) {
+        const existing = await trx.selectFrom("cafes").select("name").where("id", "=", body.cafeId).forNoKeyUpdate().executeTakeFirst();
+        if (existing?.name !== body.name) {
+          throw new ApiError("CONFLICT", apiText("This café was already created with another name. Reload the page to see it, then create any other café as a new one."));
+        }
+      } else {
+        await audit(trx, { cafeId: body.cafeId, actorType: "operator", actorId: operator.operatorId, action: "cafe.created", entityType: "cafe", entityId: body.cafeId });
+      }
+      return invite(trx, body.cafeId, operator.operatorId);
+    });
+    request.log.info({ cafeId: body.cafeId, operatorId: operator.operatorId }, "cafe created");
+    return reply.code(201).send(created);
+  });
+
+  /** A fresh owner signup link for a café (a lost or expired one, or another owner). */
+  app.post("/cafes/:id/invites", { config: { access: "operator" } }, async (request, reply) => {
+    const operator = operatorOf(request);
+    const { id } = parseInput(idParams, request.params);
+    const created = await withListedCafe(id, (trx) => invite(trx, id, operator.operatorId));
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "owner invite created");
+    return reply.code(201).send(created);
   });
 
   /** Sets a café's plan; suspending it stops new customers joining (AC 39), its counter still syncs. */

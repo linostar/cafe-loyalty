@@ -81,6 +81,147 @@ test("the operator signs in, suspends a café, records a payment and signs out (
   ]);
 });
 
+test("the operator creates a café, copies its owner's signup link and makes a fresh one", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const sent: unknown[] = [];
+  let tries = 0;
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [] }),
+    "POST /api/admin/cafes": async (route) => {
+      tries += 1;
+      sent.push(route.request().postDataJSON());
+      // The first try's answer is lost.
+      await (tries === 1
+        ? route.abort("failed")
+        : route.fulfill({ status: 201, json: { cafe: cafe({ name: "Café Nouveau" }), link: link("fake-invite-token-one"), expiresAt: "2026-10-08T08:00:00.000Z" } }));
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      sent.push(route.request().postDataJSON());
+      await route.fulfill({ status: 201, json: { cafe: cafe({ name: "Café Nouveau" }), link: link("fake-invite-token-two"), expiresAt: "2026-10-09T08:00:00.000Z" } });
+    },
+  });
+  await page.goto("/admin");
+  await expect(page.getByText("No cafés yet.")).toBeVisible();
+  const form = page.getByRole("form", { name: "New café" });
+  await form.getByLabel("Café name").fill("Café Nouveau");
+  await form.getByRole("button", { name: "Create café" }).click();
+  await expect(form.getByRole("alert")).toHaveText("Could not reach the server. Check your connection and try again.");
+  await form.getByRole("button", { name: "Create café" }).click();
+
+  const card = page.getByRole("region", { name: /Café Nouveau/ });
+  const shown = card.getByLabel("Owner signup link for Café Nouveau");
+  await expect(shown).toHaveValue(link("fake-invite-token-one"));
+  await expect(shown).toBeFocused();
+  await expect(shown).toHaveAccessibleDescription("Send it to the café's owner. It works once, until 8 Oct 2026, 08:00, and is shown only now.");
+  await expect(form.getByLabel("Café name")).toHaveValue("");
+  await card.getByRole("button", { name: "Copy link for Café Nouveau" }).click();
+  await expect(card.getByRole("status")).toHaveText("Copied.");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link("fake-invite-token-one"));
+
+  await card.getByRole("button", { name: "New signup link for Café Nouveau" }).click();
+  await expect(shown).toHaveValue(link("fake-invite-token-two"));
+  await expect(card.getByRole("status")).toHaveText("");
+  expect(sent).toEqual([{ cafeId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown, name: "Café Nouveau" }, sent[0], {}]);
+});
+
+test("makes a new café id after a conflict, and keeps each café's unsent link while another gets one", async ({ page }) => {
+  const ids: string[] = [];
+  const OTHER_ID = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    "POST /api/admin/cafes": async (route) => {
+      ids.push((route.request().postDataJSON() as { cafeId: string }).cafeId);
+      await (ids.length === 1
+        ? route.fulfill({
+            status: 409,
+            json: { code: "CONFLICT", message: "This café was already created with another name. Reload the page to see it, then create any other café as a new one.", retryable: false },
+          })
+        : route.fulfill({ status: 201, json: { cafe: cafe({ id: OTHER_ID, name: "Café Nouveau" }), link: link("fake-invite-token-new"), expiresAt: "2026-10-08T08:00:00.000Z" } }));
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: reply(201, { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" }),
+  });
+  await page.goto("/admin");
+  const najjar = page.getByRole("region", { name: /Café Najjar/ });
+  await najjar.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+
+  const form = page.getByRole("form", { name: "New café" });
+  await form.getByLabel("Café name").fill("Café Nouveau");
+  await form.getByRole("button", { name: "Create café" }).click();
+  await expect(form.getByRole("alert")).toHaveText("This café was already created with another name. Reload the page to see it, then create any other café as a new one.");
+  await form.getByRole("button", { name: "Create café" }).click();
+  await expect(page.getByRole("region", { name: /Café Nouveau/ }).getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+  expect(ids).toHaveLength(2);
+  expect(ids[1]).not.toBe(ids[0]);
+  // Café Najjar's link, not yet sent, is still there.
+  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+});
+
+test("keeps a café created while another café's link was on its way", async ({ page }) => {
+  const OTHER_ID = "2d3e4f5a-6b7c-4d8e-9fa0-1b2c3d4e5f6a";
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      await held;
+      await route.fulfill({ status: 201, json: { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" } });
+    },
+    "POST /api/admin/cafes": reply(201, { cafe: cafe({ id: OTHER_ID, name: "Café Nouveau" }), link: link("fake-invite-token-new"), expiresAt: "2026-10-08T08:00:00.000Z" }),
+  });
+  await page.goto("/admin");
+  const najjar = page.getByRole("region", { name: /Café Najjar/ });
+  await najjar.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(najjar.getByRole("button", { name: "Making a link… for Café Najjar" })).toBeDisabled();
+  const form = page.getByRole("form", { name: "New café" });
+  await form.getByLabel("Café name").fill("Café Nouveau");
+  await form.getByRole("button", { name: "Create café" }).click();
+  const nouveau = page.getByRole("region", { name: /Café Nouveau/ });
+  await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+  release();
+  await expect(najjar.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+  await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
+});
+
+test("keeps a plan saved while the café's new link was on its way", async ({ page }) => {
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      await held;
+      // Its copy of the café was read before the plan changed.
+      await route.fulfill({ status: 201, json: { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" } });
+    },
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(200, cafe({ plan: "suspended" })),
+  });
+  await page.goto("/admin");
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await card.getByLabel("Suspended").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+  release();
+  await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+});
+
 test("sends a payment again with the same id after a failed try, and a new id for the next payment", async ({ page }) => {
   const ids: string[] = [];
   let calls = 0;

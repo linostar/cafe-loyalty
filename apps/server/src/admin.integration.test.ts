@@ -4,7 +4,7 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
 import { setOperatorPassword } from "./operators.js";
-import { signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
+import { DASHBOARD_URL, PASSWORD, cookieToken, signedEvent, useApiHarness, withBearer, withCookie } from "./testing/api-harness.js";
 
 const context = useApiHarness();
 const { harness, signUp, pairDevice, issueCard, auditActions } = context;
@@ -136,7 +136,14 @@ describe("operator accounts (AC 39)", () => {
   it("answer 401 without an operator session, and 403 to an owner or a device, on every operator route", async () => {
     const app = await adminApp();
     const operatorRoutes = app.routes.filter((route) => route.access === "operator" && route.method !== "HEAD");
-    expect(operatorRoutes.map((route) => `${route.method} ${route.url}`).sort()).toEqual(["GET /api/admin/cafes", "GET /api/admin/session", "PATCH /api/admin/cafes/:id", "POST /api/admin/cafes/:id/payments"]);
+    expect(operatorRoutes.map((route) => `${route.method} ${route.url}`).sort()).toEqual([
+      "GET /api/admin/cafes",
+      "GET /api/admin/session",
+      "PATCH /api/admin/cafes/:id",
+      "POST /api/admin/cafes",
+      "POST /api/admin/cafes/:id/invites",
+      "POST /api/admin/cafes/:id/payments",
+    ]);
     for (const route of operatorRoutes) {
       const call = (headers: Record<string, string>) =>
         app.app.inject({ method: route.method as "GET", url: route.url.replace(":id", app.owner.cafeId), headers, ...(route.method === "GET" ? {} : { payload: {} }) });
@@ -199,6 +206,66 @@ describe("the admin screen (AC 39)", () => {
     // The same plan again changes nothing and writes no entry.
     expect((await app.asOperator("PATCH", `/api/admin/cafes/${app.owner.cafeId}`, { plan: "active" })).json()).toMatchObject({ plan: "active" });
     expect((await auditActions(app.owner.cafeId)).filter((action) => action === "cafe.plan_changed")).toHaveLength(1);
+  });
+
+  it("creates a café with a signup link its owner signs up with, once when sent again, in the café's audit log", async () => {
+    const app = await adminApp();
+    const cafeId = randomUUID();
+    const created = await app.asOperator("POST", "/api/admin/cafes", { cafeId, name: "  Café Nouveau  " });
+    expect(created.statusCode).toBe(201);
+    const body = created.json<{ cafe: { id: string; name: string; plan: string }; link: string; expiresAt: string }>();
+    expect(body.cafe).toMatchObject({ id: cafeId, name: "Café Nouveau", plan: "pilot", paidCents: 0, payments: [] });
+    const link = new URL(body.link);
+    expect(`${link.origin}${link.pathname}`).toBe(new URL("/signup", DASHBOARD_URL).toString());
+    expect(Date.parse(body.expiresAt) - Date.now()).toBeGreaterThan(6.9 * 24 * 60 * 60 * 1000);
+    // Sent again (its response lost): the same café, with a fresh link.
+    const again = await app.asOperator("POST", "/api/admin/cafes", { cafeId, name: "Café Nouveau" });
+    expect(again.statusCode).toBe(201);
+    expect(again.json<{ link: string }>().link).not.toBe(body.link);
+    expect((await app.asOperator("POST", "/api/admin/cafes", { cafeId, name: "Another name" })).json()).toMatchObject({ code: "CONFLICT" });
+    // An existing café's id with another name never renames it.
+    expect((await app.asOperator("POST", "/api/admin/cafes", { cafeId: app.owner.cafeId, name: "Another name" })).statusCode).toBe(409);
+    for (const wrong of [{ cafeId, name: "   " }, { cafeId, name: "x".repeat(121) }, { cafeId: "not-a-uuid", name: "Café" }, { name: "Café" }]) {
+      expect((await app.asOperator("POST", "/api/admin/cafes", wrong)).statusCode).toBe(400);
+    }
+    const listed = (await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: { id: string }[] }>().cafes;
+    expect(listed.filter((cafe) => cafe.id === cafeId)).toHaveLength(1);
+
+    // Either link signs an owner up for the new café, once.
+    for (const sentLink of [body.link, again.json<{ link: string }>().link]) {
+      const token = new URLSearchParams(new URL(sentLink).hash.slice(1)).get("invite");
+      const signUpWith = () =>
+        app.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: `owner-${randomUUID()}@example.com`, password: PASSWORD } });
+      const signup = await signUpWith();
+      expect(signup.statusCode).toBe(201);
+      expect((await app.app.inject({ method: "GET", url: "/api/cafe", headers: withCookie(cookieToken(signup)) })).json()).toMatchObject({ cafe: { id: cafeId } });
+      expect((await signUpWith()).statusCode).not.toBe(201);
+    }
+
+    const operatorId = (await app.asOperator("GET", "/api/admin/session")).json<{ operator: { id: string } }>().operator.id;
+    const { rows } = await context.admin.query<{ action: string; actor_type: string; actor_id: string; changes: unknown }>(
+      "SELECT action, actor_type, actor_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action IN ('cafe.created', 'owner_invite.created') ORDER BY id",
+      [cafeId],
+    );
+    expect(rows).toEqual([
+      { action: "cafe.created", actor_type: "operator", actor_id: operatorId, changes: {} },
+      { action: "owner_invite.created", actor_type: "operator", actor_id: operatorId, changes: {} },
+      { action: "owner_invite.created", actor_type: "operator", actor_id: operatorId, changes: {} },
+    ]);
+  });
+
+  it("gives an existing café a fresh signup link, and none to a café that does not exist", async () => {
+    const app = await adminApp();
+    const fresh = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/invites`);
+    expect(fresh.statusCode).toBe(201);
+    const body = fresh.json<{ cafe: { id: string }; link: string }>();
+    expect(body.cafe).toMatchObject({ id: app.owner.cafeId, name: "Café Test" });
+    const token = new URLSearchParams(new URL(body.link).hash.slice(1)).get("invite");
+    // Another owner for the café.
+    const signup = await app.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: `owner-${randomUUID()}@example.com`, password: PASSWORD } });
+    expect(signup.statusCode).toBe(201);
+    expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/invites`)).statusCode).toBe(404);
+    expect((await auditActions(app.owner.cafeId)).filter((action) => action === "owner_invite.created")).toHaveLength(2);
   });
 
   it("records a payment sent again (its response lost) once, and refuses the same id with other details", async () => {
