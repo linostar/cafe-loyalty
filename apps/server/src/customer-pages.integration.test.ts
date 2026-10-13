@@ -75,7 +75,7 @@ describe("signup page", () => {
 describe("signup", () => {
   it("creates a card linked to the number, which is stored only as a hash and ciphertext (AC 4, 6)", async () => {
     const { app, code, owner } = await cafeWithJoinCode();
-    const response = await join(app, code, "٧٠ ١٢٣ ٤٥٦", { offers: "yes" });
+    const response = await join(app, code, "٧٠ ١٢٣ ٤٥٦");
     expect(response.statusCode).toBe(303);
     const card = await cardRow(secretOf(response));
     expect(card).toMatchObject({ cafe_id: owner.cafeId, epoch: 1, email: null });
@@ -89,6 +89,21 @@ describe("signup", () => {
     expect(rows[0]?.phone_ciphertext.toString("latin1")).not.toContain("70123456");
     expect(decryptPhone(TEST_SECRETS, rows[0]?.phone_key_id ?? "", rows[0]?.phone_ciphertext ?? Buffer.alloc(0))).toBe("+96170123456");
     expect(await auditActions(owner.cafeId)).toContain("card.created");
+  });
+
+  it("turns offers on for every new card without asking, whatever an older form sends", async () => {
+    const { app, code, owner } = await cafeWithJoinCode();
+    const page = await app.inject({ method: "GET", url: `/join/${code}?lang=en` });
+    expect(page.body).not.toContain('name="offers"');
+    expect(page.body).not.toContain("Send offers");
+    expect((await app.inject({ method: "GET", url: `/join/${code}?lang=ar` })).body).not.toContain('name="offers"');
+    for (const extra of [{}, { offers: "yes" }, { offers: "no" }]) {
+      const card = await cardRow(secretOf(await join(app, code, uniquePhone(), extra)));
+      // On, as the offer jobs read it (cards.offers_opt_in_at IS NOT NULL: worker offers.ts and win-back.ts).
+      expect(card?.offers_opt_in_at).toBeInstanceOf(Date);
+    }
+    const { rows } = await context.admin.query<{ changes: unknown }>("SELECT changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'card.created' ORDER BY id", [owner.cafeId]);
+    expect(rows.map((row) => row.changes)).toEqual(Array.from({ length: 3 }, () => ({ source: "customer", offers: "on_by_default" })));
   });
 
   it("answers a new number, a number known elsewhere and a number already here the same way, never with the existing card (AC 5)", async () => {
@@ -236,7 +251,7 @@ describe("web card", () => {
     const coffee =
       (await as("POST", "/api/cafe/order-types", { nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1, active: true })).json<{ orderTypes: { id: string }[] }>()
         .orderTypes[0]?.id ?? "missing";
-    const secret = secretOf(await join(app, code, uniquePhone(), { offers: "yes" }));
+    const secret = secretOf(await join(app, code, uniquePhone()));
     const card = await cardRow(secret);
     await context.admin.query("UPDATE app.cards SET stamps = 3 WHERE id = $1", [card?.id]);
     const page = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;

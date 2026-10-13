@@ -84,7 +84,6 @@ const MESSAGES = {
     privacyText:
       "We keep your number encrypted, with your stamps and visits at {cafe}, only to run your loyalty card. The café sees your card, not your number. You can add an email to restore your card on a new phone, and you can delete your card at any time from its page.",
     privacyAccept: "I have read the privacy notice and want a card.",
-    offersOptIn: "Send offers from {cafe} to my card (optional).",
     joinButton: "Get my card",
     phoneInvalid: "Enter a mobile number, such as 70 123 456 or +961 70 123 456.",
     privacyRequired: "Tick the box to accept the privacy notice.",
@@ -162,7 +161,6 @@ const MESSAGES = {
     privacyText:
       "نحتفظ برقمك مشفّراً، مع أختامك وزياراتك في {cafe}، فقط لتشغيل بطاقة الولاء. يرى المقهى بطاقتك لا رقمك. يمكنك إضافة بريد إلكتروني لاستعادة بطاقتك على هاتف جديد، ويمكنك حذف بطاقتك في أي وقت من صفحتها.",
     privacyAccept: "قرأت إشعار الخصوصية وأريد بطاقة.",
-    offersOptIn: "أرسلوا عروض {cafe} إلى بطاقتي (اختياري).",
     joinButton: "أعطني بطاقتي",
     phoneInvalid: "أدخل رقم هاتف محمول، مثل 70 123 456 أو ‎+961 70 123 456.",
     privacyRequired: "ضع علامة في المربع للموافقة على إشعار الخصوصية.",

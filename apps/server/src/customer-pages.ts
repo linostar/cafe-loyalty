@@ -350,8 +350,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         .returning("id")
         .executeTakeFirst();
       const customer = inserted ?? (await trx.selectFrom("customers").select("id").where("phone_lookup", "=", lookup).executeTakeFirstOrThrow());
-      // Consent times from the database clock, like every other time.
-      const card = { cafe_id: cafe.id, web_secret_hash: webSecretHash, privacy_accepted_at: now(), offers_opt_in_at: form.offers === "yes" ? now() : null };
+      // Consent times from the database clock, like every other time. Offers are on for every new card (the signup page
+      // asks nothing; a form from before, with or without its offers box, is treated the same); the card page turns them off.
+      const card = { cafe_id: cafe.id, web_secret_hash: webSecretHash, privacy_accepted_at: now(), offers_opt_in_at: now() };
       // DO NOTHING on any conflict: this café's linked card for the number, or the same form sent concurrently.
       const linked = await trx
         .insertInto("cards")
@@ -374,7 +375,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           .where("customer_id", "=", customer.id)
           .execute();
       }
-      await audit(trx, { cafeId: cafe.id, actorType: "system", actorId: null, action: "card.created", entityType: "card", entityId: created.id, changes: { source: "customer" } });
+      await audit(trx, { cafeId: cafe.id, actorType: "system", actorId: null, action: "card.created", entityType: "card", entityId: created.id, changes: { source: "customer", offers: "on_by_default" } });
     });
     request.log.info({ cafeId: cafe.id }, "customer card created");
     await atLeast(started, MIN_SIGNUP_MS);

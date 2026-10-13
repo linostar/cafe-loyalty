@@ -48,7 +48,6 @@ ${errorBlock(errors.phone, "phone-error")}
 <div class="privacy" id="privacy-text"><strong>${t(lang, "privacyTitle")}</strong><p>${t(lang, "privacyText", { cafe: cafeName })}</p></div>
 <label class="check"><input type="checkbox" name="privacy" value="yes" required aria-describedby="privacy-text${errors.privacy === undefined ? "" : " privacy-error"}"${errors.privacy === undefined ? "" : html` aria-invalid="true"`}${values.privacy === "yes" ? html` checked` : ""}> ${t(lang, "privacyAccept")}</label>
 ${errorBlock(errors.privacy, "privacy-error")}
-<label class="check"><input type="checkbox" name="offers" value="yes"${values.offers === "yes" ? html` checked` : ""}> ${t(lang, "offersOptIn", { cafe: cafeName })}</label>
 <button type="submit">${t(lang, "joinButton")}</button>
 </form>
 <p class="aside"><a href="/recover?lang=${lang}">${t(lang, "lostCard")}</a></p>`,
