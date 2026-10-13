@@ -470,11 +470,9 @@ function CafesPage() {
   }
   const { cafes } = state.data;
   const showInvite = (made: AdminInvite) => {
-    // A new café joins the end of the list (oldest first); one sent again replaces itself.
-    // From the latest list: another café's response may have landed since this render.
-    setData((current) => ({
-      cafes: current.cafes.some((entry) => entry.id === made.cafe.id) ? current.cafes.map((entry) => (entry.id === made.cafe.id ? made.cafe : entry)) : [...current.cafes, made.cafe],
-    }));
+    // From the latest list, since other responses may have landed meanwhile. A new café joins its end (oldest first); a
+    // café already listed keeps its entry, which a plan or payment response may have made newer than this one's copy.
+    setData((current) => (current.cafes.some((entry) => entry.id === made.cafe.id) ? current : { cafes: [...current.cafes, made.cafe] }));
     setNotice(null);
     setInvites((shown) => ({ ...shown, [made.cafe.id]: made }));
   };

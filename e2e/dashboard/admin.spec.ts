@@ -194,6 +194,34 @@ test("keeps a café created while another café's link was on its way", async ({
   await expect(nouveau.getByLabel("Owner signup link for Café Nouveau")).toHaveValue(link("fake-invite-token-new"));
 });
 
+test("keeps a plan saved while the café's new link was on its way", async ({ page }) => {
+  // Fake links for the test only.
+  const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      await held;
+      // Its copy of the café was read before the plan changed.
+      await route.fulfill({ status: 201, json: { cafe: cafe(), link: link("fake-invite-token-najjar"), expiresAt: "2026-10-08T08:00:00.000Z" } });
+    },
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(200, cafe({ plan: "suspended" })),
+  });
+  await page.goto("/admin");
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await card.getByLabel("Suspended").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+  release();
+  await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
+  await expect(card.getByRole("heading", { level: 3, name: /Café Najjar/ })).toContainText("Suspended");
+});
+
 test("sends a payment again with the same id after a failed try, and a new id for the next payment", async ({ page }) => {
   const ids: string[] = [];
   let calls = 0;
