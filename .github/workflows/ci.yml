@@ -12,11 +12,104 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  BUILD_ID: ${{ github.sha }}
+
+# The stages of `pnpm test`, as parallel jobs. On pull requests the database, deploy and browser tests run only when a
+# file they depend on changed (deploy/ci/changed-stages.sh); pushes to main, which the release waits for, run them all.
 jobs:
-  test:
-    name: Test
+  changes:
+    name: Pick the stages
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 5
+    outputs:
+      db: ${{ steps.stages.outputs.db }}
+      deploy: ${{ steps.stages.outputs.deploy }}
+      e2e: ${{ steps.stages.outputs.e2e }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the diff is taken from the merge base with the base branch.
+          fetch-depth: 0
+
+      - name: Pick the stages from the changed files
+        id: stages
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: |
+          stages=$(deploy/ci/changed-stages.sh "$BASE_REF")
+          echo "$stages"
+          echo "$stages" >> "$GITHUB_OUTPUT"
+
+  static:
+    name: Typecheck, lint and migration check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # On pull requests, migrations that already exist on the base branch must be unchanged.
+      MIGRATIONS_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the migration check verifies commits named by contract migrations and diffs against the base branch.
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check migrations
+        run: pnpm check:migrations
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the unit tests
+        run: pnpm test:unit
+
+  db:
+    name: Database tests
+    needs: changes
+    if: ${{ needs.changes.outputs.db == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 # 18-alpine, multi-arch index
@@ -31,17 +124,87 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
-      BUILD_ID: ${{ github.sha }}
       TEST_DATABASE_ADMIN_URL: postgres://postgres@localhost:5432/postgres
-      # On pull requests, migrations that already exist on the base branch must be unchanged.
-      MIGRATIONS_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history: the migration check verifies commits named by contract migrations and diffs against the base branch.
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set the release build time
+        # The commit time, as the release build will set it: the counter build and the server must agree (AC 26), and the
+        # sync contract test measures its fixture window from it.
+        env:
+          TZ: UTC
+        # On its own line, so a failing git log fails the step instead of setting an empty value.
+        run: |
+          built_at=$(git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
+          test -n "$built_at"
+          echo "BUILT_AT=$built_at" >> "$GITHUB_ENV"
+
+      - name: Run the database tests
+        run: pnpm test:db
+
+  # The VPS scripts on both Ubuntu releases provision.sh supports: 26.04 has Rust coreutils, sudo-rs and newer curl and
+  # OpenSSL.
+  deploy:
+    name: Deploy scripts on Ubuntu ${{ matrix.ubuntu }}
+    needs: changes
+    if: ${{ needs.changes.outputs.deploy == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["24.04", "26.04"]
+    env:
+      RUNNER_UBUNTU: ${{ matrix.ubuntu }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the deploy test builds the release image with release-commits.txt from it.
           fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the deploy tests
+        run: pnpm test:deploy
+
+  e2e:
+    name: Browser tests
+    needs: changes
+    if: ${{ needs.changes.outputs.e2e == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -68,8 +231,8 @@ jobs:
           test -n "$built_at"
           echo "BUILT_AT=$built_at" >> "$GITHUB_ENV"
 
-      - name: Run the test command
-        run: pnpm test
+      - name: Run the browser tests
+        run: pnpm test:e2e
 
       # Passing runs too: the report holds the screen specs' screenshots, which a design change is reviewed from.
       - name: Upload Playwright report
@@ -82,34 +245,3 @@ jobs:
             test-results/
           retention-days: 14
           if-no-files-found: ignore
-
-  # The VPS scripts on the other Ubuntu release provision.sh supports (the Test job runs them on 24.04): Rust coreutils,
-  # sudo-rs and newer curl and OpenSSL. In parallel, so the run takes no longer.
-  deploy-ubuntu-2604:
-    name: Deploy scripts on Ubuntu 26.04
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      RUNNER_UBUNTU: "26.04"
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          # Full history: the deploy test builds the release image with release-commits.txt from it.
-          fetch-depth: 0
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run the deploy tests
-        run: pnpm test:deploy
