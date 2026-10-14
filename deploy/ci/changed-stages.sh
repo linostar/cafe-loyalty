@@ -22,10 +22,11 @@ affects_all() {
   return 1
 }
 
-# Database tests: the packages they import and their configs.
+# Database tests: the packages they import (the server reads the design system's fonts, styles and logo when it
+# loads) and their configs.
 affects_db() {
   case $1 in
-  apps/server/* | apps/worker/* | packages/db/* | packages/shared/* | vitest.integration.config.ts) return 0 ;;
+  apps/server/* | apps/worker/* | packages/db/* | packages/shared/* | packages/ui/* | vitest.integration.config.ts) return 0 ;;
   esac
   return 1
 }
@@ -35,7 +36,7 @@ affects_db() {
 # left to the browser tests, which build every app as the image does.
 affects_deploy() {
   case $1 in
-  deploy/* | Dockerfile | .dockerignore | compose.dev.yaml | tsconfig.json | packages/db/* | packages/shared/* | apps/server/* | apps/worker/*) return 0 ;;
+  deploy/* | Dockerfile | .dockerignore | compose.dev.yaml | tsconfig.json | packages/db/* | packages/shared/* | packages/ui/* | apps/server/* | apps/worker/*) return 0 ;;
   esac
   return 1
 }
@@ -50,18 +51,19 @@ affects_e2e() {
 
 base=${1:-}
 [[ -n $base ]] || run_all
-# Both sides of a rename, so a file moved out of a stage's paths still runs that stage.
-# Paths unquoted, so a non-ASCII name still matches the lists.
-files=$(git -c core.quotePath=false diff --name-only --no-renames "$base...HEAD") || run_all
+# NUL-delimited, so no path comes quoted (git quotes tabs, newlines, quotes, backslashes and non-ASCII names in lines),
+# and both sides of a rename, so a file moved out of a stage's paths still runs that stage.
+changed=$(mktemp)
+trap 'rm -f "$changed"' EXIT
+git diff -z --name-only --no-renames "$base...HEAD" >"$changed" || run_all
 
 db=false deploy=false e2e=false
-while IFS= read -r file; do
-  [[ -n $file ]] || continue
+while IFS= read -r -d '' file; do
   if affects_all "$file"; then run_all; fi
   if affects_db "$file"; then db=true; fi
   if affects_deploy "$file"; then deploy=true; fi
   if affects_e2e "$file"; then e2e=true; fi
-done <<<"$files"
+done <"$changed"
 
 echo "db=$db"
 echo "deploy=$deploy"
