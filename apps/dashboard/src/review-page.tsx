@@ -28,9 +28,13 @@ const AR = {
   "Yes, accept": "نعم، اقبل",
   Discard: "إهمال",
   "Yes, discard": "نعم، أهمل",
+  "Accept {what}": "قبول {what}",
+  "Yes, accept {what}": "نعم، اقبل {what}",
+  "Discard {what}": "إهمال {what}",
+  "Yes, discard {what}": "نعم، أهمل {what}",
   Review: "المراجعة",
-  "Visits and reports held for you to check. Accept counts one and adds its stamps; Discard drops it.":
-    "زيارات وتقارير محجوزة لتتحقق منها. القبول يحتسبها ويضيف أختامها، والإهمال يلغيها.",
+  "Visits held for you to check. An accepted visit counts, with its stamps if the card can still get them; a discarded one counts for nothing.":
+    "زيارات محجوزة لتتحقق منها. الزيارة المقبولة تُحتسب، مع أختامها إن كانت البطاقة لا تزال تقبلها، والمُهملة لا تُحتسب.",
   "Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.":
     "لا شيء للمراجعة. ما ترسله الهواتف أو الباريستا الذين أُزيلوا، والزيارات المحتجزة عند المزامنة، ينتظرك هنا.",
   "Show more": "عرض المزيد",
@@ -90,7 +94,6 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
   const t = useT(AR);
   const timeFormat = dateFormat(useLang(), TIME_OPTIONS);
   const what = describe(t, timeFormat, item);
-  const hidden = <span className="visually-hidden"> {what}</span>;
   return (
     <li tabIndex={-1} data-review-id={item.id} className="review-item">
       <strong>{typeLabel(t, item)}</strong>{" "}
@@ -109,38 +112,22 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
         </>
       ) : null}
       <div className="actions">
-        {/* Short visible labels; the item's description, hidden, keeps each button's name its own (WCAG 2.5.3: it starts with what is shown). */}
+        {/* Short visible labels; each name adds the item, so it is the button's own (WCAG 2.5.3: it starts with what is shown). */}
         <ConfirmButton
-          label={
-            <>
-              {t("Accept")}
-              {hidden}
-            </>
-          }
-          confirmLabel={
-            <>
-              {t("Yes, accept")}
-              {hidden}
-            </>
-          }
+          label={t("Accept")}
+          confirmLabel={t("Yes, accept")}
+          name={t("Accept {what}", { what })}
+          confirmName={t("Yes, accept {what}", { what })}
           pending={pending}
           onConfirm={() => {
             onDecide("accept");
           }}
         />
         <ConfirmButton
-          label={
-            <>
-              {t("Discard")}
-              {hidden}
-            </>
-          }
-          confirmLabel={
-            <>
-              {t("Yes, discard")}
-              {hidden}
-            </>
-          }
+          label={t("Discard")}
+          confirmLabel={t("Yes, discard")}
+          name={t("Discard {what}", { what })}
+          confirmName={t("Yes, discard {what}", { what })}
           pending={pending}
           onConfirm={() => {
             onDecide("discard");
@@ -189,7 +176,7 @@ export function ReviewPage() {
         {t("Review")}
       </h2>
       <p className="page-intro">
-        {t("Visits and reports held for you to check. Accept counts one and adds its stamps; Discard drops it.")}
+        {t("Visits held for you to check. An accepted visit counts, with its stamps if the card can still get them; a discarded one counts for nothing.")}
       </p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />

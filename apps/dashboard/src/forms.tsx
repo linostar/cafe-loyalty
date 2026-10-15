@@ -157,10 +157,25 @@ export function useLinkToken(name: string): string | null {
 
 /**
  * A button that asks again before a change that cannot be undone from here (revoking a device or a barista).
- * The second step is in the page, not a browser dialog, so it works with a keyboard and screen readers. A label may hide
- * part of itself (`.visually-hidden`) to keep a short visible text and a name that tells the item apart.
+ * The second step is in the page, not a browser dialog, so it works with a keyboard and screen readers. `name` and
+ * `confirmName`, when given, are the buttons' accessible names: a short visible label, and a name that starts with it
+ * and tells the item apart (WCAG 2.5.3).
  */
-export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { label: ReactNode; confirmLabel: ReactNode; pending: boolean; onConfirm: () => void }) {
+export function ConfirmButton({
+  label,
+  confirmLabel,
+  name,
+  confirmName,
+  pending,
+  onConfirm,
+}: {
+  label: string;
+  confirmLabel: string;
+  name?: string;
+  confirmName?: string;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
   const t = useCommonT();
   const [asking, setAsking] = useState(false);
   const container = useRef<HTMLSpanElement>(null);
@@ -193,6 +208,7 @@ export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { lab
           <button
             type="button"
             className="danger"
+            aria-label={confirmName}
             disabled={pending}
             onKeyDown={cancelOnEscape}
             onClick={() => {
@@ -211,6 +227,7 @@ export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { lab
       ) : (
         <button
           type="button"
+          aria-label={name}
           disabled={pending}
           onClick={() => {
             focusNext.current = "cancel";
