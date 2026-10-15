@@ -1,13 +1,13 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit } from "../a11y.js";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectUsableInForcedColors } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { FAKE_TOKEN, SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
 /**
  * Screenshots of every dashboard page at three widths in English and Arabic, with fake data, attached to the report for
  * review (Steps 13b and 16). They assert no pixels: font rendering differs between machines, so a pixel test would only
- * flake. Each screen is checked for its language's direction, for fitting the width, and for controls without a name
- * (AC 41).
+ * flake. Each screen is checked for its language's direction, for fitting the width, for controls without a name
+ * (AC 41), for WCAG 2.2 AA with axe, and under forced colours; every page is checked to reflow at 320 px (WCAG 1.4.10).
  */
 test.use({ timezoneId: "UTC" });
 
@@ -122,6 +122,9 @@ const ADMIN = {
   }),
 };
 
+const OWNER_PATHS = ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"] as const;
+const ADMIN_PATHS = ["/admin", `/admin/cafes/${SESSION.cafe.id}`, "/admin/cafes/new", "/admin/password"] as const;
+const SIGNED_OUT_PATHS = ["/", `/signup#invite=${FAKE_TOKEN}`, "/forgot-password", `/reset-password#token=${FAKE_TOKEN}`, "/admin"] as const;
 const WIDTHS = [1440, 1024, 390] as const;
 /** The browser locale that makes the dashboard pick each language (it follows the browser's languages). */
 const LANGS = [
@@ -150,9 +153,11 @@ for (const { lang, locale } of LANGS) {
       const check = async (page: Page) => {
         await expectLanguageAndFit(page, lang);
         await expectEveryControlNamed(page);
+        await expectNoAxeViolations(page);
+        await expectUsableInForcedColors(page);
       };
 
-      for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"]) {
+      for (const path of OWNER_PATHS) {
         test(`signed in at ${path}`, async ({ page }, testInfo) => {
           await mockApi(page, SIGNED_IN);
           await page.goto(path);
@@ -165,10 +170,10 @@ for (const { lang, locale } of LANGS) {
       }
 
       for (const [name, path] of [
-        ["admin", "/admin"],
-        ["admin-cafe", `/admin/cafes/${SESSION.cafe.id}`],
-        ["admin-new-cafe", "/admin/cafes/new"],
-        ["admin-password", "/admin/password"],
+        ["admin", ADMIN_PATHS[0]],
+        ["admin-cafe", ADMIN_PATHS[1]],
+        ["admin-new-cafe", ADMIN_PATHS[2]],
+        ["admin-password", ADMIN_PATHS[3]],
       ] as const) {
         test(`operator signed in at ${path}`, async ({ page }, testInfo) => {
           await mockApi(page, ADMIN);
@@ -186,7 +191,12 @@ for (const { lang, locale } of LANGS) {
         await page.getByRole("button", { name: /^Profile: |^الملف الشخصي: / }).click();
         await expect(page.getByRole("link", { name: /^Account$|^الحساب$/ }).first()).toBeVisible();
         await capture(page, testInfo, `dashboard-profile-menu${suffix}`);
-        await check(page);
+        await expectLanguageAndFit(page, lang);
+        await expectEveryControlNamed(page);
+        // The open menu lies over the links under it, which axe would measure as covered targets: they are out of
+        // reach only until it closes, as with any menu the user opens.
+        await expectNoAxeViolations(page, ["target-size"]);
+        await expectUsableInForcedColors(page);
       });
 
       test("operator signed out at /admin", async ({ page }, testInfo) => {
@@ -198,10 +208,10 @@ for (const { lang, locale } of LANGS) {
       });
 
       for (const [name, path] of [
-        ["sign-in", "/"],
-        ["signup", `/signup#invite=${FAKE_TOKEN}`],
-        ["forgot-password", "/forgot-password"],
-        ["reset-password", `/reset-password#token=${FAKE_TOKEN}`],
+        ["sign-in", SIGNED_OUT_PATHS[0]],
+        ["signup", SIGNED_OUT_PATHS[1]],
+        ["forgot-password", SIGNED_OUT_PATHS[2]],
+        ["reset-password", SIGNED_OUT_PATHS[3]],
       ] as const) {
         test(`signed out: ${name}`, async ({ page }, testInfo) => {
           await mockApi(page, { "GET /api/auth/session": reply(401, UNAUTHENTICATED) });
@@ -213,4 +223,32 @@ for (const { lang, locale } of LANGS) {
       }
     });
   }
+}
+
+/** Every page at 320 CSS px, the width WCAG 1.4.10 asks content to reflow to without scrolling sideways (a 1280 px window at 400%). */
+for (const { lang, locale } of LANGS) {
+  test.describe(`${lang} at 320 px`, () => {
+    test.use({ locale, viewport: { width: 320, height: 640 }, isMobile: true, hasTouch: true });
+
+    test("every page reflows", async ({ page }) => {
+      for (const [mock, paths] of [
+        [SIGNED_IN, OWNER_PATHS],
+        [ADMIN, ADMIN_PATHS],
+      ] as const) {
+        await mockApi(page, mock);
+        for (const path of paths) {
+          await page.goto(path);
+          await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
+          await expectLanguageAndFit(page, lang);
+        }
+        await page.unrouteAll();
+      }
+      await mockApi(page, { "GET /api/auth/session": reply(401, UNAUTHENTICATED), "GET /api/admin/session": reply(401, UNAUTHENTICATED) });
+      for (const path of SIGNED_OUT_PATHS) {
+        await page.goto(path);
+        await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+        await expectLanguageAndFit(page, lang);
+      }
+    });
+  });
 }

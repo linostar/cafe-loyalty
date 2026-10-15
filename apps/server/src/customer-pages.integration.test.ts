@@ -565,7 +565,7 @@ describe("feedback", () => {
     // Arabic too.
     expect((await app.inject({ method: "GET", url: path, headers: { "accept-language": "ar" } })).body).toContain("اكتب تقييماً على Google");
     // The web card links to the latest visit's page.
-    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).toContain(`<a href="${path}?lang=en">Tell the café</a>`);
+    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).toContain(`<a class="standalone" href="${path}?lang=en">Tell the café</a>`);
     // Emptied: no link again.
     expect((await as("PATCH", "/api/cafe", { googleReviewUrl: "" })).json<{ cafe: { googleReviewUrl: string | null } }>().cafe.googleReviewUrl).toBeNull();
   });

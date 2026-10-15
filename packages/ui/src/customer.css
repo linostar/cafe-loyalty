@@ -29,6 +29,20 @@ h1 {
   text-align: end;
 }
 
+/*
+ * Links standing on their own, never inside a sentence (the language switch, "Lost your phone?", a card's feedback link,
+ * restored cards): 44 px tall targets, the size a thumb hits reliably (WCAG 2.5.8 asks 24).
+ */
+.lang a,
+.aside a,
+.card-links a,
+a.standalone {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--control-height);
+  min-inline-size: var(--control-height);
+}
+
 /* A small label above a title: "Loyalty card", "Your offer". */
 .kicker {
   margin: 0 0 var(--space-1);

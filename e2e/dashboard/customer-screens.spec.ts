@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { renderSVG } from "uqr";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, type Lang } from "../../apps/server/src/customer-html.js";
 import {
@@ -20,7 +21,8 @@ import { GOOGLE_WALLET_BADGES } from "../../apps/server/src/google-pass.js";
 /**
  * Screenshots of every customer page at three widths, attached to the report for review (Step 13b). The pages are the
  * server's own views rendered with fake data, served with the customer pages' CSP, fonts and logo, so a font or image
- * the policy blocks shows up here too. No pixels are compared: font rendering differs between machines.
+ * the policy blocks shows up here too. No pixels are compared: font rendering differs between machines. Each page is
+ * checked like the counter's (WCAG 2.2 AA with axe, 44 px touch targets, forced colours), down to the 320 px reflow width.
  */
 const ORIGIN = "https://card.example.test";
 
@@ -122,9 +124,9 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
   await testInfo.attach(name, { path, contentType: "image/png" });
 }
 
-for (const width of [1440, 1024, 390] as const) {
+for (const width of [1440, 1024, 390, 320] as const) {
   test.describe(`customer pages at ${String(width)} px`, () => {
-    test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
+    test.use({ viewport: { width, height: width <= 390 ? 844 : 900 }, isMobile: width <= 390, hasTouch: width <= 390 });
 
     for (const [name, html] of PAGES) {
       test(name, async ({ page }, testInfo) => {
@@ -136,6 +138,11 @@ for (const width of [1440, 1024, 390] as const) {
         expect(await page.evaluate(() => document.fonts.check('16px "IBM Plex Sans Arabic"'))).toBe(true);
         expect(blocked).toEqual([]);
         await capture(page, testInfo, `customer-${name}-${String(width)}`);
+        await expectLanguageAndFit(page, name.includes("-ar") ? "ar" : "en");
+        await expectEveryControlNamed(page);
+        await expectNoAxeViolations(page);
+        await expectTouchTargets(page);
+        await expectUsableInForcedColors(page);
       });
     }
   });

@@ -125,7 +125,7 @@ ${view.feedbackHref === undefined
   ? null
   : html`<section aria-labelledby="feedback-title" class="card">
 <h2 id="feedback-title">${t(lang, "cardFeedbackTitle")}</h2>
-<p><a href="${view.feedbackHref}">${t(lang, "cardFeedbackLink")}</a></p>
+<p><a class="standalone" href="${view.feedbackHref}">${t(lang, "cardFeedbackLink")}</a></p>
 </section>`}
 <section aria-labelledby="email-title" class="card">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>

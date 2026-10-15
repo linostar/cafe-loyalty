@@ -1,6 +1,6 @@
 import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit } from "../a11y.js";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { mockApi, reply } from "../dashboard/api-mock.js";
 import { CAMERA_CAFE_ID } from "./camera.js";
@@ -8,8 +8,17 @@ import { CAMERA_CAFE_ID } from "./camera.js";
 /**
  * Screenshots of the counter's screens at three widths, with fake data, attached to the report for review (Step 13b).
  * They assert no pixels (font rendering differs between machines); on a landscape tablet they check that the order's
- * total and its Record visit button stay in view (AC 10 of the plan).
+ * total and its Record visit button stay in view (AC 10 of the plan). Each screen is checked for WCAG 2.2 AA with axe,
+ * for 44 px touch targets and under forced colours; 320 px is the reflow width of WCAG 1.4.10.
  */
+
+/** The accessibility checks every counter screen passes. */
+async function expectAccessible(page: Page): Promise<void> {
+  await expectEveryControlNamed(page);
+  await expectNoAxeViolations(page);
+  await expectTouchTargets(page);
+  await expectUsableInForcedColors(page);
+}
 test.use({ serviceWorkers: "block", timezoneId: "Asia/Beirut" });
 
 const PAIRED = {
@@ -72,6 +81,7 @@ const WIDTHS = [
   { width: 1024, height: 768 },
   { width: 768, height: 1024 },
   { width: 390, height: 844 },
+  { width: 320, height: 640 },
 ] as const;
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -99,6 +109,8 @@ async function toPin(page: Page, testInfo: TestInfo, width: number, shoot: boole
   const shot = async (name: string) => {
     if (shoot) {
       await capture(page, testInfo, `counter-${name}-${String(width)}`);
+      await expectLanguageAndFit(page, "en");
+      await expectAccessible(page);
     }
   };
   await mockCounter(page);
@@ -115,7 +127,7 @@ async function toPin(page: Page, testInfo: TestInfo, width: number, shoot: boole
 
 for (const { width, height } of WIDTHS) {
   test.describe(`at ${String(width)} px`, () => {
-    test.use({ viewport: { width, height }, isMobile: width === 390, hasTouch: width !== 1440 });
+    test.use({ viewport: { width, height }, isMobile: width <= 390, hasTouch: width !== 1440 });
 
     test("pairing, who is working, PIN, an order, and offline", async ({ page, context }, testInfo) => {
       await toPin(page, testInfo, width, true);
@@ -139,10 +151,12 @@ for (const { width, height } of WIDTHS) {
       }
       await capture(page, testInfo, `counter-order-${String(width)}`);
       await expectLanguageAndFit(page, "en");
-      await expectEveryControlNamed(page);
+      await expectAccessible(page);
       await context.setOffline(true);
       await expect(page.getByRole("status").first()).toHaveText(/^Offline/);
       await capture(page, testInfo, `counter-offline-${String(width)}`);
+      await expectLanguageAndFit(page, "en");
+      await expectAccessible(page);
       // Offline, the header is at its tallest (the pills wrap under the brand on narrow screens).
       await expectFocusNeverHidden(page);
     });
@@ -153,12 +167,14 @@ for (const { width, height } of WIDTHS) {
       await page.getByRole("button", { name: "Sign in" }).click();
       await expect(page.getByRole("alert")).toContainText("Wrong PIN");
       await capture(page, testInfo, `counter-pin-wrong-${String(width)}`);
+      await expectLanguageAndFit(page, "en");
+      await expectAccessible(page);
     });
   });
 }
 
 /** The counter in Arabic (AC 41): each screen right to left, fitting the width, every control named. */
-for (const { width, height } of [WIDTHS[1], WIDTHS[3]]) {
+for (const { width, height } of [WIDTHS[1], WIDTHS[3], WIDTHS[4]]) {
   test.describe(`in Arabic at ${String(width)} px`, () => {
     test.use({ locale: "ar-LB", viewport: { width, height }, isMobile: width === 390, hasTouch: true });
 
@@ -166,7 +182,7 @@ for (const { width, height } of [WIDTHS[1], WIDTHS[3]]) {
       const check = async (name: string) => {
         await capture(page, testInfo, `counter-${name}-ar-${String(width)}`);
         await expectLanguageAndFit(page, "ar");
-        await expectEveryControlNamed(page);
+        await expectAccessible(page);
       };
       await mockCounter(page);
       await page.goto("/pair#code=ABCD-1234-EFGH");

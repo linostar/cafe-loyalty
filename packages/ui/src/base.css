@@ -212,14 +212,58 @@ button[type="submit"].danger {
   box-shadow: none;
 }
 
-/* Unavailable; aria-disabled ones stay focusable, so the keyboard stays where it was. */
+/* Pressed: the button sinks a pixel, so a tap shows before its result does. */
+button:active:not(:disabled, [aria-disabled="true"]) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+/*
+ * Unavailable; aria-disabled ones stay focusable, so the keyboard stays where it was. The dashed border tells it apart
+ * from an enabled button by more than colour (WCAG 1.4.1).
+ */
 button:disabled,
 button[aria-disabled="true"] {
-  border-color: var(--color-border);
+  border-style: dashed;
+  border-color: var(--color-border-strong);
   background: var(--color-surface-sunken);
   color: var(--color-text-muted);
   box-shadow: none;
   cursor: not-allowed;
+}
+
+/*
+ * Layout. `.page` is a page's content column: centred on wide screens, with a gutter on narrow ones, up to the wide
+ * width (`.page-medium` and `.page-narrow` for a list or a single form). `.stack` spaces the blocks it holds evenly,
+ * and `.section` blocks in a row are a section gap apart.
+ */
+.page {
+  inline-size: 100%;
+  max-inline-size: var(--content-wide);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+.page-medium {
+  max-inline-size: var(--content-medium);
+}
+
+.page-narrow {
+  max-inline-size: var(--content-narrow);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+}
+
+.stack > * {
+  margin-block: 0;
+}
+
+.section + .section {
+  margin-block-start: var(--section-gap);
 }
 
 /* Messages */
@@ -285,11 +329,16 @@ button[aria-disabled="true"] {
   box-shadow: var(--shadow-md);
 }
 
-/* A checkbox with its label beside it, the box level with the label's first line. */
+/*
+ * A checkbox with its label beside it, the box level with the label's first line. The label takes the tap, so it is at
+ * least a control's height; a one-line label sits in its middle.
+ */
 .check {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
+  min-block-size: var(--control-height);
+  padding-block: calc((var(--control-height) - 1lh) / 2);
   font-weight: var(--weight-regular);
 }
 
