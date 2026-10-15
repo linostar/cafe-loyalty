@@ -110,6 +110,10 @@ export async function expectUsableInForcedColors(page: Page): Promise<void> {
   expect(borderless, "controls with no border under forced colours").toEqual([]);
   await page.evaluate(() => {
     (document.activeElement as HTMLElement | null)?.blur();
+    // blur() leaves the browser's starting point for Tab where the control was: focusing the body moves it to the page's start.
+    document.body.tabIndex = -1;
+    document.body.focus();
+    document.body.removeAttribute("tabindex");
     window.scrollTo(0, 0);
     (globalThis as unknown as { ringsSeen?: WeakSet<Element> }).ringsSeen = new WeakSet();
   });
@@ -128,7 +132,9 @@ export async function expectUsableInForcedColors(page: Page): Promise<void> {
       }
       seen.add(active);
       for (let node: Element | null = active; node !== null && node !== document.body; node = node.parentElement) {
-        if (getComputedStyle(node).outlineStyle !== "none") {
+        // A ring that shows: a style other than none, at a width above zero.
+        const style = getComputedStyle(node);
+        if (style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0) {
           return "ringed";
         }
       }
