@@ -67,7 +67,7 @@ describe("Counter App", () => {
     });
     expect(screen.getByRole("status")).toHaveTextContent(/^Offline/);
     await act(() => addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} }));
-    expect(await screen.findByText("1 waiting to send.")).toBeInTheDocument();
+    expect(await screen.findByText("1 to send")).toBeInTheDocument();
   });
 
   it("pairs from the dashboard's link, then signs a barista in by name and PIN until switched", async () => {

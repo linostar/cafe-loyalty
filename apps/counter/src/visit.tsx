@@ -322,7 +322,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           const offer = discountFor(catalog, type, shownAt, winBack);
           const name = nameIn(lang, type);
           return (
-            <li key={type.id}>
+            <li key={type.id} className={quantity === 0 ? undefined : "chosen"}>
               <span className="menu-item">
                 <strong>{name}</strong> ·{" "}
                 {offer === null ? (
@@ -366,67 +366,40 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           );
         })}
       </ul>
-      {/* The order beside the menu on a tablet, kept in view as the menu scrolls: total, card and the record button. */}
-      <div className="order-summary">
-        {dropped.length === 0 ? null : (
-          <p role="alert" className="warning-box">
-            {dropped.length === 1
-              ? t("No longer on sale, so left out of this order: {names}. The total does not include it.", { names: dropped.join(", ") })
-              : t("No longer on sale, so left out of this order: {names}. The total does not include them.", { names: dropped.join(lang === "ar" ? "، " : ", ") })}
-          </p>
-        )}
-        {offer === null ? null : (
-          <>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={applyWinBack}
-                onChange={(event) => {
-                  setApplyWinBack(event.target.checked);
-                  setNotice(null);
-                }}
-              />{" "}
-              {t("This card has a win-back offer, {discount}: apply it", { discount: discountText(offer.discount, t) })}
-            </label>
-            {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
-              <p role="status">
-                {t(
-                  "The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.",
-                )}
-              </p>
-            ) : null}
-          </>
-        )}
-        <p aria-live="polite" className="total">
-          {t("Total {total} · {stamps}", { total: formatUsd(total ?? 0, "en"), stamps: plural(lang, STAMPS, stamps) })}
-        </p>
-        <div className="card-choice">
-          {scanned === null ? (
-            <button
-              ref={scanButton}
-              type="button"
-              disabled={scanner !== null}
-              onClick={() => {
-                onScanner("visit");
-              }}
-            >
-              {t("Scan card")}
-            </button>
-          ) : (
-            <p>
-              {t("Card scanned.")}{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setScanned(null);
-                  setApplyWinBack(false);
-                  // The button that replaces this one keeps the keyboard where it was.
-                  requestAnimationFrame(() => scanButton.current?.focus());
-                }}
-              >
-                {t("Clear card")}
-              </button>
+      {/*
+        The order: beside the menu on a tablet, kept in view as the menu scrolls. On a phone its action bar (total, card,
+        record) stays at the bottom of the screen while the menu is on it.
+      */}
+      <div className="order-side">
+        <div className="order-summary">
+          {dropped.length === 0 ? null : (
+            <p role="alert" className="warning-box">
+              {dropped.length === 1
+                ? t("No longer on sale, so left out of this order: {names}. The total does not include it.", { names: dropped.join(", ") })
+                : t("No longer on sale, so left out of this order: {names}. The total does not include them.", { names: dropped.join(lang === "ar" ? "، " : ", ") })}
             </p>
+          )}
+          {offer === null ? null : (
+            <>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={applyWinBack}
+                  onChange={(event) => {
+                    setApplyWinBack(event.target.checked);
+                    setNotice(null);
+                  }}
+                />{" "}
+                {t("This card has a win-back offer, {discount}: apply it", { discount: discountText(offer.discount, t) })}
+              </label>
+              {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
+                <p role="status">
+                  {t(
+                    "The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.",
+                  )}
+                </p>
+              ) : null}
+            </>
           )}
           {scanned === null ? (
             <div className="field">
@@ -447,17 +420,51 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
             </div>
           ) : null}
         </div>
-        {problem === null ? null : (
-          <p id={problemId} role="alert" className="field-error">
-            {problem.say(t, lang)}
+        <div className="action-bar">
+          <p aria-live="polite" className="total">
+            {t("Total {total} · {stamps}", { total: formatUsd(total ?? 0, "en"), stamps: plural(lang, STAMPS, stamps) })}
           </p>
-        )}
-        {/* Always in the page, so a new notice is announced. */}
-        <p role="status">{notice?.(t, lang) ?? ""}</p>
-        {/* aria-disabled, not disabled: the keyboard stays on it while the visit saves. */}
-        <button ref={recordButton} type="button" className="primary record" aria-disabled={saving} onClick={record}>
-          {saving ? t("Saving…") : t("Record visit")}
-        </button>
+          {problem === null ? null : (
+            <p id={problemId} role="alert" className="field-error">
+              {problem.say(t, lang)}
+            </p>
+          )}
+          {/* Always in the page, so a new notice is announced. */}
+          <p role="status">{notice?.(t, lang) ?? ""}</p>
+          <div className="card-choice">
+            {scanned === null ? (
+              <button
+                ref={scanButton}
+                type="button"
+                disabled={scanner !== null}
+                onClick={() => {
+                  onScanner("visit");
+                }}
+              >
+                {t("Scan card")}
+              </button>
+            ) : (
+              <p>
+                {t("Card scanned.")}{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScanned(null);
+                    setApplyWinBack(false);
+                    // The button that replaces this one keeps the keyboard where it was.
+                    requestAnimationFrame(() => scanButton.current?.focus());
+                  }}
+                >
+                  {t("Clear card")}
+                </button>
+              </p>
+            )}
+          </div>
+          {/* aria-disabled, not disabled: the keyboard stays on it while the visit saves. */}
+          <button ref={recordButton} type="button" className="primary record" aria-disabled={saving} onClick={record}>
+            {saving ? t("Saving…") : t("Record visit")}
+          </button>
+        </div>
       </div>
     </section>
   );
