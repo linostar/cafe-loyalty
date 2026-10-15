@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { shownText } from "../a11y.js";
 import { SESSION, mockApi, reply } from "./api-mock.js";
 
 // Times in button names are shown in the browser's zone; pin it so the names are the same on every machine.
@@ -39,8 +40,13 @@ test("lists held events a page at a time and accepts one after confirming (AC 21
   await expect(page.getByRole("listitem").filter({ hasText: "03:15" })).toBeFocused();
 
   const first = page.getByRole("button", { name: /^Accept Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ });
+  // Short visible labels; the names keep the item's description (AC 9).
+  expect(await shownText(first)).toBe("Accept");
+  expect(await shownText(page.getByRole("button", { name: /^Discard Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ }))).toBe("Discard");
   await first.click();
-  await page.getByRole("button", { name: /^Yes, accept Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ }).click();
+  const confirm = page.getByRole("button", { name: /^Yes, accept Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ });
+  expect(await shownText(confirm)).toBe("Yes, accept");
+  await confirm.click();
   await expect(page.getByRole("status")).toHaveText("Accepted: Visit by Rami on Front counter at 8 Oct 2026, 01:15:00.");
   // Only the decided item goes: the pages already loaded stay.
   await expect(page.getByText(/from a phone you removed/)).toHaveCount(2);

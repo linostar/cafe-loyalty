@@ -598,7 +598,7 @@ function AdminLayout({ session, path, onSignedOut, children }: { session: Operat
           <LanguageSwitch />
         </div>
       </header>
-      <main className="owner-main">{children}</main>
+      <main className="admin-main page page-medium">{children}</main>
       <BuildFooter />
     </div>
   );

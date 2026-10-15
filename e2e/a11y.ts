@@ -1,5 +1,5 @@
 import { AxeBuilder } from "@axe-core/playwright";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 const CONTROL_ROLES = ["button", "link", "textbox", "checkbox", "radio", "combobox", "spinbutton", "searchbox", "slider", "switch"];
 
@@ -150,4 +150,15 @@ export async function expectUsableInForcedColors(page: Page): Promise<void> {
   }
   expect(unringed, "controls with no focus ring under forced colours").toEqual([]);
   await page.emulateMedia({ forcedColors: "none" });
+}
+
+/** The text an element shows on screen: its text without the parts hidden for screen readers (`.visually-hidden`). */
+export async function shownText(locator: Locator): Promise<string> {
+  return locator.evaluate((element) => {
+    const copy = element.cloneNode(true) as Element;
+    for (const hidden of copy.querySelectorAll(".visually-hidden")) {
+      hidden.remove();
+    }
+    return copy.textContent.replace(/\s+/g, " ").trim();
+  });
 }

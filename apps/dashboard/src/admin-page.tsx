@@ -45,6 +45,8 @@ const AR = {
   "{name} is now on the {plan} plan.": "أصبح {name} على الخطة {plan}.",
   "Plan of {name}": "خطة {name}",
   "Save plan": "حفظ الخطة",
+  "Choose another plan to save.": "اختر خطة أخرى لحفظها.",
+  "Year-month-day, such as {day}.": "سنة-شهر-يوم، مثل {day}.",
   "Enter an amount in dollars over 0, such as 25 or 25.00.": "أدخل مبلغاً بالدولار أكبر من 0، مثل 25 أو 25.00.",
   "Recorded {amount} from {name}, paid by {method} on {day}.": "سُجّل مبلغ {amount} من {name}، بتاريخ {day}، طريقة الدفع: {method}.",
   "Record a payment": "تسجيل دفعة",
@@ -135,6 +137,8 @@ function AdminLoginForm({ notice, onSignedIn }: { notice: string | null; onSigne
 function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
   const [plan, setPlan] = useState<CafePlan>(cafe.plan);
+  const unchanged = plan === cafe.plan;
+  const whyId = `plan-unchanged-${cafe.id}`;
   const { pending, error, submit } = useSubmit();
   return (
     <form
@@ -168,10 +172,16 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
         </div>
         <p className="hint">{t(PLAN_HINTS[plan])}</p>
       </fieldset>
-      <button type="submit" disabled={pending || plan === cafe.plan}>
+      <button type="submit" disabled={pending || unchanged} aria-describedby={unchanged ? whyId : undefined}>
         {pending ? t("Saving…") : t("Save plan")}
         {forCafe(t("of {name}", { name: cafe.name }))}
       </button>
+      {/* A disabled button says why, beside it and in its description. */}
+      {unchanged ? (
+        <p id={whyId} className="hint">
+          {t("Choose another plan to save.")}
+        </p>
+      ) : null}
     </form>
   );
 }
@@ -241,12 +251,25 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         onChange={setAmount}
         error={problems.amountCents ?? fieldErrors.amountCents}
       />
-      <Field label={
+      {/*
+        Text, not a date picker: the picker draws the day in the computer's own date format, which can show a weekday
+        it leaves blank (", 15 Oct 2026") or a time; the server checks the day and says how to write it.
+      */}
+      <Field
+        label={
           <>
             {t("Paid on")}
             {forThis}
           </>
-        } name="paidOn" type="date" value={paidOn} onChange={setPaidOn} error={fieldErrors.paidOn} />
+        }
+        name="paidOn"
+        type="text"
+        value={paidOn}
+        onChange={setPaidOn}
+        // The example is a placeholder, isolated in Arabic: after Arabic letters its digits would otherwise read right to left.
+        hint={t("Year-month-day, such as {day}.", { day: "2026-10-01" })}
+        error={fieldErrors.paidOn}
+      />
       <fieldset>
         <legend>
           {t("Paid by")}
