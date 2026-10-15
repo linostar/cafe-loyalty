@@ -64,6 +64,7 @@ const PAIRS: readonly [foreground: string, background: string, minimum: number][
   ["color-focus", "color-danger-soft", UI],
   ["color-focus-inverse", "color-espresso", UI],
   ["color-accent", "color-page", UI],
+  ["color-accent", "color-surface", UI],
 ];
 
 /** Decorative only: dividers and card edges, never the boundary a control needs to be seen (WCAG 1.4.11). */

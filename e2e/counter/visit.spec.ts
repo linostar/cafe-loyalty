@@ -76,7 +76,7 @@ test("records a visit for a phone number and sends it, priced as the menu showed
   await page.getByRole("button", { name: "One more Coffee" }).click();
   await page.getByRole("button", { name: "One more Coffee" }).click();
   await expect(page.getByText("Total $6.00 · 2 stamps")).toBeVisible();
-  await page.getByLabel("Or the customer's mobile number").fill("70 123 456");
+  await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
   await page.getByRole("button", { name: "Record visit" }).click();
   await expect(page.getByText("Visit saved, earning up to 2 stamps.", { exact: false })).toBeVisible();
   await expect
@@ -101,7 +101,7 @@ test("gives a running campaign's discount and sends it with the visit (AC 35)", 
   await expect(page.getByText("$1.50 (All-day offer)", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "One more Coffee" }).click();
   await expect(page.getByText("Total $1.50 · 1 stamp")).toBeVisible();
-  await page.getByLabel("Or the customer's mobile number").fill("70 123 456");
+  await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
   await page.getByRole("button", { name: "Record visit" }).click();
   await expect
     .poll(() => synced)

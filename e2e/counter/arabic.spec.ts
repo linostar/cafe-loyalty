@@ -84,7 +84,7 @@ test("lists a visit the server refused, in Arabic, and says why", async ({ page 
   await page.getByRole("button", { name: "تسجيل الدخول" }).click();
   await expect(page.getByRole("heading", { name: "زيارة جديدة" })).toBeVisible();
   await page.getByRole("button", { name: /^زيادة .*قهوة/ }).click();
-  await page.getByLabel("أو رقم هاتف الزبون المحمول").fill("٧٠ ١٢٣ ٤٥٦");
+  await page.getByLabel("لا بطاقة؟ رقم هاتف الزبون المحمول").fill("٧٠ ١٢٣ ٤٥٦");
   await page.getByRole("button", { name: "تسجيل الزيارة" }).click();
   const rejected = page.getByRole("region", { name: "لم يقبلها الخادم" });
   await expect(rejected).toBeVisible();

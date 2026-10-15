@@ -61,7 +61,9 @@ test("pairs from the dashboard's QR link, locks a barista out after five wrong P
   await expect(page.getByLabel("PIN", { exact: true })).toBeDisabled();
   // The report is sent at once; wait for it rather than for a status line that was already there.
   await expect.poll(() => synced).toMatchObject([{ type: "staff.pin_lockout", staffId: RAMI.id, deviceId: PAIRED.deviceId, payload: { failedAttempts: 5 } }]);
-  await expect(page.getByText("Nothing waiting to send.")).toBeVisible();
+  // The empty queue shows on the chip (AC 29), and is read in full.
+  await expect(page.getByText("0 to send")).toBeVisible();
+  await expect(page.getByText("Nothing waiting to send.")).toBeAttached();
 
   // The lockout is kept on the phone: a reload does not lift it.
   await page.reload();

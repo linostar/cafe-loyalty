@@ -46,6 +46,7 @@ const AR = {
   Online: "متصل",
   "Offline: stamps are saved on this phone and sync when the connection returns.": "غير متصل: تُحفظ الأختام على هذا الهاتف وتُزامَن حين يعود الاتصال.",
   "Nothing waiting to send.": "لا شيء بانتظار الإرسال.",
+  Offline: "غير متصل",
   "An update is ready. It installs once everything is sent and nobody is typing.": "تحديث جاهز. يُثبَّت بعد إرسال كل شيء وحين لا يكتب أحد.",
   Visit: "زيارة",
   "PIN lockout report": "تقرير قفل الرمز السري",
@@ -116,15 +117,10 @@ function useSay(): (text: string) => string {
   return (text) => (Object.hasOwn(AR, text) ? t(text as AppText) : api(text));
 }
 
+/** What waits to be sent, short enough for the one-row header beside the connection. */
 const WAITING = {
-  en: { one: "{n} waiting to send.", other: "{n} waiting to send." },
-  ar: {
-    one: "عنصر واحد بانتظار الإرسال.",
-    two: "عنصران بانتظار الإرسال.",
-    few: "{n} عناصر بانتظار الإرسال.",
-    many: "{n} عنصراً بانتظار الإرسال.",
-    other: "{n} عنصر بانتظار الإرسال.",
-  },
+  en: { one: "{n} to send", other: "{n} to send" },
+  ar: { one: "واحد للإرسال", two: "اثنان للإرسال", few: "{n} للإرسال", many: "{n} للإرسال", other: "{n} للإرسال" },
 };
 const ITEMS = { en: { one: "{n} item", other: "{n} items" }, ar: { one: "عنصر واحد", two: "عنصران", few: "{n} عناصر", many: "{n} عنصراً", other: "{n} عنصر" } };
 const TRIES = {
@@ -182,17 +178,37 @@ const REJECTION_REASONS: Readonly<Record<string, AppText>> = {
   IDEMPOTENCY_CONFLICT: "it clashed with something this phone sent before",
 };
 
-/** Always visible in the header: connectivity and what waits to be sent (AC 29). */
+/**
+ * Always visible in the header, in one short chip: connectivity and what waits to be sent, nothing included (AC 29).
+ * Offline, the chip says so in a word and screen readers hear the whole sentence; an empty queue shows "0 to send" and
+ * is read as "Nothing waiting to send.".
+ */
 function ConnectionStatus({ online, pending }: { online: boolean; pending: number }) {
   const t = useT(AR);
   const lang = useLang();
   return (
-    <section aria-label={t("Counter status")} className="connection">
-      <p role="status" aria-live="polite" className={`pill ${online ? "pill-online" : "pill-offline"}`}>
-        {online ? t("Online") : t("Offline: stamps are saved on this phone and sync when the connection returns.")}
+    <section aria-label={t("Counter status")} className={`connection ${online ? "is-online" : "is-offline"}`}>
+      <p role="status" aria-live="polite">
+        {online ? (
+          t("Online")
+        ) : (
+          <>
+            <span aria-hidden="true">{t("Offline")}</span>
+            <span className="visually-hidden">{t("Offline: stamps are saved on this phone and sync when the connection returns.")}</span>
+          </>
+        )}
       </p>
       {/* Not live: it changes with every sync, and the count is there to look at, not to hear. */}
-      <p className={`pill ${pending === 0 ? "pill-idle" : "pill-waiting"}`}>{pending === 0 ? t("Nothing waiting to send.") : plural(lang, WAITING, pending)}</p>
+      <p className="queue">
+        {pending === 0 ? (
+          <>
+            <span aria-hidden="true">{plural(lang, WAITING, 0)}</span>
+            <span className="visually-hidden">{t("Nothing waiting to send.")}</span>
+          </>
+        ) : (
+          plural(lang, WAITING, pending)
+        )}
+      </p>
     </section>
   );
 }
