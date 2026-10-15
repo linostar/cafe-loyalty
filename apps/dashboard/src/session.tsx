@@ -1,4 +1,4 @@
-import { apiText } from "@cafe-loyalty/shared";
+import { apiText, type FeedbackInbox, type ReviewQueue } from "@cafe-loyalty/shared";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { z } from "zod";
 import { ApiRequestError, apiRequest } from "./api.js";
@@ -11,6 +11,19 @@ import { useApiText, useCommonT } from "./i18n.js";
 export const SessionEndedContext = createContext<((message: string) => void) | null>(null);
 
 export type ApiData<T> = { status: "loading" } | { status: "loaded"; data: T } | { status: "failed"; message: string };
+
+/**
+ * What waits for the owner, from the lists the API already serves: visits and actions held for review (the queue's
+ * first page) and unread customer messages. Loaded once per page by the signed-in layout, for the navigation's counts
+ * and Home; `reload` loads both again, for a page that has just changed them (a decision on Review, a message read).
+ */
+export interface Attention {
+  review: ApiData<ReviewQueue>;
+  inbox: ApiData<FeedbackInbox>;
+  reload: () => void;
+}
+
+export const AttentionContext = createContext<Attention>({ review: { status: "loading" }, inbox: { status: "loading" }, reload: () => undefined });
 
 /**
  * Loads `path` for a page (a failure's message in English as the API sent it; PageStatus translates it), again whenever

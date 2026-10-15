@@ -3,16 +3,20 @@ import {
   VISIT_HOURS_WEEKS,
   apiText,
   cafeSetupSchema,
+  feedbackInboxSchema,
   ownerSessionSchema,
   plural,
+  resultsReportSchema,
+  reviewQueueSchema,
   visitHoursSchema,
   walletDeliveriesSchema,
   type OperatorSession,
   type OwnerSession,
+  type ReviewQueue,
   type VisitHours as VisitHoursData,
 } from "@cafe-loyalty/shared";
 import logoUrl from "@cafe-loyalty/ui/logo.svg";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useState, type ReactNode } from "react";
 import { AdminArea } from "./admin-page.js";
 import { ApiRequestError, apiRequest } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
@@ -25,7 +29,7 @@ import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
 import { ProfileMenu } from "./profile-menu.js";
 import { ChangePasswordForm } from "./password-form.js";
-import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
+import { AttentionContext, PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
 const AR = {
@@ -67,14 +71,26 @@ const AR = {
   Quiet: "هادئ",
   Busy: "مزدحم",
   "Signed in as {email}": "مسجّل الدخول باسم {email}",
-  "Name, loyalty program, margin and order types.": "الاسم وبرنامج الولاء والهامش وأنواع الطلبات.",
-  "Discounts at quiet hours, above your minimum margin.": "خصومات في ساعات الهدوء، فوق الحد الأدنى لهامشك.",
-  "Baristas and their PINs.": "الباريستا ورموزهم السرية.",
-  "Pair or remove counter phones.": "اربط هواتف الكاونتر أو أزلها.",
-  "What removed phones and baristas recorded.": "ما سجّلته هواتف وباريستا أُزيلوا.",
-  "Private feedback from your customers.": "ملاحظات خاصة من زبائنك.",
-  "Your first month: customers won back, quiet-hour visits and what offers cost.": "شهرك الأول: الزبائن المسترجَعون، وزيارات ساعات الهدوء، وكلفة العروض.",
-  "Your email and password.": "بريدك الإلكتروني وكلمة المرور.",
+  More: "المزيد",
+  "{count} waiting": "{count} بالانتظار",
+  "{count} or more waiting": "{count} أو أكثر بالانتظار",
+  "{count} unread": "{count} غير مقروءة",
+  "Needs you": "بانتظارك",
+  "Visits and actions held for you to check": "زيارات وإجراءات محجوزة لتتحقق منها",
+  "Review them": "راجعها",
+  "Unread messages from customers": "رسائل غير مقروءة من الزبائن",
+  "Read them": "اقرأها",
+  "Nothing needs you right now.": "لا شيء بانتظارك الآن.",
+  "Could not check what is held for review: {message}": "تعذّر التحقق مما هو محجوز للمراجعة: {message}",
+  "Could not check your messages: {message}": "تعذّر التحقق من رسائلك: {message}",
+  "First month so far": "الشهر الأول حتى الآن",
+  "Your first month starts with your first member visit.": "يبدأ شهرك الأول مع أول زيارة أعضاء.",
+  "Member visits": "زيارات الأعضاء",
+  "Customers won back": "زبائن مسترجَعون",
+  "Quiet-hour visits": "زيارات ساعات الهدوء",
+  "Rewards redeemed": "المكافآت المستبدلة",
+  "See all results": "كل النتائج",
+  "Could not load your first month: {message}": "تعذّر تحميل شهرك الأول: {message}",
 } as const;
 
 type SessionState =
@@ -82,6 +98,23 @@ type SessionState =
   | { status: "signed-out"; notice: string | null }
   | { status: "signed-in"; session: OwnerSession }
   | { status: "unavailable"; message: string };
+
+/**
+ * The navigation: the pages an owner opens daily, always in view (a row on a phone), then the setup pages, behind More
+ * on a phone. The account is in the profile menu.
+ */
+const DAILY_PAGES = [
+  { path: "/", label: "Home" },
+  { path: "/review", label: "Review" },
+  { path: "/inbox", label: "Inbox" },
+] as const;
+const MORE_PAGES = [
+  { path: "/results", label: "Results" },
+  { path: "/cafe", label: "Café" },
+  { path: "/campaigns", label: "Campaigns" },
+  { path: "/staff", label: "Staff" },
+  { path: "/devices", label: "Devices" },
+] as const;
 
 /** The signed-in pages, by path; each is behind the session gate. */
 const OWNER_PAGES = [
@@ -296,34 +329,120 @@ function VisitHours() {
   );
 }
 
-const TILES = [
-  { path: "/cafe", label: "Café", text: "Name, loyalty program, margin and order types." },
-  { path: "/campaigns", label: "Campaigns", text: "Discounts at quiet hours, above your minimum margin." },
-  { path: "/staff", label: "Staff", text: "Baristas and their PINs." },
-  { path: "/devices", label: "Devices", text: "Pair or remove counter phones." },
-  { path: "/review", label: "Review", text: "What removed phones and baristas recorded." },
-  { path: "/inbox", label: "Inbox", text: "Private feedback from your customers." },
-  { path: "/results", label: "Results", text: "Your first month: customers won back, quiet-hour visits and what offers cost." },
-  { path: "/account", label: "Account", text: "Your email and password." },
-] as const;
+/** A count beside a navigation link or a line of Home: the number for the eye, its meaning for screen readers. */
+function Count({ count, more = false, label }: { count: number; more?: boolean; label: string }) {
+  return (
+    <>
+      <span className="count-badge" aria-hidden="true">
+        {more ? `${String(count)}+` : count}
+      </span>
+      <span className="visually-hidden"> {label}</span>
+    </>
+  );
+}
+
+/** The review queue's count: the items of its first page, "N+" (and "N or more" in words) when it has more pages. */
+function ReviewCount({ queue }: { queue: ReviewQueue }) {
+  const t = useT(AR);
+  const count = queue.items.length;
+  const more = queue.nextCursor !== null;
+  return <Count count={count} more={more} label={more ? t("{count} or more waiting", { count }) : t("{count} waiting", { count })} />;
+}
+
+/** What needs the owner now: held items and unread messages, each with its count and a link to act. */
+function NeedsYou() {
+  const t = useT(AR);
+  const api = useApiText();
+  const { review, inbox } = useContext(AttentionContext);
+  const held = review.status === "loaded" ? review.data.items.length : 0;
+  const unread = inbox.status === "loaded" ? inbox.data.unread : 0;
+  const settled = review.status !== "loading" && inbox.status !== "loading";
+  return (
+    <section aria-labelledby="needs-you-title" className="card">
+      <h3 id="needs-you-title">{t("Needs you")}</h3>
+      {review.status === "failed" ? <p className="form-error">{t("Could not check what is held for review: {message}", { message: api(review.message) })}</p> : null}
+      {inbox.status === "failed" ? <p className="form-error">{t("Could not check your messages: {message}", { message: api(inbox.message) })}</p> : null}
+      {held > 0 || unread > 0 ? (
+        <ul className="attention">
+          {review.status === "loaded" && held > 0 ? (
+            <li>
+              <ReviewCount queue={review.data} />
+              <span className="attention-text">{t("Visits and actions held for you to check")}</span>
+              <a className="action-link" href="/review">
+                {t("Review them")}
+              </a>
+            </li>
+          ) : null}
+          {unread > 0 ? (
+            <li>
+              <Count count={unread} label={t("{count} unread", { count: unread })} />
+              <span className="attention-text">{t("Unread messages from customers")}</span>
+              <a className="action-link" href="/inbox">
+                {t("Read them")}
+              </a>
+            </li>
+          ) : null}
+        </ul>
+      ) : settled && review.status === "loaded" && inbox.status === "loaded" ? (
+        <p className="hint">{t("Nothing needs you right now.")}</p>
+      ) : null}
+    </section>
+  );
+}
+
+/** The first month's main figures (AC 38), with a link to the full results. */
+function FirstMonth() {
+  const t = useT(AR);
+  const api = useApiText();
+  const [state] = useApiData("/api/results", resultsReportSchema);
+  return (
+    <section aria-labelledby="first-month-title" className="card">
+      <h3 id="first-month-title">{t("First month so far")}</h3>
+      {state.status === "failed" ? (
+        <p className="form-error">{t("Could not load your first month: {message}", { message: api(state.message) })}</p>
+      ) : state.status === "loading" ? (
+        <PageStatus state={state} />
+      ) : state.data.window === null ? (
+        <p className="hint">{t("Your first month starts with your first member visit.")}</p>
+      ) : (
+        <ul className="stats">
+          {(
+            [
+              ["Member visits", state.data.memberVisits],
+              ["Customers won back", state.data.customersWonBack],
+              ["Quiet-hour visits", state.data.quietHourVisits],
+              ["Rewards redeemed", state.data.rewardRedemptions],
+            ] as const
+          ).map(([label, value]) => (
+            <li key={label}>
+              <p className="stat-value">{value}</p>
+              <p>{t(label)}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p>
+        <a className="action-link" href="/results">
+          {t("See all results")}
+        </a>
+      </p>
+    </section>
+  );
+}
 
 function HomePage({ session }: { session: OwnerSession }) {
   const t = useT(AR);
   return (
-    <section aria-labelledby="cafe-title">
+    <section aria-labelledby="cafe-title" className="home">
       <h2 id="cafe-title">{session.cafe.name}</h2>
       <p className="page-intro">{t("Signed in as {email}", { email: session.owner.email })}</p>
       <PlanNotice />
       <WalletDeliveryNotice />
-      <VisitHours />
-      <ul className="tiles">
-        {TILES.map((tile) => (
-          <li key={tile.path}>
-            <a href={tile.path}>{t(tile.label)}</a>
-            <p>{t(tile.text)}</p>
-          </li>
-        ))}
-      </ul>
+      <NeedsYou />
+      <div className="home-columns">
+        <FirstMonth />
+        <VisitHours />
+      </div>
     </section>
   );
 }
@@ -345,17 +464,42 @@ function AccountPage({ session, onSignedOut }: { session: OwnerSession; onSigned
 
 function OwnerNav({ path }: { path: OwnerPath }) {
   const t = useT(AR);
+  const { review, inbox } = useContext(AttentionContext);
+  const [open, setOpen] = useState(false);
+  const moreId = useId();
+  const counts: Partial<Record<OwnerPath, ReactNode>> = {
+    "/review":
+review.status === "loaded" && review.data.items.length > 0 ? <ReviewCount queue={review.data} /> : null,
+    "/inbox": inbox.status === "loaded" && inbox.data.unread > 0 ? <Count count={inbox.data.unread} label={t("{count} unread", { count: inbox.data.unread })} /> : null,
+  };
+  const link = (page: { path: OwnerPath; label: (typeof OWNER_PAGES)[number]["label"] }) => (
+    <li key={page.path}>
+      <a href={page.path} aria-current={page.path === path ? "page" : undefined}>
+        <span>{t(page.label)}</span>
+        {counts[page.path]}
+      </a>
+    </li>
+  );
   return (
     <nav aria-label={t("Dashboard")} className="sidenav">
-      <ul>
-        {OWNER_PAGES.map((page) => (
-          <li key={page.path}>
-            <a href={page.path} aria-current={page.path === path ? "page" : undefined}>
-              {t(page.label)}
-            </a>
-          </li>
-        ))}
-      </ul>
+      <div className="sidenav-inner">
+        <ul className="nav-daily">{DAILY_PAGES.map(link)}</ul>
+        {/* Phones only: the setup pages open below the row. Marked when the page shown is one of them. */}
+        <button
+          type="button"
+          className={MORE_PAGES.some((page) => page.path === path) ? "nav-more is-current" : "nav-more"}
+          aria-expanded={open}
+          aria-controls={moreId}
+          onClick={() => {
+            setOpen((value) => !value);
+          }}
+        >
+          {t("More")}
+        </button>
+        <ul id={moreId} className={open ? "nav-setup is-open" : "nav-setup"}>
+          {MORE_PAGES.map(link)}
+        </ul>
+      </div>
     </nav>
   );
 }
@@ -406,7 +550,14 @@ function AuthLayout({ children, app }: { children: ReactNode; app?: "Admin" }) {
 
 /** The signed-in pages: the top bar with the café, the account and the language, the navigation, then the page. */
 function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerSession; path: OwnerPath; onSignedOut: (notice: string) => void; children: ReactNode }) {
+  const [attentionKey, setAttentionKey] = useState(0);
+  const [review] = useApiData("/api/review-queue", reviewQueueSchema, attentionKey);
+  const [inbox] = useApiData("/api/feedback", feedbackInboxSchema, attentionKey);
+  const reload = useCallback(() => {
+    setAttentionKey((key) => key + 1);
+  }, []);
   return (
+    <AttentionContext.Provider value={{ review, inbox, reload }}>
     <div className="owner-layout">
       <header className="topbar">
         <Brand />
@@ -427,6 +578,7 @@ function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerS
       <main className="owner-main">{children}</main>
       <BuildFooter />
     </div>
+    </AttentionContext.Provider>
   );
 }
 

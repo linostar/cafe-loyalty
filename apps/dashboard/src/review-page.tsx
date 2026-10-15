@@ -1,9 +1,9 @@
 import { reviewDecisionSchema, reviewQueueSchema, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, FormError, Notice, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Translate } from "./i18n.js";
-import { PageStatus, useApiData } from "./session.js";
+import { AttentionContext, PageStatus, useApiData } from "./session.js";
 
 const AR = {
   Visit: "زيارة",
@@ -135,6 +135,7 @@ export function ReviewPage() {
   const lang = useLang();
   const [reload, setReload] = useState(0);
   const [state] = useApiData("/api/review-queue", reviewQueueSchema, reload);
+  const attention = useContext(AttentionContext);
   /** Every item loaded so far (the first page, then each "Show more"), less the ones decided here. */
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -189,6 +190,8 @@ export function ReviewPage() {
                     setItems(shown.filter((entry) => entry.id !== item.id));
                     setNextCursor(cursor);
                     setNotice(decided(t, dateFormat(lang, TIME_OPTIONS), decision, item, result.value.outcome));
+                    // The navigation's count, too.
+                    attention.reload();
                   } else if (isStale(result.error)) {
                     startOver();
                   }

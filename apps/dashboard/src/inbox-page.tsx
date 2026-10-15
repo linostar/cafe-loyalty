@@ -1,9 +1,9 @@
 import { feedbackInboxSchema, feedbackReadSchema, plural, type FeedbackItem, type Lang } from "@cafe-loyalty/shared";
 import { apiRequest } from "./api.js";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { FormError, Notice, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
-import { PageStatus, useApiData } from "./session.js";
+import { AttentionContext, PageStatus, useApiData } from "./session.js";
 
 const AR = {
   New: "جديدة",
@@ -63,6 +63,7 @@ export function InboxPage() {
   const t = useT(AR);
   const lang = useLang();
   const [state, setData] = useApiData("/api/feedback", feedbackInboxSchema);
+  const attention = useContext(AttentionContext);
   const { pending, error, submit } = useSubmit();
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
@@ -99,6 +100,8 @@ export function InboxPage() {
                     document.getElementById("inbox-page-title")?.focus();
                     setNotice(() => (say: Translate<typeof AR>, shownIn: Lang) => say("The message of {received} is marked as read.", { received: dateFormat(shownIn, TIME_OPTIONS).format(new Date(item.receivedAt)) }));
                     setData({ items: items.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry)), unread: Math.max(0, unread - 1), more });
+                    // The navigation's count, too.
+                    attention.reload();
                   }
                 });
               }}

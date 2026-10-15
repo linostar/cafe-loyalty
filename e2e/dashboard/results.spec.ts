@@ -19,6 +19,8 @@ test("shows the first month's results: customers won back, quiet-hour visits, re
     }),
   });
   await page.goto("/");
+  // On a phone (the default viewport) Results is one of the setup pages behind More.
+  await page.getByRole("navigation").getByRole("button", { name: "More" }).click();
   await page.getByRole("navigation").getByRole("link", { name: "Results" }).click();
   await expect(page.getByRole("heading", { name: "First month" })).toBeVisible();
   await expect(page.getByText("So far in your first 30 days, from 20 Sept 2026 to 20 Oct 2026, still running.")).toBeVisible();

@@ -37,7 +37,14 @@ const homeData = (path: string): Response | undefined =>
       ? respond(200, visitHours())
       : path === "/api/cafe"
         ? respond(200, CAFE_SETUP)
-        : undefined;
+        : // What the layout and Home also load: the navigation's counts and the first month.
+          path === "/api/review-queue"
+          ? respond(200, { items: [], nextCursor: null })
+          : path === "/api/feedback"
+            ? respond(200, { items: [], unread: 0, more: false })
+            : path === "/api/results"
+              ? respond(200, { window: null, memberVisits: 0, customersWonBack: 0, quietHourVisits: 0, rewardRedemptions: 0, offers: { winBack: { visits: 0, costCents: 0, revenueCents: 0 }, quietHour: { visits: 0, costCents: 0, revenueCents: 0 } } })
+              : undefined;
 
 afterEach(() => {
   vi.useRealTimers();
