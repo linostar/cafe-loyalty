@@ -5,6 +5,7 @@ import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, e
 import { renderSVG } from "uqr";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, t, type Lang } from "../../apps/server/src/customer-html.js";
 import {
+  cardSettingsView,
   cardView,
   deletedView,
   errorView,
@@ -13,6 +14,7 @@ import {
   recoverView,
   restoreView,
   restoredView,
+  type CardSettingsView,
   type CardView,
   type FeedbackView,
 } from "../../apps/server/src/customer-views.js";
@@ -45,12 +47,20 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     qr: QR,
     offer: OFFER[lang],
     wallet: { kind: "google", href: "/c/fake/google-pass", badge: GOOGLE_WALLET_BADGES[lang] },
+    otherLangHref: `/c/fake?lang=${other(lang)}`,
+    feedbackHref: "/f/fake?lang=en",
+    ...overrides,
+  });
+
+const settings = (lang: Lang, overrides: Partial<CardSettingsView> = {}): string =>
+  cardSettingsView(lang, {
+    path: "/c/fake",
+    cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
     email: null,
     offersOptedIn: true,
     notice: undefined,
     errors: {},
-    otherLangHref: `/c/fake?lang=${other(lang)}`,
-    feedbackHref: "/f/fake?lang=en",
+    otherLangHref: `/c/fake/settings?lang=${other(lang)}`,
     ...overrides,
   });
 
@@ -84,9 +94,12 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ["card", (lang) => card(lang)],
   [
     "card-full",
-    (lang) => card(lang, { wallet: { kind: "apple", href: "/c/fake/apple-pass" }, stamps: 9, offer: undefined, email: "rana@example.com", notice: t(lang, "saved") }),
+    (lang) => card(lang, { wallet: { kind: "apple", href: "/c/fake/apple-pass" }, stamps: 9, offer: undefined }),
   ],
-  ["card-no-program", (lang) => card(lang, { program: undefined, stamps: 2, offer: undefined, wallet: null, offersOptedIn: false })],
+  ["card-no-program", (lang) => card(lang, { program: undefined, stamps: 2, offer: undefined, wallet: null, feedbackHref: undefined })],
+  ["card-settings", (lang) => settings(lang)],
+  ["card-settings-saved", (lang) => settings(lang, { email: "rana@example.com", offersOptedIn: false, notice: t(lang, "saved") })],
+  ["card-settings-errors", (lang) => settings(lang, { errors: { email: t(lang, "emailInvalid"), delete: t(lang, "deleteConfirmRequired") } })],
   ["recover", (lang) => recoverView(lang, false, undefined, `/recover?lang=${other(lang)}`)],
   ["recover-sent", (lang) => recoverView(lang, true, undefined, `/recover?lang=${other(lang)}`)],
   ["restore", (lang) => restoreView(lang, "/r/fake", `/r/fake?lang=${other(lang)}`)],

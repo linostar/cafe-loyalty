@@ -149,6 +149,10 @@ const MESSAGES = {
     reviewButton: "Write a Google review",
     cardFeedbackTitle: "How was your visit?",
     cardFeedbackLink: "Tell the café",
+    settingsLink: "Card settings: email, offers, delete",
+    settingsTitle: "Card settings",
+    settingsPageTitle: "Card settings at {cafe}",
+    backToCard: "Back to your card",
   },
   ar: {
     ...PASS_TEXT.ar,
@@ -226,6 +230,10 @@ const MESSAGES = {
     reviewButton: "اكتب تقييماً على Google",
     cardFeedbackTitle: "كيف كانت زيارتك؟",
     cardFeedbackLink: "أخبر المقهى",
+    settingsLink: "إعدادات البطاقة: البريد، العروض، الحذف",
+    settingsTitle: "إعدادات البطاقة",
+    settingsPageTitle: "إعدادات البطاقة في {cafe}",
+    backToCard: "العودة إلى بطاقتك",
   },
 } as const satisfies Record<Lang, Record<string, string>>;
 

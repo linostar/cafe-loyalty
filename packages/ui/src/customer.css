@@ -213,6 +213,74 @@ html[lang="en"] .kicker {
   block-size: 55px;
 }
 
+/*
+ * A link shaped like a button, for a step to another page ("Tell the café", the card's settings): full width and a
+ * control's height. `.next` puts its chevron at the inline end.
+ */
+.link-row {
+  margin-block: 0 var(--space-4);
+}
+
+.link-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-block-size: var(--control-height);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.link-button:hover {
+  border-color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
+}
+
+.link-button.next {
+  justify-content: space-between;
+}
+
+.card .link-row {
+  margin: 0;
+}
+
+/* Chevrons point the way the page reads. */
+.chevron {
+  flex: none;
+}
+
+[dir="rtl"] .chevron {
+  transform: scaleX(-1);
+}
+
+/* The settings page: back to the card, then the café and the page's title. */
+.back-row {
+  margin-block: 0 var(--space-3);
+}
+
+.back-row a {
+  gap: var(--space-1);
+}
+
+.page-title {
+  margin-block-end: var(--space-4);
+}
+
+/* Deleting the card stands apart from the other settings: a gap, a danger edge and a danger heading. */
+.danger-zone {
+  margin-block-start: var(--space-7);
+  border-color: var(--color-danger);
+}
+
+.danger-zone h2 {
+  color: var(--color-danger);
+}
+
 .aside {
   margin-block-end: var(--space-4);
   color: var(--color-text-muted);

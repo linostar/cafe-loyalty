@@ -294,7 +294,8 @@ describe("web card", () => {
     const secret = secretOf(await join(app, code, "70 123 456"));
     const saved = await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: " Rana@Example.com ", lang: "en" }) });
     expect(saved.statusCode).toBe(303);
-    expect(saved.headers.location).toBe(`/c/${secret}?lang=en&saved=1`);
+    // The forms live on the card's settings page (Step 8), so a save lands back there.
+    expect(saved.headers.location).toBe(`/c/${secret}/settings?lang=en&saved=1`);
     expect((await cardRow(secret))?.email).toBe("rana@example.com");
     expect((await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "nope", lang: "en" }) })).statusCode).toBe(400);
     await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "", lang: "en" }) });
@@ -333,8 +334,61 @@ describe("web card", () => {
   it("keeps the saved notice when switching language", async () => {
     const { app, code } = await cafeWithJoinCode();
     const secret = secretOf(await join(app, code, uniquePhone()));
-    const saved = await app.inject({ method: "GET", url: `/c/${secret}?lang=en&saved=1` });
-    expect(saved.body).toContain(`href="/c/${secret}?lang=ar&amp;saved=1"`);
+    // On the settings page, where the forms that set it now are (Step 8).
+    const saved = await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=en&saved=1` });
+    expect(saved.body).toContain('<p class="notice" role="status">Saved.</p>');
+    expect(saved.body).toContain(`href="/c/${secret}/settings?lang=ar&amp;saved=1"`);
+  });
+
+  it("links the card to its settings page, which holds the email, offers and delete forms and leads back (AC 11)", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const secret = secretOf(await join(app, code, uniquePhone()));
+    const card = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
+    expect(card).toContain(`<a class="link-button next" href="/c/${secret}/settings?lang=en"><span>Card settings: email, offers, delete</span>`);
+    expect(card).not.toContain("<form");
+
+    for (const lang of ["en", "ar"] as const) {
+      const settings = await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=${lang}` });
+      expect(settings.statusCode).toBe(200);
+      expect(settings.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+      expect(settings.headers["content-security-policy"]).toContain("default-src 'none'");
+      expect(settings.body).not.toContain("<script");
+      expect(settings.body).toContain(`<html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}">`);
+      expect(settings.body).toContain(`href="/c/${secret}?lang=${lang}"`);
+      expect(settings.body).toContain(`href="/c/${secret}/settings?lang=${lang === "ar" ? "en" : "ar"}"`);
+      for (const form of ["email", "offers", "delete"]) {
+        expect(settings.body).toContain(`<form method="post" action="/c/${secret}/${form}"`);
+      }
+      expect(settings.body).toContain('<section aria-labelledby="delete-title" class="card danger-zone">');
+    }
+    const arabic = (await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=ar` })).body;
+    expect(arabic).toContain("<h1>إعدادات البطاقة</h1>");
+    expect(arabic).toContain("العودة إلى بطاقتك");
+  });
+
+  it("answers a bad email or an unconfirmed delete on the settings page, and an unknown card's settings with not found", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const secret = secretOf(await join(app, code, uniquePhone()));
+    const badEmail = await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "nope", lang: "en" }) });
+    expect(badEmail.statusCode).toBe(400);
+    expect(badEmail.body).toContain("<h1>Card settings</h1>");
+    expect(badEmail.body).toContain('<p class="field-error" id="email-error" role="alert">Enter an email address');
+    const unconfirmed = await app.inject({ method: "POST", url: `/c/${secret}/delete`, ...formBody({ lang: "en" }) });
+    expect(unconfirmed.statusCode).toBe(400);
+    expect(unconfirmed.body).toContain("<h1>Card settings</h1>");
+    expect(unconfirmed.body).toContain('id="delete-error" role="alert">Tick the box to confirm.');
+    expect((await cardRow(secret))?.email).toBeNull();
+
+    const offers = await app.inject({ method: "POST", url: `/c/${secret}/offers`, ...formBody({ lang: "en" }) });
+    expect(offers.statusCode).toBe(303);
+    expect(offers.headers.location).toBe(`/c/${secret}/settings?lang=en&saved=1`);
+    expect((await app.inject({ method: "GET", url: String(offers.headers.location) })).body).not.toContain('name="offers" value="yes" checked');
+
+    for (const unknown of ["A".repeat(43), "short"]) {
+      const response = await app.inject({ method: "GET", url: `/c/${unknown}/settings?lang=en` });
+      expect(response.statusCode).toBe(404);
+      expect(response.body).toContain("This card link no longer works.");
+    }
   });
 
   it("answers a trailing slash and a bare path with pages, not the API's JSON", async () => {
@@ -564,8 +618,8 @@ describe("feedback", () => {
     expect(withLink.body).toContain('<textarea id="message"');
     // Arabic too.
     expect((await app.inject({ method: "GET", url: path, headers: { "accept-language": "ar" } })).body).toContain("اكتب تقييماً على Google");
-    // The web card links to the latest visit's page.
-    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).toContain(`<a class="standalone" href="${path}?lang=en">Tell the café</a>`);
+    // The web card links to the latest visit's page (a button-shaped link since Step 8; same text and target).
+    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).toContain(`<a class="link-button" href="${path}?lang=en">Tell the café</a>`);
     // Emptied: no link again.
     expect((await as("PATCH", "/api/cafe", { googleReviewUrl: "" })).json<{ cafe: { googleReviewUrl: string | null } }>().cafe.googleReviewUrl).toBeNull();
   });
