@@ -3,7 +3,7 @@ import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { renderSVG } from "uqr";
-import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, type Lang } from "../../apps/server/src/customer-html.js";
+import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, t, type Lang } from "../../apps/server/src/customer-html.js";
 import {
   cardView,
   deletedView,
@@ -33,6 +33,9 @@ const OFFER = {
   ar: { headline: "عصرية هادئة · خصم 20%", details: "من الاثنين إلى الخميس، 15:00–17:00، على اللاتيه والإسبريسو." },
 } as const;
 
+/** The language a page's switch leads to. */
+const other = (lang: Lang): Lang => (lang === "ar" ? "en" : "ar");
+
 const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
   cardView(lang, {
     path: "/c/fake",
@@ -46,7 +49,7 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     offersOptedIn: true,
     notice: undefined,
     errors: {},
-    otherLangHref: "/c/fake?lang=ar",
+    otherLangHref: `/c/fake?lang=${other(lang)}`,
     feedbackHref: "/f/fake?lang=en",
     ...overrides,
   });
@@ -59,7 +62,7 @@ const join = (lang: Lang, errors: { phone?: string; privacy?: string } = {}) =>
     formToken: "fake-form-token",
     values: errors.phone === undefined ? {} : { phone: "70 12" },
     errors,
-    otherLangHref: "/join/fake?lang=ar",
+    otherLangHref: `/join/fake?lang=${other(lang)}`,
   });
 
 const feedback = (lang: Lang, overrides: Partial<FeedbackView> = {}) =>
@@ -70,28 +73,39 @@ const feedback = (lang: Lang, overrides: Partial<FeedbackView> = {}) =>
     state: "form",
     message: "",
     error: undefined,
-    otherLangHref: "/f/fake?lang=ar",
+    otherLangHref: `/f/fake?lang=${other(lang)}`,
     ...overrides,
   });
 
-const PAGES: readonly [name: string, html: string][] = [
-  ["join-en", join("en")],
-  ["join-ar", join("ar")],
-  ["join-errors-en", join("en", { phone: "Enter a mobile number, such as 70 123 456 or +961 70 123 456.", privacy: "Tick the box to accept the privacy notice." })],
-  ["card-en", card("en")],
-  ["card-ar", card("ar", { wallet: { kind: "apple", href: "/c/fake/apple-pass" }, stamps: 9, offer: undefined, email: "rana@example.com", notice: "تم الحفظ." })],
-  ["card-no-program-en", card("en", { program: undefined, stamps: 2, offer: undefined, wallet: null, offersOptedIn: false })],
-  ["recover-en", recoverView("en", false, undefined, "/recover?lang=ar")],
-  ["recover-sent-ar", recoverView("ar", true, undefined, "/recover?lang=en")],
-  ["restore-en", restoreView("en", "/r/fake", "/r/fake?lang=ar")],
-  ["restored-en", restoredView("en", [{ href: "/c/one", label: "Café Najjar" }, { href: "/c/two", label: "Bean There" }])],
-  ["deleted-ar", deletedView("ar", "/recover?lang=en")],
-  ["feedback-en", feedback("en")],
-  ["feedback-ar", feedback("ar")],
-  ["feedback-no-review-en", feedback("en", { reviewUrl: null, message: "", error: "Write a message before you send it." })],
-  ["feedback-sent-en", feedback("en", { state: "sent" })],
-  ["error-en", errorView("en", "This card link no longer works. If you restored your card on another phone, use the new link there.", "/c/fake?lang=ar")],
+/** Every customer page and state, each rendered in both languages (named `<view>-<lang>`), messages from the real catalog. */
+const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
+  ["join", (lang) => join(lang)],
+  ["join-errors", (lang) => join(lang, { phone: t(lang, "phoneInvalid"), privacy: t(lang, "privacyRequired") })],
+  ["card", (lang) => card(lang)],
+  [
+    "card-full",
+    (lang) => card(lang, { wallet: { kind: "apple", href: "/c/fake/apple-pass" }, stamps: 9, offer: undefined, email: "rana@example.com", notice: t(lang, "saved") }),
+  ],
+  ["card-no-program", (lang) => card(lang, { program: undefined, stamps: 2, offer: undefined, wallet: null, offersOptedIn: false })],
+  ["recover", (lang) => recoverView(lang, false, undefined, `/recover?lang=${other(lang)}`)],
+  ["recover-sent", (lang) => recoverView(lang, true, undefined, `/recover?lang=${other(lang)}`)],
+  ["restore", (lang) => restoreView(lang, "/r/fake", `/r/fake?lang=${other(lang)}`)],
+  [
+    "restored",
+    (lang) =>
+      restoredView(lang, [
+        { href: "/c/one", label: lang === "ar" ? "مقهى النجار" : "Café Najjar" },
+        { href: "/c/two", label: "Bean There" },
+      ]),
+  ],
+  ["deleted", (lang) => deletedView(lang, `/recover?lang=${other(lang)}`)],
+  ["feedback", (lang) => feedback(lang)],
+  ["feedback-no-review", (lang) => feedback(lang, { reviewUrl: null, message: "", error: t(lang, "feedbackEmpty") })],
+  ["feedback-sent", (lang) => feedback(lang, { state: "sent" })],
+  ["error", (lang) => errorView(lang, t(lang, "cardGone"), `/c/fake?lang=${other(lang)}`)],
 ];
+
+const PAGES = VIEWS.flatMap(([name, view]) => (["en", "ar"] as const).map((lang) => ({ name: `${name}-${lang}`, html: view(lang), lang })));
 
 /** Serves `html` at the origin's root as the server would, with the customer pages' fonts and logo next to it. */
 async function serve(page: Page, html: string): Promise<{ blocked: string[] }> {
@@ -128,7 +142,7 @@ for (const width of [1440, 1024, 390, 320] as const) {
   test.describe(`customer pages at ${String(width)} px`, () => {
     test.use({ viewport: { width, height: width <= 390 ? 844 : 900 }, isMobile: width <= 390, hasTouch: width <= 390 });
 
-    for (const [name, html] of PAGES) {
+    for (const { name, html, lang } of PAGES) {
       test(name, async ({ page }, testInfo) => {
         const { blocked } = await serve(page, html);
         await page.goto(`${ORIGIN}/`);
@@ -138,7 +152,7 @@ for (const width of [1440, 1024, 390, 320] as const) {
         expect(await page.evaluate(() => document.fonts.check('16px "IBM Plex Sans Arabic"'))).toBe(true);
         expect(blocked).toEqual([]);
         await capture(page, testInfo, `customer-${name}-${String(width)}`);
-        await expectLanguageAndFit(page, name.includes("-ar") ? "ar" : "en");
+        await expectLanguageAndFit(page, lang);
         await expectEveryControlNamed(page);
         await expectNoAxeViolations(page);
         await expectTouchTargets(page);

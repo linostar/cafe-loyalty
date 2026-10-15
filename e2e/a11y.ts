@@ -78,7 +78,10 @@ export async function expectTouchTargets(page: Page): Promise<void> {
     return [...controls].flatMap((control) => {
       const choice = control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio");
       const box = (choice ? (control.closest("label") ?? control) : control).getBoundingClientRect();
-      const inSentence = control instanceof HTMLAnchorElement && (control.parentElement?.textContent.trim().length ?? 0) > (control.textContent.trim().length);
+      // In a sentence: its parent holds text of its own beside its links (two links side by side are still targets).
+      const inSentence =
+        control instanceof HTMLAnchorElement &&
+        [...(control.parentElement?.childNodes ?? [])].some((node) => !(node instanceof HTMLAnchorElement) && (node.textContent ?? "").trim() !== "");
       if (box.width <= 1 || box.height <= 1 || inSentence) {
         return [];
       }
@@ -90,7 +93,8 @@ export async function expectTouchTargets(page: Page): Promise<void> {
 
 /**
  * Under forced colours (Windows high contrast) the browser drops backgrounds and shadows, so every button and field
- * needs a border of its own to be seen as one, and the keyboard focus must still show (an outline, not a shadow).
+ * needs a border of its own to be seen as one, and every control the keyboard reaches must still show its focus: an
+ * outline on the control or on the element that draws its ring (a tile's list item, through `:focus-within`).
  */
 export async function expectUsableInForcedColors(page: Page): Promise<void> {
   await page.emulateMedia({ forcedColors: "active" });
@@ -106,15 +110,38 @@ export async function expectUsableInForcedColors(page: Page): Promise<void> {
   expect(borderless, "controls with no border under forced colours").toEqual([]);
   await page.evaluate(() => {
     (document.activeElement as HTMLElement | null)?.blur();
+    window.scrollTo(0, 0);
+    (globalThis as unknown as { ringsSeen?: WeakSet<Element> }).ringsSeen = new WeakSet();
   });
-  // From a blurred control at the page's end, the first Tab can leave for the browser's own controls.
-  for (let step = 0; step < 3 && (await page.evaluate(() => document.activeElement === document.body)); step++) {
+  const unringed: string[] = [];
+  // Tab through the page once: it ends when focus leaves the page (the body again) or comes back to a control already seen.
+  for (let step = 0, started = false; step < 300; step++) {
     await page.keyboard.press("Tab");
+    const state = await page.evaluate(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        return "body";
+      }
+      const seen = (globalThis as unknown as { ringsSeen: WeakSet<Element> }).ringsSeen;
+      if (seen.has(active)) {
+        return "again";
+      }
+      seen.add(active);
+      for (let node: Element | null = active; node !== null && node !== document.body; node = node.parentElement) {
+        if (getComputedStyle(node).outlineStyle !== "none") {
+          return "ringed";
+        }
+      }
+      return active.outerHTML.slice(0, 80);
+    });
+    if (state === "again" || (state === "body" && started)) {
+      break;
+    }
+    started ||= state !== "body";
+    if (state !== "body" && state !== "ringed") {
+      unringed.push(state);
+    }
   }
-  const focused = await page.evaluate(() => {
-    const active = document.activeElement ?? document.body;
-    return { control: active.outerHTML.slice(0, 80), outline: active === document.body ? "none" : getComputedStyle(active).outlineStyle };
-  });
-  expect(focused.outline, `focus ring under forced colours on ${focused.control}`).not.toBe("none");
+  expect(unringed, "controls with no focus ring under forced colours").toEqual([]);
   await page.emulateMedia({ forcedColors: "none" });
 }

@@ -176,7 +176,7 @@ for (const { width, height } of WIDTHS) {
 /** The counter in Arabic (AC 41): each screen right to left, fitting the width, every control named. */
 for (const { width, height } of [WIDTHS[1], WIDTHS[3], WIDTHS[4]]) {
   test.describe(`in Arabic at ${String(width)} px`, () => {
-    test.use({ locale: "ar-LB", viewport: { width, height }, isMobile: width === 390, hasTouch: true });
+    test.use({ locale: "ar-LB", viewport: { width, height }, isMobile: width <= 390, hasTouch: true });
 
     test("pairing, who is working, PIN, an order, and offline", async ({ page, context }, testInfo) => {
       const check = async (name: string) => {
@@ -192,7 +192,11 @@ for (const { width, height } of [WIDTHS[1], WIDTHS[3], WIDTHS[4]]) {
       await expect(page.getByRole("button", { name: "Rami" })).toBeVisible();
       await check("who");
       await page.getByRole("button", { name: "Rami" }).click();
-      // Typed on an Arabic keypad: the same PIN.
+      // A wrong PIN first, then the right one typed on an Arabic keypad.
+      await page.getByLabel("الرمز السري", { exact: true }).fill("١١١١١١");
+      await page.getByRole("button", { name: "تسجيل الدخول" }).click();
+      await expect(page.getByRole("alert")).toBeVisible();
+      await check("pin-wrong");
       await page.getByLabel("الرمز السري", { exact: true }).fill("٤٨٢٩١٣");
       await check("pin");
       await page.getByRole("button", { name: "تسجيل الدخول" }).click();

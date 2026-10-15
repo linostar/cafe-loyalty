@@ -28,7 +28,7 @@ Sources: the product plan (users, acceptance criteria) and the layout redesign p
 
 | | |
 |---|---|
-| Context | Shared café phone or tablet propped by the till, one hand often busy. Queue at peak, noise, glare, power and internet cuts. May be a part-timer or a relative helping out. Arabic or English per person. Picks their name, enters a 6-digit PIN. |
+| Context | Shared café phone or tablet propped by the till, one hand often busy. Queue at peak, noise, glare, power and internet cuts. May be a part-timer or a relative helping out. Arabic or English per person. Picks their name, enters a PIN of 6 to 12 digits. |
 | Goals | Stamp a visit in seconds without holding up the queue. Never lose a stamp when offline. Redeem a reward without an argument with the customer. |
 | Frustrations | Scrolling to find the button. Small targets. Status text that wraps and pushes content down. Not knowing whether a stamp "went through" while offline. Being blamed for refusals the system made (cooldown, cap). |
 | Design implications | One-screen flow at 390x844: compact one-row top bar, order total and Record visit always visible in a bottom action bar. Focus moves to Record after a scan. 44 px targets. Offline state as a short pill, with the queue count. Refusals say what happened and what to do next. |
@@ -129,7 +129,7 @@ Severity: 4 blocks the task, 3 major, 2 minor, 1 cosmetic. Priority = frequency 
 
 ### Automation gaps
 
-None of these is checked today; each lets regressions through unseen (redesign AC 3, 4):
+The baseline before the redesign: none of these was checked, so each let regressions through unseen. The redesign's first pull request adds every check below to the screens specs (redesign AC 3, 4).
 
 | Gap | WCAG 2.2 SC | Planned check |
 |---|---|---|
