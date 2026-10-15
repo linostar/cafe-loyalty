@@ -65,7 +65,15 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
 
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await expect(card.getByRole("button", { name: "Save plan" })).toBeDisabled();
+  // A disabled Save plan says why, on screen and in its description; a new choice enables it and the reason goes (AC 10).
+  await expect(card.getByRole("button", { name: "Save plan" })).toHaveAccessibleDescription("Choose another plan to save.");
+  await expect(card.getByText("Choose another plan to save.")).toBeVisible();
+  // The day paid is plain text in the form the server reads, today's by default: no date picker in the computer's own format.
+  await expect(card.getByLabel("Paid on")).toHaveAttribute("type", "text");
+  await expect(card.getByLabel("Paid on")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
   await card.getByRole("group", { name: "Plan of Café Najjar" }).getByLabel("Suspended").check();
+  await expect(card.getByRole("button", { name: "Save plan" })).toBeEnabled();
+  await expect(card.getByText("Choose another plan to save.")).toHaveCount(0);
   await expect(card.getByText("Its signup page enrols no one; its counter still records and syncs visits.")).toBeVisible();
   await card.getByRole("button", { name: "Save plan" }).click();
   await expect(page.getByRole("status")).toHaveText("Café Najjar is now on the suspended plan.");
@@ -272,7 +280,8 @@ test("shows a refused payment's reason by its field, and a failed sign-out in th
   await card.getByLabel("Paid on").fill("2025-06-01");
   await card.getByRole("button", { name: "Record payment" }).click();
   await expect(card.getByLabel("Paid on")).toHaveAttribute("aria-invalid", "true");
-  await expect(card.getByLabel("Paid on")).toHaveAccessibleDescription("Use the day the café paid, from 2026 up to today.");
+  // The field's format hint, then the server's reason (the hint is new with the text field, AC 10).
+  await expect(card.getByLabel("Paid on")).toHaveAccessibleDescription("Year-month-day, such as 2026-10-01. Use the day the café paid, from 2026 up to today.");
   await expect(card.getByLabel("Amount (USD)")).toHaveValue("25");
   await page.getByRole("button", { name: "Profile: operator@example.com" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();

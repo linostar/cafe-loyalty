@@ -24,13 +24,13 @@ const AR = {
   "at {time} {reason}: {staff} on {device}.": "في {time} {reason}: {staff} على {device}.",
   "It also has a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).":
     "وفيه أيضاً خصم لم تسمح به حملته أو عرض الاسترجاع على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك).",
-  "Accept {what}": "قبول {what}",
-  "Yes, accept {what}": "نعم، اقبل {what}",
-  "Discard {what}": "إهمال {what}",
-  "Yes, discard {what}": "نعم، أهمل {what}",
+  Accept: "قبول",
+  "Yes, accept": "نعم، اقبل",
+  Discard: "إهمال",
+  "Yes, discard": "نعم، أهمل",
   Review: "المراجعة",
-  "When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example). Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for nothing.":
-    "عندما تزيل هاتفاً أو باريستا، ينتظر هنا ما سجّلوه ولم يرسلوه بعد بدل أن يُحتسب، وكذلك الزيارات التي أرسلها هاتف بعد أكثر من يومين من حدوثها، والزيارات التي فيها خصم لم تسمح به حملتها أو عرض الاسترجاع (هاتف لم يعلم بانتهاء الحملة، أو بطاقة بلا عرض، مثلاً). اقبل ما تثق به وأهمل الباقي: الزيارة المقبولة تُحتسب وتضيف أختامها ويبقى خصمها مسجّلاً، والمُهملة لا تُحتسب.",
+  "Visits and reports held for you to check. Accept counts one and adds its stamps; Discard drops it.":
+    "زيارات وتقارير محجوزة لتتحقق منها. القبول يحتسبها ويضيف أختامها، والإهمال يلغيها.",
   "Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.":
     "لا شيء للمراجعة. ما ترسله الهواتف أو الباريستا الذين أُزيلوا، والزيارات المحتجزة عند المزامنة، ينتظرك هنا.",
   "Show more": "عرض المزيد",
@@ -90,6 +90,7 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
   const t = useT(AR);
   const timeFormat = dateFormat(useLang(), TIME_OPTIONS);
   const what = describe(t, timeFormat, item);
+  const hidden = <span className="visually-hidden"> {what}</span>;
   return (
     <li tabIndex={-1} data-review-id={item.id} className="review-item">
       <strong>{typeLabel(t, item)}</strong>{" "}
@@ -108,17 +109,38 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
         </>
       ) : null}
       <div className="actions">
+        {/* Short visible labels; the item's description, hidden, keeps each button's name its own (WCAG 2.5.3: it starts with what is shown). */}
         <ConfirmButton
-          label={t("Accept {what}", { what })}
-          confirmLabel={t("Yes, accept {what}", { what })}
+          label={
+            <>
+              {t("Accept")}
+              {hidden}
+            </>
+          }
+          confirmLabel={
+            <>
+              {t("Yes, accept")}
+              {hidden}
+            </>
+          }
           pending={pending}
           onConfirm={() => {
             onDecide("accept");
           }}
         />
         <ConfirmButton
-          label={t("Discard {what}", { what })}
-          confirmLabel={t("Yes, discard {what}", { what })}
+          label={
+            <>
+              {t("Discard")}
+              {hidden}
+            </>
+          }
+          confirmLabel={
+            <>
+              {t("Yes, discard")}
+              {hidden}
+            </>
+          }
           pending={pending}
           onConfirm={() => {
             onDecide("discard");
@@ -167,9 +189,7 @@ export function ReviewPage() {
         {t("Review")}
       </h2>
       <p className="page-intro">
-        {t(
-          "When you remove a phone or a barista, what they recorded and had not yet sent waits here instead of counting, as do visits a phone sent more than two days after they happened and visits with a discount their campaign or win-back offer did not allow (a phone that had not heard the campaign ended, or a card without the offer, for example). Accept what you trust and discard the rest: an accepted visit counts and adds its stamps, its discount kept on record; a discarded one counts for nothing.",
-        )}
+        {t("Visits and reports held for you to check. Accept counts one and adds its stamps; Discard drops it.")}
       </p>
       {notice === null ? null : <Notice>{notice}</Notice>}
       <FormError message={error} />

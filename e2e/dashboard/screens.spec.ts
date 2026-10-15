@@ -1,5 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectUsableInForcedColors } from "../a11y.js";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectUsableInForcedColors, shownText } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { FAKE_TOKEN, SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
@@ -221,6 +221,93 @@ for (const { lang, locale } of LANGS) {
           await check(page);
         });
       }
+    });
+  }
+}
+
+/** The Café page's sections, the Review page's short labels and the admin café page's layout (redesign AC 8, 9, 10), in both languages. */
+const LAYOUT_TEXT = {
+  en: { sections: "Sections of this page", names: ["Program", "Menu", "Offers and win-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
+  ar: { sections: "أقسام هذه الصفحة", names: ["البرنامج", "القائمة", "العروض والاسترجاع", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
+} as const;
+
+for (const { lang, locale } of LANGS) {
+  for (const width of [1440, 390] as const) {
+    test.describe(`${lang} at ${String(width)} px: page layout`, () => {
+      test.use({ locale, viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
+      const text = LAYOUT_TEXT[lang];
+
+      test("the Café page's sections are listed at its top, each card full width and stacked, fields at a readable width", async ({ page }) => {
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/cafe");
+        const links = page.getByRole("navigation", { name: text.sections }).getByRole("link");
+        await expect(links).toHaveText([...text.names]);
+        for (const [index, name] of text.names.entries()) {
+          const section = page.getByRole("region", { name, exact: true });
+          await expect(section).toHaveAttribute("id", ((await links.nth(index).getAttribute("href")) ?? "").slice(1));
+          // Every card takes the section's width, each below the one before.
+          const boxes = await section.locator(".stack > *").evaluateAll((cards) =>
+            cards.map((card) => {
+              const { width, top, bottom } = card.getBoundingClientRect();
+              return { width, top, bottom };
+            }),
+          );
+          const stack = await section.locator(".stack").evaluate((element) => element.getBoundingClientRect().width);
+          expect(boxes.length).toBeGreaterThan(0);
+          for (const [at, box] of boxes.entries()) {
+            expect(Math.abs(box.width - stack)).toBeLessThanOrEqual(1);
+            expect(box.top).toBeGreaterThanOrEqual(at === 0 ? 0 : (boxes[at - 1]?.bottom ?? 0));
+          }
+        }
+        // Fields stay at most the narrow content width (30rem), however wide the card.
+        const widest = await page.locator(".settings-section input:not([type='radio'], [type='checkbox'])").evaluateAll((inputs) => Math.max(...inputs.map((input) => input.getBoundingClientRect().width)));
+        expect(widest).toBeLessThanOrEqual(480);
+        // A link in the list takes the page to its section.
+        await links.nth(1).click();
+        await expect(page).toHaveURL(/#menu$/);
+        await expect(page.getByRole("heading", { level: 3, name: text.names[1], exact: true })).toBeInViewport();
+      });
+
+      test("Review shows short labels, and the buttons' names still say which item", async ({ page }) => {
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/review");
+        for (const [label, shown] of [
+          [/^Accept Visit by |^قبول .*Rami/, text.accept],
+          [/^Discard Visit by |^إهمال .*Rami/, text.discard],
+        ] as const) {
+          const buttons = page.getByRole("button", { name: label });
+          await expect(buttons).toHaveCount(2);
+          for (const button of await buttons.all()) {
+            expect(await shownText(button)).toBe(shown);
+          }
+        }
+      });
+
+      test("the admin café page is centred, its payments caption starts with its table, and a disabled Save plan says why", async ({ page }) => {
+        await mockApi(page, ADMIN);
+        await page.goto(ADMIN_PATHS[1]);
+        await expect(page.getByRole("table")).toBeVisible();
+        const main =await page.getByRole("main").evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          return { start: box.left, end: document.documentElement.clientWidth - box.right };
+        });
+        expect(Math.abs(main.start - main.end)).toBeLessThanOrEqual(1);
+        // The caption's text begins where the first column's does, at the table's start in either direction.
+        const edges = await page.getByRole("table").evaluate((table, rtl) => {
+          const textEdge = (element: Element) => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            const box = range.getBoundingClientRect();
+            return rtl ? box.right : box.left;
+          };
+          const caption = table.querySelector("caption");
+          const header = table.querySelector("th");
+          return caption === null || header === null ? null : { caption: textEdge(caption), header: textEdge(header) };
+        }, lang === "ar");
+        expect(edges).not.toBeNull();
+        expect(Math.abs((edges?.caption ?? 0) - (edges?.header ?? 1000))).toBeLessThanOrEqual(1);
+        await expect(page.getByRole("button", { name: /^Save plan|^حفظ الخطة/ })).toHaveAccessibleDescription(lang === "ar" ? "اختر خطة أخرى لحفظها." : "Choose another plan to save.");
+      });
     });
   }
 }

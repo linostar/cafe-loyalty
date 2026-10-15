@@ -8,7 +8,7 @@ interface FieldProps {
   /** Text, or text with a visually hidden part that tells repeated fields apart. */
   label: ReactNode;
   name: string;
-  type: "email" | "password" | "text" | "url" | "date";
+  type: "email" | "password" | "text" | "url";
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;
@@ -157,9 +157,10 @@ export function useLinkToken(name: string): string | null {
 
 /**
  * A button that asks again before a change that cannot be undone from here (revoking a device or a barista).
- * The second step is in the page, not a browser dialog, so it works with a keyboard and screen readers.
+ * The second step is in the page, not a browser dialog, so it works with a keyboard and screen readers. A label may hide
+ * part of itself (`.visually-hidden`) to keep a short visible text and a name that tells the item apart.
  */
-export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { label: string; confirmLabel: string; pending: boolean; onConfirm: () => void }) {
+export function ConfirmButton({ label, confirmLabel, pending, onConfirm }: { label: ReactNode; confirmLabel: ReactNode; pending: boolean; onConfirm: () => void }) {
   const t = useCommonT();
   const [asking, setAsking] = useState(false);
   const container = useRef<HTMLSpanElement>(null);

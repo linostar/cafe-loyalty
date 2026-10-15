@@ -168,6 +168,18 @@
   padding: var(--space-5) var(--space-4) var(--space-7);
 }
 
+/* The operator's pages: the shared centred column (base.css `.page`) at the medium width, for forms and lists. */
+.admin-main {
+  grid-area: main;
+  padding-block: var(--space-5) var(--space-7);
+}
+
+@media (min-width: 40rem) {
+  .admin-main {
+    padding-block-start: var(--space-6);
+  }
+}
+
 @media (min-width: 40rem) {
   .topbar {
     padding-inline: var(--space-5);
@@ -296,12 +308,14 @@
 }
 
 /* Pages */
-.owner-main > section > h2 {
+.owner-main > section > h2,
+.admin-main > section > h2 {
   margin-block-end: var(--space-2);
   font-size: var(--text-2xl);
 }
 
-.owner-main > h2 {
+.owner-main > h2,
+.admin-main > h2 {
   margin-block-end: var(--space-4);
   font-size: var(--text-2xl);
 }
@@ -313,7 +327,8 @@
 }
 
 /* A heading between cards, such as Counter phones or Running. */
-.owner-main section > h3:not(:first-child) {
+.owner-main section > h3:not(:first-child),
+.admin-main section > h3:not(:first-child) {
   margin-block-start: var(--space-6);
 }
 
@@ -322,17 +337,56 @@
   margin-block-end: var(--space-3);
 }
 
-/* Cards side by side where they fit, each as tall as its content. */
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
-  align-items: start;
-  gap: var(--space-4);
-  margin-block-end: var(--space-4);
+/*
+ * The Café page: its sections listed at the top as links to each, then one section after another, each card full width
+ * under the one before (never side by side), its fields and hints kept to a readable width.
+ */
+.section-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--section-gap);
+  padding: 0;
+  list-style: none;
 }
 
-.card-grid > .card {
-  margin: 0;
+.section-list a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--control-height);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.section-list a:hover {
+  background: var(--color-surface-sunken);
+}
+
+.settings-section h3.section-title {
+  margin-block: 0 var(--space-3);
+  font-size: var(--text-xl);
+}
+
+/* Room above a section's heading when the in-page list jumps to it. */
+.settings-section {
+  scroll-margin-block-start: var(--space-4);
+}
+
+.settings-section .card h4 {
+  font-size: var(--text-lg);
+}
+
+.settings-section .field {
+  max-inline-size: var(--content-narrow);
+}
+
+.settings-section .card > p {
+  max-inline-size: var(--content-medium);
 }
 
 .field {
@@ -669,6 +723,13 @@ form > .actions {
   inline-size: 100%;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
+}
+
+/* A table's caption starts where its first column's text does, like the table, never centred over it. */
+.table-scroll caption {
+  padding: var(--space-2) var(--space-3);
+  font-weight: var(--weight-semibold);
+  text-align: start;
 }
 
 .table-scroll th,

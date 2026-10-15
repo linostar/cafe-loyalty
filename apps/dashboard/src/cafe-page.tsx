@@ -9,7 +9,7 @@ import {
   type OrderType,
   type WinBackSettings,
 } from "@cafe-loyalty/shared";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
@@ -81,8 +81,12 @@ const AR = {
   "Replace code": "استبدال الرمز",
   "Yes, replace the code": "نعم، استبدل الرمز",
   Café: "المقهى",
-  "Your café's name, loyalty program, margin, win-back offer, Google review link and menu.": "اسم مقهاك، وبرنامج الولاء، والهامش، وعرض الاسترجاع، ورابط التقييم على Google، وقائمة الأصناف.",
-  "Order types": "أنواع الطلبات",
+  "Your program, menu and offers. Each part saves on its own.": "برنامجك وقائمتك وعروضك. يُحفظ كل جزء وحده.",
+  "Sections of this page": "أقسام هذه الصفحة",
+  Program: "البرنامج",
+  Menu: "القائمة",
+  "Offers and win-back": "العروض والاسترجاع",
+  "Signup and reviews": "التسجيل والتقييمات",
   "No order types yet. Add what baristas stamp, such as an espresso drink.": "لا أنواع طلبات بعد. أضف ما يمنح الباريستا عليه أختاماً، مثل مشروب إسبريسو.",
 } as const;
 
@@ -106,7 +110,7 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
         void submit(() => save("PATCH", "/api/cafe", { name: value }));
       }}
     >
-      <h3 id="cafe-name-title">{t("Café name")}</h3>
+      <h4 id="cafe-name-title">{t("Café name")}</h4>
       <FormError message={error} />
       <Field label={t("Name")} name="name" type="text" value={value} onChange={setValue} maxLength={120} error={fieldErrors.name} />
       <button type="submit" disabled={pending}>
@@ -130,7 +134,7 @@ function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | n
         void submit(() => save("PATCH", "/api/cafe", { googleReviewUrl: value }));
       }}
     >
-      <h3 id="review-link-title">{t("Google review link")}</h3>
+      <h4 id="review-link-title">{t("Google review link")}</h4>
       <p className="hint">
         {t(
           'About two hours after a visit, each customer\'s card links to a feedback page. Every customer sees this link there, beside a private message to you. Find it in your Google Business Profile under "Ask for reviews".',
@@ -176,7 +180,7 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
         void submit(() => save("PUT", "/api/cafe/program", { stampsRequired, rewardNameEn: rewardEn, rewardNameAr: rewardAr }));
       }}
     >
-      <h3 id="program-title">{t("Loyalty program")}</h3>
+      <h4 id="program-title">{t("Loyalty program")}</h4>
       {program === null ? <p>{t("Set the program before baristas start giving stamps.")}</p> : null}
       <FormError message={error} />
       <Field
@@ -226,7 +230,7 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
         }
       }}
     >
-      <h3 id="margin-title">{t("Minimum margin")}</h3>
+      <h4 id="margin-title">{t("Minimum margin")}</h4>
       <FormError message={error} />
       <Field
         label={t("Minimum margin over cost (%)")}
@@ -282,7 +286,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         void submit(() => save("PUT", "/api/cafe/win-back", body));
       }}
     >
-      <h3 id="win-back-title">{t("Win-back offer")}</h3>
+      <h4 id="win-back-title">{t("Win-back offer")}</h4>
       <p className="hint">
         {t(
           "When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for {days} days, if they agreed to receive offers. It never takes an item below its minimum margin.",
@@ -531,9 +535,9 @@ function SignupQr() {
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(state.data.joinUrl, { border: 4 }))}`;
   return (
     <section aria-labelledby="signup-qr-title" className="card">
-      <h3 id="signup-qr-title" tabIndex={-1} data-focus-after-change>
+      <h4 id="signup-qr-title" tabIndex={-1} data-focus-after-change>
         {t("Customer signup QR")}
-      </h3>
+      </h4>
       <p className="hint">{t("Print this and put it at the counter. Customers scan it to get their loyalty card.")}</p>
       <div className="signup-qr-box">
         <img className="signup-qr" src={qr} alt={t("QR code customers scan to get a loyalty card")} width={200} height={200} />
@@ -559,7 +563,27 @@ function SignupQr() {
   );
 }
 
-/** `/cafe`: the café's name, loyalty program and order types (AC 1). */
+/** The Café page's sections, in order, as the in-page list links to them. */
+const SECTIONS = [
+  ["program", "Program"],
+  ["menu", "Menu"],
+  ["offers", "Offers and win-back"],
+  ["signup", "Signup and reviews"],
+] as const;
+
+function SettingsSection({ id, title, children }: { id: (typeof SECTIONS)[number][0]; title: (typeof SECTIONS)[number][1]; children: ReactNode }) {
+  const t = useT(AR);
+  return (
+    <section id={id} aria-labelledby={`${id}-section-title`} className="section settings-section">
+      <h3 id={`${id}-section-title`} className="section-title">
+        {t(title)}
+      </h3>
+      <div className="stack">{children}</div>
+    </section>
+  );
+}
+
+/** `/cafe`: the café's name, loyalty program, menu, offers and signup, in sections (AC 1). */
 export function CafePage() {
   const t = useT(AR);
   const [state, setSetup] = useApiData("/api/cafe", cafeSetupSchema);
@@ -578,31 +602,46 @@ export function CafePage() {
   };
 
   return (
-    <section aria-labelledby="cafe-page-title">
+    <section aria-labelledby="cafe-page-title" className="cafe-settings">
       <h2 id="cafe-page-title">{t("Café")}</h2>
-      <p className="page-intro">{t("Your café's name, loyalty program, margin, win-back offer, Google review link and menu.")}</p>
+      <p className="page-intro">{t("Your program, menu and offers. Each part saves on its own.")}</p>
       {saved === null ? null : <Notice>{saved(t, lang)}</Notice>}
-      <div className="card-grid">
+      <nav aria-label={t("Sections of this page")}>
+        <ul className="section-list">
+          {SECTIONS.map(([id, title]) => (
+            <li key={id}>
+              <a href={`#${id}`}>{t(title)}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      {/* One section per part of the café, each card full width under the one before (never side by side). */}
+      <SettingsSection id="program" title="Program">
         <CafeNameForm name={setup.cafe.name} save={save} />
-        <SignupQr />
         <ProgramForm program={setup.program} save={save} />
+      </SettingsSection>
+      <SettingsSection id="menu" title="Menu">
+        <div className="card">
+          {setup.orderTypes.length === 0 ? (
+            <p className="empty">{t("No order types yet. Add what baristas stamp, such as an espresso drink.")}</p>
+          ) : (
+            <ul className="items">
+              {setup.orderTypes.map((orderType) => (
+                <OrderTypeItem key={orderType.id} orderType={orderType} save={save} />
+              ))}
+            </ul>
+          )}
+          <OrderTypeForm save={save} />
+        </div>
+      </SettingsSection>
+      <SettingsSection id="offers" title="Offers and win-back">
         <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
         <WinBackForm winBack={setup.cafe.winBack} save={save} />
+      </SettingsSection>
+      <SettingsSection id="signup" title="Signup and reviews">
+        <SignupQr />
         <ReviewLinkForm googleReviewUrl={setup.cafe.googleReviewUrl} save={save} />
-      </div>
-      <section aria-labelledby="order-types-title" className="card">
-        <h3 id="order-types-title">{t("Order types")}</h3>
-        {setup.orderTypes.length === 0 ? (
-          <p className="empty">{t("No order types yet. Add what baristas stamp, such as an espresso drink.")}</p>
-        ) : (
-          <ul className="items">
-            {setup.orderTypes.map((orderType) => (
-              <OrderTypeItem key={orderType.id} orderType={orderType} save={save} />
-            ))}
-          </ul>
-        )}
-        <OrderTypeForm save={save} />
-      </section>
+      </SettingsSection>
     </section>
   );
 }
