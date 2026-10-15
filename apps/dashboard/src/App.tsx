@@ -10,14 +10,13 @@ import {
   reviewQueueSchema,
   visitHoursSchema,
   walletDeliveriesSchema,
-  type FeedbackInbox,
   type OperatorSession,
   type OwnerSession,
   type ReviewQueue,
   type VisitHours as VisitHoursData,
 } from "@cafe-loyalty/shared";
 import logoUrl from "@cafe-loyalty/ui/logo.svg";
-import { createContext, useCallback, useContext, useEffect, useId, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useState, type ReactNode } from "react";
 import { AdminArea } from "./admin-page.js";
 import { ApiRequestError, apiRequest } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
@@ -30,7 +29,7 @@ import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
 import { ProfileMenu } from "./profile-menu.js";
 import { ChangePasswordForm } from "./password-form.js";
-import { PageStatus, SessionEndedContext, useApiData, type ApiData } from "./session.js";
+import { AttentionContext, PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
 const AR = {
@@ -74,6 +73,7 @@ const AR = {
   "Signed in as {email}": "مسجّل الدخول باسم {email}",
   More: "المزيد",
   "{count} waiting": "{count} بالانتظار",
+  "{count} or more waiting": "{count} أو أكثر بالانتظار",
   "{count} unread": "{count} غير مقروءة",
   "Needs you": "بانتظارك",
   "Visits and actions held for you to check": "زيارات وإجراءات محجوزة لتتحقق منها",
@@ -329,18 +329,6 @@ function VisitHours() {
   );
 }
 
-/**
- * What waits for the owner, from the lists the API already serves: visits and actions held for review (a page of the
- * queue; `more` when it has more pages) and unread customer messages. Loaded once per page by the layout, for the
- * navigation's counts and Home.
- */
-interface Attention {
-  review: ApiData<ReviewQueue>;
-  inbox: ApiData<FeedbackInbox>;
-}
-
-const AttentionContext = createContext<Attention>({ review: { status: "loading" }, inbox: { status: "loading" } });
-
 /** A count beside a navigation link or a line of Home: the number for the eye, its meaning for screen readers. */
 function Count({ count, more = false, label }: { count: number; more?: boolean; label: string }) {
   return (
@@ -351,6 +339,14 @@ function Count({ count, more = false, label }: { count: number; more?: boolean; 
       <span className="visually-hidden"> {label}</span>
     </>
   );
+}
+
+/** The review queue's count: the items of its first page, "N+" (and "N or more" in words) when it has more pages. */
+function ReviewCount({ queue }: { queue: ReviewQueue }) {
+  const t = useT(AR);
+  const count = queue.items.length;
+  const more = queue.nextCursor !== null;
+  return <Count count={count} more={more} label={more ? t("{count} or more waiting", { count }) : t("{count} waiting", { count })} />;
 }
 
 /** What needs the owner now: held items and unread messages, each with its count and a link to act. */
@@ -368,9 +364,9 @@ function NeedsYou() {
       {inbox.status === "failed" ? <p className="form-error">{t("Could not check your messages: {message}", { message: api(inbox.message) })}</p> : null}
       {held > 0 || unread > 0 ? (
         <ul className="attention">
-          {held > 0 ? (
+          {review.status === "loaded" && held > 0 ? (
             <li>
-              <Count count={held} more={review.status === "loaded" && review.data.nextCursor !== null} label={t("{count} waiting", { count: held })} />
+              <ReviewCount queue={review.data} />
               <span className="attention-text">{t("Visits and actions held for you to check")}</span>
               <a className="action-link" href="/review">
                 {t("Review them")}
@@ -473,9 +469,7 @@ function OwnerNav({ path }: { path: OwnerPath }) {
   const moreId = useId();
   const counts: Partial<Record<OwnerPath, ReactNode>> = {
     "/review":
-      review.status === "loaded" && review.data.items.length > 0 ? (
-        <Count count={review.data.items.length} more={review.data.nextCursor !== null} label={t("{count} waiting", { count: review.data.items.length })} />
-      ) : null,
+review.status === "loaded" && review.data.items.length > 0 ? <ReviewCount queue={review.data} /> : null,
     "/inbox": inbox.status === "loaded" && inbox.data.unread > 0 ? <Count count={inbox.data.unread} label={t("{count} unread", { count: inbox.data.unread })} /> : null,
   };
   const link = (page: { path: OwnerPath; label: (typeof OWNER_PAGES)[number]["label"] }) => (
@@ -556,10 +550,14 @@ function AuthLayout({ children, app }: { children: ReactNode; app?: "Admin" }) {
 
 /** The signed-in pages: the top bar with the café, the account and the language, the navigation, then the page. */
 function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerSession; path: OwnerPath; onSignedOut: (notice: string) => void; children: ReactNode }) {
-  const [review] = useApiData("/api/review-queue", reviewQueueSchema);
-  const [inbox] = useApiData("/api/feedback", feedbackInboxSchema);
+  const [attentionKey, setAttentionKey] = useState(0);
+  const [review] = useApiData("/api/review-queue", reviewQueueSchema, attentionKey);
+  const [inbox] = useApiData("/api/feedback", feedbackInboxSchema, attentionKey);
+  const reload = useCallback(() => {
+    setAttentionKey((key) => key + 1);
+  }, []);
   return (
-    <AttentionContext.Provider value={{ review, inbox }}>
+    <AttentionContext.Provider value={{ review, inbox, reload }}>
     <div className="owner-layout">
       <header className="topbar">
         <Brand />
