@@ -179,8 +179,9 @@ const REJECTION_REASONS: Readonly<Record<string, AppText>> = {
 };
 
 /**
- * Always visible in the header, in one short chip: connectivity and what waits to be sent (AC 29). Offline, the chip
- * says so in a word and screen readers hear the whole sentence; an empty queue is said to screen readers only.
+ * Always visible in the header, in one short chip: connectivity and what waits to be sent, nothing included (AC 29).
+ * Offline, the chip says so in a word and screen readers hear the whole sentence; an empty queue shows "0 to send" and
+ * is read as "Nothing waiting to send.".
  */
 function ConnectionStatus({ online, pending }: { online: boolean; pending: number }) {
   const t = useT(AR);
@@ -198,7 +199,16 @@ function ConnectionStatus({ online, pending }: { online: boolean; pending: numbe
         )}
       </p>
       {/* Not live: it changes with every sync, and the count is there to look at, not to hear. */}
-      <p className={pending === 0 ? "visually-hidden" : "queue"}>{pending === 0 ? t("Nothing waiting to send.") : plural(lang, WAITING, pending)}</p>
+      <p className="queue">
+        {pending === 0 ? (
+          <>
+            <span aria-hidden="true">{plural(lang, WAITING, 0)}</span>
+            <span className="visually-hidden">{t("Nothing waiting to send.")}</span>
+          </>
+        ) : (
+          plural(lang, WAITING, pending)
+        )}
+      </p>
     </section>
   );
 }

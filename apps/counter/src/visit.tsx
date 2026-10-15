@@ -53,7 +53,7 @@ const AR = {
   "Scan card": "امسح البطاقة",
   "Card scanned.": "مُسحت البطاقة.",
   "Clear card": "إزالة البطاقة",
-  "Or the customer's mobile number": "أو رقم هاتف الزبون المحمول",
+  "No card? The customer's mobile number": "لا بطاقة؟ رقم هاتف الزبون المحمول",
   "Record visit": "تسجيل الزيارة",
   "A reward started at {time} was not confirmed. Press Try again to find out whether that customer got it, before giving another.":
     "لم تُؤكَّد مكافأة بدأت عند {time}. اضغط «حاول مجدداً» لمعرفة ما إذا حصل عليها ذلك الزبون، قبل إعطاء أخرى.",
@@ -403,7 +403,8 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
           )}
           {scanned === null ? (
             <div className="field">
-              <label htmlFor={phoneId}>{t("Or the customer's mobile number")}</label>
+              {/* Above the action bar and its Scan card button, so the label stands on its own. */}
+              <label htmlFor={phoneId}>{t("No card? The customer's mobile number")}</label>
               <input
                 id={phoneId}
                 type="tel"

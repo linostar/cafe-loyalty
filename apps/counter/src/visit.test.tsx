@@ -67,7 +67,7 @@ describe("visits", () => {
     await waitFor(() => {
       expect(onBusy).toHaveBeenLastCalledWith(true);
     });
-    fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+    fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
     expect(await screen.findByText("Visit saved, earning up to 2 stamps. It is sent as soon as the phone is online.")).toBeInTheDocument();
     const [queued] = await listQueued(10);
@@ -85,7 +85,7 @@ describe("visits", () => {
       },
     });
     // The order is closed: nothing typed, nothing chosen, so the app may update again.
-    expect(screen.getByLabelText("Or the customer's mobile number")).toHaveValue("");
+    expect(screen.getByLabelText("No card? The customer's mobile number")).toHaveValue("");
     await waitFor(() => {
       expect(onBusy).toHaveBeenLastCalledWith(false);
     });
@@ -101,7 +101,7 @@ describe("visits", () => {
       fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
       fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
       expect(screen.getByText("Total $7.50 · 2 stamps")).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+      fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
       // The campaign ends before the barista taps Record: the total read out and charged stands.
       vi.setSystemTime(new Date("2026-10-12T14:00:10Z"));
       fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
@@ -192,7 +192,7 @@ describe("visits", () => {
     scanCard();
     expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Clear card" }));
-    fireEvent.change(screen.getByLabelText("Or the customer's mobile number"), { target: { value: "70 123 456" } });
+    fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
     expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
   });
 
@@ -233,7 +233,7 @@ describe("visits", () => {
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Scan the customer's card, or enter their mobile number.");
-    const field = screen.getByLabelText("Or the customer's mobile number");
+    const field = screen.getByLabelText("No card? The customer's mobile number");
     expect(field).not.toHaveAttribute("aria-invalid");
     fireEvent.change(field, { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));

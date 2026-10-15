@@ -12,8 +12,20 @@ import { CAMERA_CAFE_ID } from "./camera.js";
  * for 44 px touch targets and under forced colours; 320 px is the reflow width of WCAG 1.4.10.
  */
 
-/** The accessibility checks every counter screen passes. */
+/**
+ * What every counter screen passes: the header in one row (brand, status chip and language switch side by side, even
+ * offline on a phone), and the accessibility checks.
+ */
 async function expectAccessible(page: Page): Promise<void> {
+  const rows = await page.evaluate(() =>
+    ["header .brand", "header .connection", "header .lang-switch"].map((selector) => {
+      const box = document.querySelector(selector)?.getBoundingClientRect();
+      return box === undefined ? null : { top: box.top, bottom: box.bottom };
+    }),
+  );
+  expect(rows, "header parts").not.toContain(null);
+  const boxes = rows.filter((box) => box !== null);
+  expect(Math.max(...boxes.map((box) => box.top)), "header in one row").toBeLessThan(Math.min(...boxes.map((box) => box.bottom)));
   await expectEveryControlNamed(page);
   await expectNoAxeViolations(page);
   await expectTouchTargets(page);
@@ -137,7 +149,7 @@ for (const { width, height } of WIDTHS) {
       await page.getByRole("button", { name: "One more Latte" }).click();
       await page.getByRole("button", { name: "One more Latte" }).click();
       await page.getByRole("button", { name: "One more Croissant" }).click();
-      await page.getByLabel("Or the customer's mobile number").fill("70 123 456");
+      await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
       await expect(page.getByText("Total $7.60 · 2 stamps")).toBeVisible();
       if (width === 1024 || width === 768) {
         // A tablet, landscape or portrait: the menu lines, the card scan, the total and the button in view without scrolling.
@@ -148,6 +160,19 @@ for (const { width, height } of WIDTHS) {
           await expect(page.getByRole("button", { name: line, exact: true })).toBeInViewport();
         }
         await expect(page.getByText("Total $7.60 · 2 stamps")).toBeInViewport();
+      } else if (width <= 390) {
+        // A phone: the action bar keeps the total, the card scan and the button on screen at the menu's start and its end.
+        for (const where of ["start", "end"] as const) {
+          await (where === "start"
+            ? page.evaluate(() => {
+                window.scrollTo(0, 0);
+              })
+            : page.getByRole("button", { name: "One more Cheesecake" }).scrollIntoViewIfNeeded());
+          for (const line of ["Scan card", "Record visit"]) {
+            await expect(page.getByRole("button", { name: line, exact: true }), `${line} at the menu's ${where}`).toBeInViewport({ ratio: 1 });
+          }
+          await expect(page.getByText("Total $7.60 · 2 stamps"), `the total at the menu's ${where}`).toBeInViewport({ ratio: 1 });
+        }
       }
       await capture(page, testInfo, `counter-order-${String(width)}`);
       await expectLanguageAndFit(page, "en");
@@ -157,7 +182,7 @@ for (const { width, height } of WIDTHS) {
       await capture(page, testInfo, `counter-offline-${String(width)}`);
       await expectLanguageAndFit(page, "en");
       await expectAccessible(page);
-      // Offline, the header is at its tallest (the pills wrap under the brand on narrow screens).
+      // Offline, the status chip is at its widest; on a phone the action bar is at the bottom of the screen.
       await expectFocusNeverHidden(page);
     });
 

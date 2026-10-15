@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 import { addQueued, getMeta, setMeta, settleQueued } from "./storage.js";
@@ -59,13 +59,18 @@ describe("Counter App", () => {
     expect(await screen.findByRole("heading", { name: "Pair this phone" })).toBeInTheDocument();
     expect(screen.getByText("Build test-build")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Online");
-    expect(screen.getByText("Nothing waiting to send.")).toBeInTheDocument();
+    // The chip shows the count, nothing included, and screen readers hear it said in full.
+    expect(screen.getByText("0 to send")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Nothing waiting to send.")).toHaveClass("visually-hidden");
 
     setOnline(false);
     act(() => {
       window.dispatchEvent(new Event("offline"));
     });
     expect(screen.getByRole("status")).toHaveTextContent(/^Offline/);
+    // Offline in a word on the chip, and the whole sentence for screen readers.
+    expect(within(screen.getByRole("status")).getByText("Offline")).toHaveAttribute("aria-hidden", "true");
+    expect(within(screen.getByRole("status")).getByText("Offline: stamps are saved on this phone and sync when the connection returns.")).toHaveClass("visually-hidden");
     await act(() => addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} }));
     expect(await screen.findByText("1 to send")).toBeInTheDocument();
   });
