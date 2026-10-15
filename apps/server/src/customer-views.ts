@@ -70,10 +70,6 @@ export interface CardView {
   /** The feedback page of the card's latest visit (AC 37), if it was asked about one. */
   feedbackHref: string | undefined;
   wallet: WalletLink;
-  email: string | null;
-  offersOptedIn: boolean;
-  notice: string | undefined;
-  errors: { email?: string; delete?: string };
   otherLangHref: string;
 }
 
@@ -86,15 +82,18 @@ function stampGrid(stamps: number, required: number): SafeHtml {
   return html`<ol class="stamp-grid" aria-hidden="true">${slots}</ol>`;
 }
 
-/** The web card (AC 7, 10): the card itself with its stamps and QR, then the card's own settings. */
+/** A chevron pointing the way reading goes (forward) or back; drawn, and turned round in right-to-left pages. */
+const chevron = (direction: "forward" | "back"): SafeHtml =>
+  html`<svg class="chevron" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" focusable="false"><path d="${direction === "forward" ? "M8 5l5 5-5 5" : "M12 5l-5 5 5 5"}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+/** The web card (AC 7, 10): the card itself with its stamps and QR, the latest visit's feedback link, then a way to the card's settings. */
 export function cardView(lang: Lang, view: CardView): string {
-  const { program, stamps, errors } = view;
+  const { program, stamps } = view;
   const left = program === undefined ? 0 : program.stampsRequired - stamps;
   return page(
     lang,
     t(lang, "cardTitle", { cafe: view.cafeName }),
-    html`${view.notice === undefined ? null : html`<p class="notice" role="status">${view.notice}</p>`}
-<article class="loyalty-card" aria-labelledby="card-title">
+    html`<article class="loyalty-card" aria-labelledby="card-title">
 <div class="card-face">
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1 id="card-title">${t(lang, "cardTitle", { cafe: view.cafeName })}</h1>
@@ -125,8 +124,39 @@ ${view.feedbackHref === undefined
   ? null
   : html`<section aria-labelledby="feedback-title" class="card">
 <h2 id="feedback-title">${t(lang, "cardFeedbackTitle")}</h2>
-<p><a class="standalone" href="${view.feedbackHref}">${t(lang, "cardFeedbackLink")}</a></p>
+<p class="link-row"><a class="link-button" href="${view.feedbackHref}">${t(lang, "cardFeedbackLink")}</a></p>
 </section>`}
+<p class="link-row"><a class="link-button next" href="${view.path}/settings?lang=${lang}"><span>${t(lang, "settingsLink")}</span>${chevron("forward")}</a></p>`,
+    view.otherLangHref,
+  );
+}
+
+export interface CardSettingsView {
+  /** The card's own path (/c/<secret>): the back link, and the forms post below it. */
+  path: string;
+  cafeName: string;
+  email: string | null;
+  offersOptedIn: boolean;
+  notice: string | undefined;
+  errors: { email?: string; delete?: string };
+  otherLangHref: string;
+}
+
+/**
+ * The card's settings (AC 8, 9): its recovery email, offers, and deletion apart at the end, with a way back to the
+ * card. The forms post to the card's own paths, which answer back here.
+ */
+export function cardSettingsView(lang: Lang, view: CardSettingsView): string {
+  const { errors } = view;
+  return page(
+    lang,
+    t(lang, "settingsPageTitle", { cafe: view.cafeName }),
+    html`<p class="back-row"><a class="standalone" href="${view.path}?lang=${lang}">${chevron("back")}<span>${t(lang, "backToCard")}</span></a></p>
+<header class="page-title">
+<p class="kicker">${view.cafeName}</p>
+<h1>${t(lang, "settingsTitle")}</h1>
+</header>
+${view.notice === undefined ? null : html`<p class="notice" role="status">${view.notice}</p>`}
 <section aria-labelledby="email-title" class="card">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
 <p>${t(lang, "emailText")}</p>
@@ -147,7 +177,7 @@ ${errorBlock(errors.email, "email-error")}
 <button type="submit">${t(lang, "offersSave")}</button>
 </form>
 </section>
-<section aria-labelledby="delete-title" class="card">
+<section aria-labelledby="delete-title" class="card danger-zone">
 <h2 id="delete-title">${t(lang, "deleteTitle")}</h2>
 <p id="delete-text">${t(lang, "deleteText")}</p>
 <form method="post" action="${view.path}/delete" novalidate>

@@ -11,7 +11,7 @@ import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
-import { cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, type FeedbackView } from "./customer-views.js";
+import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, type FeedbackView } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
@@ -382,23 +382,47 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     return reply.code(303).header("location", `/c/${webSecret}?lang=${lang}`).send();
   });
 
-  /** The web card (AC 7, 10): the signed QR, the stamps, and the card's own settings. */
+  /** The web card (AC 7, 10): the signed QR, the stamps, and a link to the card's own settings. */
   app.get("/c/:secret", async (request, reply) => {
     const { secret } = request.params as { secret: string };
     const lang = langOf(request);
     const card = await cardOrGone(secret);
-    const { saved } = request.query as { saved?: string };
-    return sendPage(reply, 200, await cardPage(request, lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
+    return sendPage(reply, 200, await cardPage(request, lang, secret, card));
   });
 
-  async function cardPage(
-    request: FastifyRequest,
+  /**
+   * The card's settings (AC 8, 9): recovery email, offers and deletion, whose forms post to the card's paths below and
+   * come back here. Reached by the card's own secret, like the card and those forms.
+   */
+  app.get("/c/:secret/settings", async (request, reply) => {
+    const { secret } = request.params as { secret: string };
+    const lang = langOf(request);
+    const card = await cardOrGone(secret);
+    const { saved } = request.query as { saved?: string };
+    return sendPage(reply, 200, await settingsPage(lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
+  });
+
+  async function settingsPage(
     lang: Lang,
     secret: string,
     card: NonNullable<Awaited<ReturnType<typeof findCard>>>,
     notice: string | undefined,
     errors: { email?: string; delete?: string },
   ): Promise<string> {
+    const cafe = await withCafe(db, card.cafe_id, (trx) => trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow());
+    const path = `/c/${secret}`;
+    return cardSettingsView(lang, {
+      path,
+      cafeName: cafe.name,
+      email: card.email,
+      offersOptedIn: card.offers_opt_in_at !== null,
+      notice,
+      errors,
+      otherLangHref: otherLang(`${path}/settings`, lang, notice !== undefined),
+    });
+  }
+
+  async function cardPage(request: FastifyRequest, lang: Lang, secret: string, card: NonNullable<Awaited<ReturnType<typeof findCard>>>): Promise<string> {
     const { cafe, program, offers, feedback } = await withCafe(db, card.cafe_id, async (trx) => ({
       cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
@@ -424,11 +448,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           : !apple && options.google !== undefined
             ? { kind: "google", href: `${path}/google-pass?lang=${lang}`, badge: GOOGLE_WALLET_BADGES[lang] }
             : null,
-      email: card.email,
-      offersOptedIn: card.offers_opt_in_at !== null,
-      notice,
-      errors,
-      otherLangHref: otherLang(path, lang, notice !== undefined),
+      otherLangHref: otherLang(path, lang),
     });
   }
 
@@ -540,7 +560,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const raw = formOf(request).email?.trim() ?? "";
     const parsed = raw === "" ? null : ownerEmailSchema.safeParse(raw);
     if (parsed !== null && !parsed.success) {
-      return sendPage(reply, 400, await cardPage(request, lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
+      return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
     }
     const email = parsed === null ? null : parsed.data;
     await withCafe(db, card.cafe_id, async (trx) => {
@@ -552,7 +572,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: email === null ? "card.email_removed" : "card.email_set", entityType: "card", entityId: card.id, changes: { source: "customer" } });
     });
     request.log.info({ cafeId: card.cafe_id }, "card recovery email changed");
-    return reply.code(303).header("location", `/c/${secret}?lang=${lang}&saved=1`).send();
+    return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=1`).send();
   });
 
   /** Opts in to or out of offers, recording when (AC 4), and updates the card's passes. */
@@ -573,7 +593,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       // Opting in or out shows or removes the passes' offer field (cards_touch_offer_passes, migration 0013).
       await queuePassUpdate(trx, options.jobs, card.cafe_id, card.id);
     });
-    return reply.code(303).header("location", `/c/${secret}?lang=${lang}&saved=1`).send();
+    return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=1`).send();
   });
 
   /**
@@ -648,7 +668,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     if (formOf(request).confirm !== "yes") {
-      return sendPage(reply, 400, await cardPage(request, lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
+      return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
     }
     await withCafe(db, card.cafe_id, (trx) => deleteCard(trx, card));
     request.log.info({ cafeId: card.cafe_id }, "customer card deleted");
