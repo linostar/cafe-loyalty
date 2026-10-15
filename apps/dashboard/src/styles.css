@@ -41,11 +41,12 @@
 
 /*
  * Below 40rem the top bar has room for the product name only, a size smaller: the app's ("Dashboard", "Admin") stays in
- * the heading for screen readers.
+ * the heading for screen readers. At 320 px (WCAG 1.4.10's reflow width) the name wraps rather than run under the menu.
  */
 @media (max-width: 39.99rem) {
   .topbar .brand h1 {
     font-size: var(--text-base);
+    white-space: normal;
   }
 
   .topbar .brand-app {

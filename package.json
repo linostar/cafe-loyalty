@@ -24,6 +24,7 @@
     "check:migrations": "pnpm build:packages && pnpm --filter @cafe-loyalty/db check-migrations"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@cafe-loyalty/shared": "workspace:*",
     "@cafe-loyalty/ui": "workspace:*",
     "@eslint/js": "^9.39.0",

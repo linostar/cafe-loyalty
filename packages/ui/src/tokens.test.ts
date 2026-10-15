@@ -54,8 +54,14 @@ const PAIRS: readonly [foreground: string, background: string, minimum: number][
   ["color-on-accent", "color-heat-4", BODY],
   ["color-border-strong", "color-surface", UI],
   ["color-border-strong", "color-page", UI],
+  // The focus ring on every surface a control can sit on: 3:1, as WCAG 1.4.11 asks of what shows focus.
   ["color-focus", "color-page", UI],
   ["color-focus", "color-surface", UI],
+  ["color-focus", "color-surface-sunken", UI],
+  ["color-focus", "color-accent-soft", UI],
+  ["color-focus", "color-success-soft", UI],
+  ["color-focus", "color-warning-soft", UI],
+  ["color-focus", "color-danger-soft", UI],
   ["color-focus-inverse", "color-espresso", UI],
   ["color-accent", "color-page", UI],
 ];

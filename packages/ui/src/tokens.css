@@ -77,6 +77,17 @@
   --shadow-md: 0 1px 3px rgb(74 44 42 / 0.08), 0 6px 20px rgb(74 44 42 / 0.07);
   --shadow-lg: 0 2px 6px rgb(74 44 42 / 0.1), 0 16px 40px rgb(74 44 42 / 0.12);
 
+  /*
+   * Layout: content widths (one form or a customer page, a list or settings section, a whole dashboard or counter page),
+   * the gutter beside the content, and the gaps between stacked blocks and between page sections
+   */
+  --content-narrow: 30rem;
+  --content-medium: 48rem;
+  --content-wide: 72rem;
+  --gutter: var(--space-4);
+  --stack-gap: var(--space-4);
+  --section-gap: var(--space-6);
+
   /* Controls: the dashboard's height, and the counter's larger touch target */
   --control-height: 2.75rem;
   --control-height-touch: 3rem;
