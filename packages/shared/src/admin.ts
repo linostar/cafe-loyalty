@@ -38,6 +38,15 @@ export const paymentRecordSchema = z.object({
     .default(null),
 });
 
+/** Voiding a payment recorded by mistake, once and for good: why, kept with the payment (no names or phone numbers). */
+export const paymentVoidSchema = z.object({
+  reason: z
+    .string(apiText("Enter why the payment is voided."))
+    .trim()
+    .min(1, apiText("Enter why the payment is voided."))
+    .max(200, apiMessage("Use at most {max} characters.", { max: 200 })),
+});
+
 export const cafePlanUpdateSchema = z.object({ plan: cafePlanSchema });
 
 /** A new café: its id (made by the form, so sending it again after a lost response creates it once) and its name. */
@@ -57,9 +66,11 @@ export const adminPaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
   reference: z.string().nullable(),
   recordedAt: timestamp,
+  /** When and why it was voided; a voided payment stays listed but no longer counts toward what the café paid. */
+  voided: z.object({ at: timestamp, reason: z.string() }).nullable(),
 });
 
-/** One café on the admin screen: its plan, what it paid in all, and its latest payments. */
+/** One café on the admin screen: its plan, what it paid in all (voided payments aside), and its latest payments. */
 export const adminCafeSchema = z.object({
   id: z.uuid(),
   name: z.string(),
@@ -76,6 +87,7 @@ export const adminInviteSchema = z.object({ cafe: adminCafeSchema, link: z.url()
 
 export type OperatorSession = z.output<typeof operatorSessionSchema>;
 export type PaymentRecord = z.input<typeof paymentRecordSchema>;
+export type PaymentVoid = z.input<typeof paymentVoidSchema>;
 export type AdminCafe = z.output<typeof adminCafeSchema>;
 export type AdminPayment = z.output<typeof adminPaymentSchema>;
 export type AdminInvite = z.output<typeof adminInviteSchema>;

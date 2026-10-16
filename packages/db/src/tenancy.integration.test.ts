@@ -9,6 +9,8 @@ import { createTestDatabase, type TestDatabase } from "./testing/test-database.j
 
 /** SQLSTATE 42501, insufficient_privilege: raised both by a row-level security WITH CHECK and by a missing grant. */
 const PERMISSION_DENIED = "42501";
+const UNIQUE_VIOLATION = "23505";
+const FOREIGN_KEY_VIOLATION = "23503";
 const INVALID_TEXT_REPRESENTATION = "22P02";
 
 /** The owner each café's fixtures use, so a fixture written for café B under café A still names a real owner. */
@@ -255,8 +257,13 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .values({ id: idOf("operator", cafeId), email, password_hash: "fake-hash" })
       .onConflict((conflict) => conflict.column("email").doNothing())
       .execute();
-    return trx.insertInto("cafe_payments").values({ cafe_id: cafeId, amount_cents: 2500, paid_on: "2026-10-01", method: "cash", operator_id: idOf("operator", cafeId) }).execute();
+    return trx
+      .insertInto("cafe_payments")
+      .values({ id: idOf("payment", cafeId), cafe_id: cafeId, amount_cents: 2500, paid_on: "2026-10-01", method: "cash", operator_id: idOf("operator", cafeId) })
+      .execute();
   },
+  cafe_payment_voids: (trx, cafeId) =>
+    trx.insertInto("cafe_payment_voids").values({ payment_id: idOf("payment", cafeId), cafe_id: cafeId, reason: "Wrong amount", operator_id: idOf("operator", cafeId) }).execute(),
 };
 
 const TABLES = Object.keys(TABLE_COLUMNS) as TableName[];
@@ -425,6 +432,36 @@ describe("audit log", () => {
     const remove = await errorCodeOf(withCafe(testDb.app.db, cafeA, (trx) => sql`DELETE FROM audit_log`.execute(trx)));
     expect(update).toBe(PERMISSION_DENIED);
     expect(remove).toBe(PERMISSION_DENIED);
+  });
+});
+
+describe("payment voids", () => {
+  it("void a payment once, only of its own café, and leave payments and voids append-only for the app role", async () => {
+    const again = await errorCodeOf(
+      withCafe(testDb.app.db, cafeA, (trx) =>
+        trx.insertInto("cafe_payment_voids").values({ payment_id: idOf("payment", cafeA), cafe_id: cafeA, reason: "Again", operator_id: idOf("operator", cafeA) }).execute(),
+      ),
+    );
+    // A payment of café B not voided yet, under café A's id: no such payment of café A.
+    const theirs = randomUUID();
+    await withCafe(testDb.app.db, cafeB, (trx) =>
+      trx.insertInto("cafe_payments").values({ id: theirs, cafe_id: cafeB, amount_cents: 100, paid_on: "2026-10-02", method: "cash", operator_id: idOf("operator", cafeB) }).execute(),
+    );
+    const otherCafes = await errorCodeOf(
+      withCafe(testDb.app.db, cafeA, (trx) =>
+        trx.insertInto("cafe_payment_voids").values({ payment_id: theirs, cafe_id: cafeA, reason: "Not mine", operator_id: idOf("operator", cafeA) }).execute(),
+      ),
+    );
+    expect(again).toBe(UNIQUE_VIOLATION);
+    expect(otherCafes).toBe(FOREIGN_KEY_VIOLATION);
+    for (const statement of [
+      sql`UPDATE cafe_payments SET amount_cents = 1`,
+      sql`DELETE FROM cafe_payments`,
+      sql`UPDATE cafe_payment_voids SET reason = 'changed'`,
+      sql`DELETE FROM cafe_payment_voids`,
+    ]) {
+      expect(await errorCodeOf(withCafe(testDb.app.db, cafeA, (trx) => statement.execute(trx)))).toBe(PERMISSION_DENIED);
+    }
   });
 });
 

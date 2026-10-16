@@ -23,10 +23,12 @@ interface FieldProps {
   lang?: "ar" | "en";
   /** May be left empty (fields are required otherwise). */
   optional?: boolean;
+  /** Keys the field handles itself, such as Escape to step back from a second step. */
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
 }
 
 /** A labelled input whose hint and error are announced with it. */
-export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false }: FieldProps) {
+export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -50,6 +52,7 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
         onChange={(event) => {
           onChange(event.target.value);
         }}
+        onKeyDown={onKeyDown}
         aria-invalid={error === undefined ? undefined : true}
         aria-describedby={describedBy === "" ? undefined : describedBy}
       />

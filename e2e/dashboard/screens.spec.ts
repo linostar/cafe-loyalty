@@ -111,10 +111,10 @@ const ADMIN = {
         name: SESSION.cafe.name,
         plan: "active",
         createdAt: "2026-09-01T08:00:00.000Z",
-        paidCents: 5000,
+        paidCents: 2500,
         payments: [
-          { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042", recordedAt: "2026-10-01T09:00:00.000Z" },
-          { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", amountCents: 2500, paidOn: "2026-09-01", method: "cash", reference: null, recordedAt: "2026-09-01T09:00:00.000Z" },
+          { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042", recordedAt: "2026-10-01T09:00:00.000Z", voided: null },
+          { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", amountCents: 2500, paidOn: "2026-09-01", method: "cash", reference: null, recordedAt: "2026-09-01T09:00:00.000Z", voided: { at: "2026-09-02T09:00:00.000Z", reason: "Typed the wrong amount" } },
         ],
       },
       { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e", name: "Study Corner", plan: "pilot", createdAt: "2026-09-15T08:00:00.000Z", paidCents: 0, payments: [] },
@@ -184,6 +184,16 @@ for (const { lang, locale } of LANGS) {
           await expectFocusNeverHidden(page);
         });
       }
+
+      test("operator voiding a payment", async ({ page }, testInfo) => {
+        await mockApi(page, ADMIN);
+        await page.goto(ADMIN_PATHS[1]);
+        await page.getByRole("button", { name: /^Void the payment of|^إبطال دفعة/ }).click();
+        await expect(page.getByRole("textbox", { name: /^Reason$|^السبب$/ })).toBeFocused();
+        await capture(page, testInfo, `dashboard-admin-cafe-voiding${suffix}`);
+        await check(page);
+        await expectFocusNeverHidden(page);
+      });
 
       test("profile menu open", async ({ page }, testInfo) => {
         await mockApi(page, SIGNED_IN);
