@@ -121,6 +121,14 @@ export interface CafePaymentsTable {
   operator_id: ColumnType<string, string, never>;
   created_at: CreatedAt;
 }
+/** A payment voided by the operator, at most once (insert-only); the payment stays listed, struck through. */
+export interface CafePaymentVoidsTable {
+  payment_id: ColumnType<string, string, never>;
+  cafe_id: ColumnType<string, string, never>;
+  reason: ColumnType<string, string, never>;
+  operator_id: ColumnType<string, string, never>;
+  created_at: CreatedAt;
+}
 export interface OwnerSessionsTable {
   id: ColumnType<string, string | undefined, never>;
   cafe_id: ColumnType<string, string, never>;
@@ -486,6 +494,7 @@ export interface Database {
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   cafe_payments: CafePaymentsTable;
+  cafe_payment_voids: CafePaymentVoidsTable;
 }
 
 export type TableName = keyof Database;
@@ -666,6 +675,7 @@ export const TABLE_COLUMNS = {
   operators: ["id", "email", "password_hash", "password_changed_at", "created_at"],
   operator_sessions: ["id", "operator_id", "token_hash", "created_at", "last_seen_at", "expires_at"],
   cafe_payments: ["id", "cafe_id", "amount_cents", "paid_on", "method", "reference", "operator_id", "created_at"],
+  cafe_payment_voids: ["payment_id", "cafe_id", "reason", "operator_id", "created_at"],
 } as const satisfies ColumnLists;
 
 /**
@@ -706,6 +716,7 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   operators: null,
   operator_sessions: null,
   cafe_payments: "cafe_id",
+  cafe_payment_voids: "cafe_id",
 };
 
 type ListedColumns = { [T in TableName]: (typeof TABLE_COLUMNS)[T][number] };

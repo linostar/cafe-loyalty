@@ -172,6 +172,7 @@ describe("operator accounts (AC 39)", () => {
       "POST /api/admin/cafes",
       "POST /api/admin/cafes/:id/invites",
       "POST /api/admin/cafes/:id/payments",
+      "POST /api/admin/cafes/:id/payments/:paymentId/void",
       "POST /api/admin/password",
     ]);
     for (const route of operatorRoutes) {
@@ -296,6 +297,51 @@ describe("the admin screen (AC 39)", () => {
     expect(signup.statusCode).toBe(201);
     expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/invites`)).statusCode).toBe(404);
     expect((await auditActions(app.owner.cafeId)).filter((action) => action === "owner_invite.created")).toHaveLength(2);
+  });
+
+  it("voids a payment once with its reason, keeping it listed but out of the total, in the audit log without the reason", async () => {
+    const app = await adminApp();
+    const payments = `/api/admin/cafes/${app.owner.cafeId}/payments`;
+    const wrong = { paymentId: randomUUID(), amountCents: 2500, paidOn: "2026-10-01", method: "cash" };
+    const right = { paymentId: randomUUID(), amountCents: 1000, paidOn: "2026-10-02", method: "whish" };
+    await app.asOperator("POST", payments, wrong);
+    await app.asOperator("POST", payments, right);
+
+    const voided = await app.asOperator("POST", `${payments}/${wrong.paymentId}/void`, { reason: "  Typed the wrong amount " });
+    expect(voided.statusCode).toBe(200);
+    const after = voided.json<{ paidCents: number; payments: { id: string; voided: { at: string; reason: string } | null }[] }>();
+    expect(after.paidCents).toBe(1000);
+    expect(after.payments.map((payment) => [payment.id, payment.voided?.reason ?? null])).toEqual([
+      [right.paymentId, null],
+      [wrong.paymentId, "Typed the wrong amount"],
+    ]);
+
+    // Sent again (its response lost), or with another reason: the first void stays, once in the audit log.
+    const again = await app.asOperator("POST", `${payments}/${wrong.paymentId}/void`, { reason: "Another reason" });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({ paidCents: 1000, payments: [{ voided: null }, { voided: { reason: "Typed the wrong amount", at: after.payments[1]?.voided?.at } }] });
+    const { rows } = await context.admin.query<{ actor_type: string; entity_id: string; changes: unknown }>(
+      "SELECT actor_type, entity_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'cafe.payment_voided'",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([{ actor_type: "operator", entity_id: wrong.paymentId, changes: { amountCents: 2500 } }]);
+    expect(JSON.stringify(rows)).not.toContain("wrong amount");
+
+    for (const reason of ["", "   ", "x".repeat(201)]) {
+      const refused = await app.asOperator("POST", `${payments}/${right.paymentId}/void`, { reason });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "reason" }] });
+    }
+    expect((await app.asOperator("POST", `${payments}/${right.paymentId}/void`, {})).statusCode).toBe(400);
+    // An unknown payment, another café's payment, an unknown café: none is voided.
+    const other = await signUp(app.app);
+    const theirs = { paymentId: randomUUID(), amountCents: 500, paidOn: "2026-10-03", method: "cash" };
+    await app.asOperator("POST", `/api/admin/cafes/${other.cafeId}/payments`, theirs);
+    expect((await app.asOperator("POST", `${payments}/${randomUUID()}/void`, { reason: "No such payment" })).statusCode).toBe(404);
+    expect((await app.asOperator("POST", `${payments}/${theirs.paymentId}/void`, { reason: "Not this café's" })).statusCode).toBe(404);
+    expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/payments/${right.paymentId}/void`, { reason: "No such café" })).statusCode).toBe(404);
+    expect((await app.asOperator("POST", `${payments}/not-a-uuid/void`, { reason: "Bad id" })).statusCode).toBe(400);
+    expect((await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: { id: string; paidCents: number }[] }>().cafes.find((cafe) => cafe.id === other.cafeId)?.paidCents).toBe(500);
   });
 
   it("records a payment sent again (its response lost) once, and refuses the same id with other details", async () => {

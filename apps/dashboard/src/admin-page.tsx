@@ -9,15 +9,16 @@ import {
   operatorSessionSchema,
   type AdminCafe,
   type AdminInvite,
+  type AdminPayment,
   type CafePlan,
   type OperatorSession,
   type PaymentMethod,
   type Lang,
 } from "@cafe-loyalty/shared";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale } from "./api.js";
 import { Field, FormError, Notice, useSubmit } from "./forms.js";
-import { dateFormat, type Later, type Translate, useApiText, useLang, useT } from "./i18n.js";
+import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
 import { ChangePasswordForm } from "./password-form.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
@@ -63,6 +64,18 @@ const AR = {
   "Latest payments of {name}": "أحدث دفعات {name}",
   Amount: "المبلغ",
   By: "الطريقة",
+  Payments: "الدفعات",
+  Status: "الحالة",
+  Void: "إبطال",
+  Voided: "مُبطلة",
+  "Void the payment of {amount} paid on {day}": "إبطال دفعة {amount} بتاريخ {day}",
+  Reason: "السبب",
+  "Why it is voided, such as a wrong amount. It stays with the payment, which cannot be restored. No names or phone numbers.":
+    "سبب الإبطال، مثل مبلغ خاطئ. يبقى مع الدفعة، ولا يمكن استرجاعها. بلا أسماء أو أرقام هواتف.",
+  "Voiding…": "جارٍ الإبطال…",
+  "Void payment": "إبطال الدفعة",
+  "Voided the payment of {amount} paid on {day}.": "أُبطلت دفعة {amount} بتاريخ {day}.",
+  "The payment of {amount} paid on {day} was already voided: {reason}": "كانت دفعة {amount} بتاريخ {day} مُبطلة من قبل: {reason}",
   Cafés: "المقاهي",
   "Open a café to make its owner's signup link, set its plan or record a payment. Every change goes in the café's audit log.":
     "افتح مقهى لإنشاء رابط تسجيل مالكه أو تحديد خطته أو تسجيل دفعة. يُسجَّل كل تغيير في سجل تدقيق المقهى.",
@@ -422,36 +435,176 @@ function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invit
   );
 }
 
-/** The café's latest payments, newest first. */
-function PaymentsTable({ cafe }: { cafe: AdminCafe }) {
+/** Asks why a payment is voided, then voids it for good; the second step is in the page, like ConfirmButton's. */
+function VoidPaymentForm({
+  cafe,
+  payment,
+  onVoided,
+  onCancel,
+}: {
+  cafe: AdminCafe;
+  payment: AdminPayment;
+  onVoided: (cafe: AdminCafe, notice: Later<typeof AR>) => void;
+  onCancel: () => void;
+}) {
+  const t = useT(AR);
+  const common = useCommonT();
+  const dayFormat = dateFormat(useLang(), DAY);
+  const [reason, setReason] = useState("");
+  const form = useRef<HTMLFormElement>(null);
+  const { pending, error, fieldErrors, submit } = useSubmit();
+  useEffect(() => {
+    form.current?.querySelector("input")?.focus();
+  }, []);
+  const amount = formatUsd(payment.amountCents, "en");
+  const titleId = `void-title-${payment.id}`;
+  // Escape steps back from any of its controls, as ConfirmButton's second step does.
+  const cancelOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && !pending) {
+      onCancel();
+    }
+  };
+  return (
+    <form
+      ref={form}
+      aria-labelledby={titleId}
+      className="void-payment"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/payments/${payment.id}/void`, adminCafeSchema, { reason })).then((result) => {
+          if (result.ok) {
+            // Voided first by another session: the first void and its reason stay, so say whose reason is kept.
+            const kept = result.value.payments.find((entry) => entry.id === payment.id)?.voided?.reason;
+            const sent = reason.trim();
+            onVoided(result.value, (say: Translate<typeof AR>, shownIn: Lang) => {
+              const day = dateFormat(shownIn, DAY).format(new Date(payment.paidOn));
+              return kept === undefined || kept === sent
+                ? say("Voided the payment of {amount} paid on {day}.", { amount, day })
+                : say("The payment of {amount} paid on {day} was already voided: {reason}", { amount, day, reason: kept });
+            });
+          }
+        });
+      }}
+    >
+      <h5 id={titleId}>{t("Void the payment of {amount} paid on {day}", { amount, day: dayFormat.format(new Date(payment.paidOn)) })}</h5>
+      <FormError message={error} />
+      <Field
+        label={t("Reason")}
+        name="reason"
+        type="text"
+        value={reason}
+        onChange={setReason}
+        maxLength={200}
+        onKeyDown={cancelOnEscape}
+        hint={t("Why it is voided, such as a wrong amount. It stays with the payment, which cannot be restored. No names or phone numbers.")}
+        error={fieldErrors.reason}
+      />
+      <div className="actions">
+        <button type="submit" className="danger" disabled={pending} onKeyDown={cancelOnEscape}>
+          {pending ? t("Voiding…") : t("Void payment")}
+        </button>
+        <button type="button" disabled={pending} onKeyDown={cancelOnEscape} onClick={onCancel}>
+          {common("Cancel")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** The café's latest payments, newest first; a voided one stays listed, struck through, with why. */
+function PaymentsTable({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
   const dayFormat = dateFormat(useLang(), DAY);
-  return cafe.payments.length === 0 ? (
-    <p className="empty">{t("No payments recorded yet.")}</p>
-  ) : (
-    <div className="table-scroll">
-      <table>
-        <caption>{t("Latest payments of {name}", { name: cafe.name })}</caption>
-        <thead>
-          <tr>
-            <th scope="col">{t("Paid on")}</th>
-            <th scope="col">{t("Amount")}</th>
-            <th scope="col">{t("By")}</th>
-            <th scope="col">{t("Reference")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cafe.payments.map((payment) => (
-            <tr key={payment.id}>
-              <td>{dayFormat.format(new Date(payment.paidOn))}</td>
-              <td>{formatUsd(payment.amountCents, "en")}</td>
-              <td>{t(METHOD_LABELS[payment.method])}</td>
-              <td>{payment.reference === null ? "—" : <bdi>{payment.reference}</bdi>}</td>
+  const [voiding, setVoiding] = useState<string | null>(null);
+  const table = useRef<HTMLDivElement>(null);
+  /** Where focus goes once the form has gone: back to the row's Void button, or to its Voided status. */
+  const focusNext = useRef<{ paymentId: string; target: "button" | ".payment-status" } | null>(null);
+  useEffect(() => {
+    const next = focusNext.current;
+    focusNext.current = null;
+    if (next !== null) {
+      table.current?.querySelector<HTMLElement>(`[data-payment-id="${next.paymentId}"] ${next.target}`)?.focus();
+    }
+  }, [voiding, cafe]);
+  // Its own heading, so voiding a payment comes under the payments, not under recording one.
+  const heading = (
+    <h4 className="payments-title">
+      {t("Payments")}
+      {forCafe(t("of {name}", { name: cafe.name }))}
+    </h4>
+  );
+  if (cafe.payments.length === 0) {
+    return (
+      <>
+        {heading}
+        <p className="empty">{t("No payments recorded yet.")}</p>
+      </>
+    );
+  }
+  const chosen = cafe.payments.find((payment) => payment.id === voiding && payment.voided === null);
+  return (
+    <>
+      {heading}
+      <div className="table-scroll" ref={table}>
+        <table>
+          <caption>{t("Latest payments of {name}", { name: cafe.name })}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{t("Paid on")}</th>
+              <th scope="col">{t("Amount")}</th>
+              <th scope="col">{t("By")}</th>
+              <th scope="col">{t("Reference")}</th>
+              <th scope="col">{t("Status")}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {cafe.payments.map((payment) => (
+              <tr key={payment.id} data-payment-id={payment.id} className={payment.voided === null ? undefined : "voided"}>
+                <td>{dayFormat.format(new Date(payment.paidOn))}</td>
+                <td>{formatUsd(payment.amountCents, "en")}</td>
+                <td>{t(METHOD_LABELS[payment.method])}</td>
+                <td>{payment.reference === null ? "—" : <bdi>{payment.reference}</bdi>}</td>
+                <td>
+                  {payment.voided === null ? (
+                    <button
+                      type="button"
+                      // Short to see; the name says which payment (WCAG 2.5.3: it starts with what is shown).
+                      aria-label={t("Void the payment of {amount} paid on {day}", { amount: formatUsd(payment.amountCents, "en"), day: dayFormat.format(new Date(payment.paidOn)) })}
+                      disabled={chosen !== undefined}
+                      onClick={() => {
+                        setVoiding(payment.id);
+                      }}
+                    >
+                      {t("Void")}
+                    </button>
+                  ) : (
+                    <span className="payment-status" tabIndex={-1}>
+                      <span className="badge badge-warning">{t("Voided")}</span> <bdi>{payment.voided.reason}</bdi>
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {chosen === undefined ? null : (
+        <VoidPaymentForm
+          key={chosen.id}
+          cafe={cafe}
+          payment={chosen}
+          onVoided={(saved, notice) => {
+            focusNext.current = { paymentId: chosen.id, target: ".payment-status" };
+            setVoiding(null);
+            onSaved(saved, notice);
+          }}
+          onCancel={() => {
+            focusNext.current = { paymentId: chosen.id, target: "button" };
+            setVoiding(null);
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -584,7 +737,7 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       </div>
       <div className="card">
         <PaymentForm cafe={cafe} onSaved={onSaved} />
-        <PaymentsTable cafe={cafe} />
+        <PaymentsTable cafe={cafe} onSaved={onSaved} />
       </div>
     </section>
   );

@@ -40,6 +40,8 @@ export const API_MESSAGES_AR = {
   "Choose pilot, active or suspended.": "اختر تجريبية أو فعّالة أو موقوفة.",
   "Enter the date as YYYY-MM-DD.": "أدخل التاريخ بصيغة YYYY-MM-DD.",
   "Reload the page and record the payment again.": "أعد تحميل الصفحة وسجّل الدفعة مجدداً.",
+  "Enter why the payment is voided.": "أدخل سبب إبطال الدفعة.",
+  "This payment is not in this café's list. Reload the page.": "هذه الدفعة ليست في قائمة هذا المقهى. أعد تحميل الصفحة.",
   "Choose how the café paid.": "اختر طريقة دفع المقهى.",
   "Reload the page and create the café again.": "أعد تحميل الصفحة وأنشئ المقهى مجدداً.",
   "Enter the café's name.": "أدخل اسم المقهى.",

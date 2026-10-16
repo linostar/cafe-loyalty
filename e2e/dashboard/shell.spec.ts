@@ -100,7 +100,7 @@ test("fits a 360 px phone screen on the operator's admin screen", async ({ page 
           plan: "suspended",
           createdAt: "2026-09-01T08:00:00.000Z",
           paidCents: 99999999,
-          payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 99999999, paidOn: "2026-10-01", method: "bank_transfer", reference: "R".repeat(100), recordedAt: "2026-10-01T09:00:00.000Z" }],
+          payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 99999999, paidOn: "2026-10-01", method: "bank_transfer", reference: "R".repeat(100), recordedAt: "2026-10-01T09:00:00.000Z", voided: null }],
         },
       ],
     }),

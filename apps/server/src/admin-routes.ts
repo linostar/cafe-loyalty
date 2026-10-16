@@ -7,6 +7,7 @@ import {
   loginRequestSchema,
   passwordChangeRequestSchema,
   paymentRecordSchema,
+  paymentVoidSchema,
   type AdminCafe,
   type AdminInvite,
   type OperatorSession,
@@ -33,6 +34,8 @@ const HOUR = 60 * MINUTE;
 const idParams = z.object({ id: z.uuid("Use a café from the list.") });
 const wrongCredentials = () => new ApiError("UNAUTHENTICATED", apiText("The email or password is wrong. Try again, or ask for a new password from create-operator."));
 const cafeNotFound = () => new ApiError("NOT_FOUND", apiText("This café no longer exists. Reload the list."));
+const paymentNotFound = () => new ApiError("NOT_FOUND", apiText("This payment is not in this café's list. Reload the page."));
+const paymentParams = z.object({ id: z.uuid("Use a café from the list."), paymentId: z.uuid(apiText("This payment is not in this café's list. Reload the page.")) });
 
 /** Creates a session for the operator (dropping their timed-out ones) and returns its token for the cookie. */
 async function startSession(trx: Transaction<Database>, operatorId: string): Promise<string> {
@@ -62,12 +65,28 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
   }
   const payments = await trx
     .selectFrom("cafe_payments")
-    .select(["id", "amount_cents", sql<string>`to_char(paid_on, 'YYYY-MM-DD')`.as("paid_on"), "method", "reference", "created_at"])
+    .leftJoin("cafe_payment_voids", "cafe_payment_voids.payment_id", "cafe_payments.id")
+    .select([
+      "cafe_payments.id",
+      "cafe_payments.amount_cents",
+      sql<string>`to_char(cafe_payments.paid_on, 'YYYY-MM-DD')`.as("paid_on"),
+      "cafe_payments.method",
+      "cafe_payments.reference",
+      "cafe_payments.created_at",
+      "cafe_payment_voids.created_at as voided_at",
+      "cafe_payment_voids.reason as void_reason",
+    ])
     .orderBy("cafe_payments.paid_on", "desc")
-    .orderBy("created_at", "desc")
+    .orderBy("cafe_payments.created_at", "desc")
     .limit(ADMIN_PAYMENTS_SHOWN)
     .execute();
-  const paid = await trx.selectFrom("cafe_payments").select(sql<string>`coalesce(sum(amount_cents), 0)`.as("total")).executeTakeFirstOrThrow();
+  // A voided payment stays listed but no longer counts toward what the café paid.
+  const paid = await trx
+    .selectFrom("cafe_payments")
+    .leftJoin("cafe_payment_voids", "cafe_payment_voids.payment_id", "cafe_payments.id")
+    .where("cafe_payment_voids.payment_id", "is", null)
+    .select(sql<string>`coalesce(sum(cafe_payments.amount_cents), 0)`.as("total"))
+    .executeTakeFirstOrThrow();
   return {
     id: cafe.id,
     name: cafe.name,
@@ -81,6 +100,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
       method: payment.method,
       reference: payment.reference,
       recordedAt: payment.created_at.toISOString(),
+      voided: payment.voided_at === null || payment.void_reason === null ? null : { at: payment.voided_at.toISOString(), reason: payment.void_reason },
     })),
   };
 }
@@ -282,7 +302,7 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     return cafe;
   });
 
-  /** Records a payment the café made by hand (AC 39). Payments are never changed or deleted. */
+  /** Records a payment the café made by hand (AC 39). Payments are never changed or deleted; one recorded by mistake is voided (below). */
   app.post("/cafes/:id/payments", { config: { access: "operator" } }, async (request, reply) => {
     const operator = operatorOf(request);
     const { id } = parseInput(idParams, request.params);
@@ -337,6 +357,45 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     });
     request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe payment recorded");
     return reply.code(201).send(cafe);
+  });
+
+  /**
+   * Voids a payment recorded by mistake, once and for good, with the operator's reason: it stays listed, struck through,
+   * and no longer counts toward what the café paid. A payment voided by mistake is recorded again as a new one.
+   */
+  app.post("/cafes/:id/payments/:paymentId/void", { config: { access: "operator" } }, async (request) => {
+    const operator = operatorOf(request);
+    const { id, paymentId } = parseInput(paymentParams, request.params);
+    const body = parseInput(paymentVoidSchema, request.body);
+    const cafe = await withListedCafe(id, async (trx) => {
+      // Not found too when the id is another café's payment, which this café cannot see.
+      const payment = await trx.selectFrom("cafe_payments").select("amount_cents").where("id", "=", paymentId).executeTakeFirst();
+      if (payment === undefined) {
+        throw paymentNotFound();
+      }
+      // Sent again (its response lost), or voided meanwhile: the first void and its reason stay.
+      const voided = await trx
+        .insertInto("cafe_payment_voids")
+        .values({ payment_id: paymentId, cafe_id: id, reason: body.reason, operator_id: operator.operatorId })
+        .onConflict((conflict) => conflict.column("payment_id").doNothing())
+        .returning("payment_id")
+        .executeTakeFirst();
+      if (voided !== undefined) {
+        // The reason is the operator's free text, so it stays out of the audit log.
+        await audit(trx, {
+          cafeId: id,
+          actorType: "operator",
+          actorId: operator.operatorId,
+          action: "cafe.payment_voided",
+          entityType: "cafe_payment",
+          entityId: paymentId,
+          changes: { amountCents: payment.amount_cents },
+        });
+      }
+      return loadCafe(trx, id);
+    });
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe payment voided");
+    return cafe;
   });
 
   done();

@@ -203,6 +203,7 @@ export {
   cafePlanUpdateSchema,
   operatorSessionSchema,
   paymentRecordSchema,
+  paymentVoidSchema,
   type AdminCafe,
   type AdminInvite,
   type AdminPayment,
@@ -210,6 +211,7 @@ export {
   type OperatorSession,
   type PaymentMethod,
   type PaymentRecord,
+  type PaymentVoid,
 } from "./admin.js";
 export { RESULTS_WINDOW_DAYS, offerResultSchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";
 export {

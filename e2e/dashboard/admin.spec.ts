@@ -41,7 +41,7 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
         json: cafe({
           plan: "suspended",
           paidCents: 2500,
-          payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042", recordedAt: "2026-10-01T09:00:00.000Z" }],
+          payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042", recordedAt: "2026-10-01T09:00:00.000Z", voided: null }],
         }),
       });
     },
@@ -287,6 +287,113 @@ test("shows a refused payment's reason by its field, and a failed sign-out in th
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("banner").getByRole("alert")).toHaveText("The server is restarting. Try again in a minute.");
   await expect(page.getByRole("heading", { level: 2, name: /Café Najjar/ })).toBeVisible();
+});
+
+test("voids a payment with its reason: it stays listed, struck through and out of the total, and focus stays on its row", async ({ page }) => {
+  const payment = (id: string, amountCents: number, paidOn: string, voided: { at: string; reason: string } | null = null) => ({
+    id,
+    amountCents,
+    paidOn,
+    method: "cash",
+    reference: null,
+    recordedAt: `${paidOn}T09:00:00.000Z`,
+    voided,
+  });
+  const wrong = "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01";
+  const right = "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02";
+  const sent: unknown[] = [];
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ paidCents: 3500, payments: [payment(right, 1000, "2026-10-02"), payment(wrong, 2500, "2026-10-01")] })] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/payments/${wrong}/void`]: async (route) => {
+      const body = route.request().postDataJSON() as { reason: string };
+      sent.push(body);
+      await (body.reason.trim() === ""
+        ? route.fulfill({
+            status: 400,
+            json: { code: "VALIDATION_FAILED", message: "Some fields are missing or not valid. Check them and try again.", retryable: false, details: [{ path: "reason", issue: "Enter why the payment is voided." }] },
+          })
+        : route.fulfill({
+            json: cafe({ paidCents: 1000, payments: [payment(right, 1000, "2026-10-02"), payment(wrong, 2500, "2026-10-01", { at: "2026-10-16T10:00:00.000Z", reason: body.reason })] }),
+          }));
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  await expect(page.locator(".page-intro")).toContainText("Paid in all: $35.00.");
+  const voidWrong = page.getByRole("button", { name: "Void the payment of $25.00 paid on 1 Oct 2026" });
+  await expect(voidWrong).toHaveText("Void");
+
+  // Cancelled: nothing sent, focus back on the row's button.
+  await voidWrong.click();
+  const reason = page.getByLabel("Reason");
+  await expect(reason).toBeFocused();
+  await expect(page.getByRole("heading", { name: "Void the payment of $25.00 paid on 1 Oct 2026" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(reason).toHaveCount(0);
+  await expect(voidWrong).toBeFocused();
+  // Escape steps back too, from the field, as ConfirmButton's second step does.
+  await voidWrong.click();
+  await reason.fill("Not yet");
+  await page.keyboard.press("Escape");
+  await expect(reason).toHaveCount(0);
+  await expect(voidWrong).toBeFocused();
+
+  // No reason: an empty field is the browser's to refuse (required); only spaces, the server's, by its field, the form kept.
+  await voidWrong.click();
+  await page.getByRole("button", { name: "Void payment" }).click();
+  expect(await reason.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
+  await reason.fill("   ");
+  await page.getByRole("button", { name: "Void payment" }).click();
+  await expect(reason).toHaveAttribute("aria-invalid", "true");
+  await expect(reason).toHaveAccessibleDescription(/Enter why the payment is voided\.$/);
+  await reason.fill("Typed the wrong amount");
+  await page.getByRole("button", { name: "Void payment" }).click();
+
+  await expect(page.getByRole("status")).toHaveText("Voided the payment of $25.00 paid on 1 Oct 2026.");
+  const row = page.getByRole("row").filter({ hasText: "$25.00" });
+  await expect(row.getByRole("cell").last()).toHaveText("Voided Typed the wrong amount");
+  await expect(row.getByRole("button")).toHaveCount(0);
+  // Struck through, and still readable: its day, amount, method and reference stay.
+  await expect(row.getByRole("cell")).toHaveText(["1 Oct 2026", "$25.00", "Cash", "—", "Voided Typed the wrong amount"]);
+  expect(await row.getByRole("cell").nth(1).evaluate((cell) => getComputedStyle(cell).textDecorationLine)).toBe("line-through");
+  await expect(row.locator(".payment-status")).toBeFocused();
+  await expect(page.locator(".page-intro")).toContainText("Paid in all: $10.00.");
+  await expect(page.getByRole("button", { name: "Void the payment of $10.00 paid on 2 Oct 2026" })).toBeEnabled();
+  expect(sent).toEqual([{ reason: "   " }, { reason: "Typed the wrong amount" }]);
+});
+
+test("says when another session voided the payment first, keeping its reason, and when the payment is not the café's", async ({ page }) => {
+  const payment = (id: string, voided: { at: string; reason: string } | null = null) => ({
+    id,
+    amountCents: 2500,
+    paidOn: "2026-10-01",
+    method: "cash",
+    reference: null,
+    recordedAt: "2026-10-01T09:00:00.000Z",
+    voided,
+  });
+  const first = "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01";
+  const gone = "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02";
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ paidCents: 5000, payments: [payment(first), payment(gone)] })] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/payments/${first}/void`]: reply(200, cafe({ paidCents: 2500, payments: [payment(first, { at: "2026-10-16T09:00:00.000Z", reason: "Paid twice" }), payment(gone)] })),
+    [`POST /api/admin/cafes/${CAFE_ID}/payments/${gone}/void`]: reply(404, { code: "NOT_FOUND", message: "This payment is not in this café's list. Reload the page.", retryable: false }),
+  });
+  await page.goto(CAFE_PAGE);
+  const voidButtons = page.getByRole("button", { name: "Void the payment of $25.00 paid on 1 Oct 2026" });
+  await voidButtons.first().click();
+  await page.getByLabel("Reason").fill("Typed the wrong amount");
+  await page.getByRole("button", { name: "Void payment" }).click();
+  // The first void and its reason stay: the page says so, rather than that this reason was saved.
+  await expect(page.getByRole("status")).toHaveText("The payment of $25.00 paid on 1 Oct 2026 was already voided: Paid twice");
+  await expect(page.getByRole("row").filter({ hasText: "Paid twice" })).toHaveCount(1);
+
+  await voidButtons.last().click();
+  await page.getByLabel("Reason").fill("Duplicate");
+  await page.getByRole("button", { name: "Void payment" }).click();
+  await expect(page.locator(".void-payment").getByRole("alert")).toHaveText("This payment is not in this café's list. Reload the page.");
+  await expect(page.getByLabel("Reason")).toHaveValue("Duplicate");
 });
 
 test("changes the operator's password and returns to the operator sign-in", async ({ page }) => {
