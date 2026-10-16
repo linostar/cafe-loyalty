@@ -347,5 +347,13 @@ for (const { lang, locale } of LANGS) {
         await expectLanguageAndFit(page, lang);
       }
     });
+
+    test("the open void form reflows", async ({ page }) => {
+      await mockApi(page, ADMIN);
+      await page.goto(ADMIN_PATHS[1]);
+      await page.getByRole("button", { name: /^Void the payment of|^إبطال دفعة/ }).click();
+      await expect(page.getByRole("textbox", { name: /^Reason$|^السبب$/ })).toBeFocused();
+      await expectLanguageAndFit(page, lang);
+    });
   });
 }
