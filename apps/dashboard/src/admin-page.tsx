@@ -65,6 +65,7 @@ const AR = {
   Amount: "المبلغ",
   By: "الطريقة",
   Payments: "الدفعات",
+  Recorded: "وقت التسجيل",
   Status: "الحالة",
   Void: "إبطال",
   Voided: "مُبطلة",
@@ -514,7 +515,10 @@ function VoidPaymentForm({
 /** The café's latest payments, newest first; a voided one stays listed, struck through, with why. */
 function PaymentsTable({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
-  const dayFormat = dateFormat(useLang(), DAY);
+  const lang = useLang();
+  const dayFormat = dateFormat(lang, DAY);
+  // The day paid is the operator's own (no time); when it was recorded is the server's, shown in the operator's time.
+  const recordedFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
   const [voiding, setVoiding] = useState<string | null>(null);
   const table = useRef<HTMLDivElement>(null);
   /** Where focus goes once the form has gone: back to the row's Void button, or to its Voided status. */
@@ -551,6 +555,7 @@ function PaymentsTable({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Adm
           <thead>
             <tr>
               <th scope="col">{t("Paid on")}</th>
+              <th scope="col">{t("Recorded")}</th>
               <th scope="col">{t("Amount")}</th>
               <th scope="col">{t("By")}</th>
               <th scope="col">{t("Reference")}</th>
@@ -561,6 +566,9 @@ function PaymentsTable({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Adm
             {cafe.payments.map((payment) => (
               <tr key={payment.id} data-payment-id={payment.id} className={payment.voided === null ? undefined : "voided"}>
                 <td>{dayFormat.format(new Date(payment.paidOn))}</td>
+                <td>
+                  <time dateTime={payment.recordedAt}>{recordedFormat.format(new Date(payment.recordedAt))}</time>
+                </td>
                 <td>{formatUsd(payment.amountCents, "en")}</td>
                 <td>{t(METHOD_LABELS[payment.method])}</td>
                 <td>{payment.reference === null ? "—" : <bdi>{payment.reference}</bdi>}</td>

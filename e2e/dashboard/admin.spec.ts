@@ -89,7 +89,8 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
   await card.getByLabel("Reference").fill("W-1042");
   await card.getByRole("button", { name: "Record payment" }).click();
   await expect(page.getByRole("status")).toHaveText("Recorded $25.00 from Café Najjar, paid by Whish on 1 Oct 2026.");
-  await expect(card.getByRole("table", { name: "Latest payments of Café Najjar" }).getByRole("row", { name: /1 Oct 2026 \$25\.00 Whish W-1042/ })).toBeVisible();
+  // The day paid, then when it was recorded (the Recorded column, with its time), then the amount, method and reference.
+  await expect(card.getByRole("table", { name: "Latest payments of Café Najjar" }).getByRole("row", { name: /1 Oct 2026 1 Oct 2026, 09:00 \$25\.00 Whish W-1042/ })).toBeVisible();
   await expect(card.getByLabel("Amount (USD)")).toHaveValue("");
 
   await page.getByRole("button", { name: "Profile: operator@example.com" }).click();
@@ -354,8 +355,10 @@ test("voids a payment with its reason: it stays listed, struck through and out o
   await expect(row.getByRole("cell").last()).toHaveText("Voided Typed the wrong amount");
   await expect(row.getByRole("button")).toHaveCount(0);
   // Struck through, and still readable: its day, amount, method and reference stay.
-  await expect(row.getByRole("cell")).toHaveText(["1 Oct 2026", "$25.00", "Cash", "—", "Voided Typed the wrong amount"]);
-  expect(await row.getByRole("cell").nth(1).evaluate((cell) => getComputedStyle(cell).textDecorationLine)).toBe("line-through");
+  // The day paid, then when it was recorded, with its time (in the operator's zone, UTC here).
+  await expect(row.getByRole("cell")).toHaveText(["1 Oct 2026", "1 Oct 2026, 09:00", "$25.00", "Cash", "—", "Voided Typed the wrong amount"]);
+  await expect(row.locator("time")).toHaveAttribute("datetime", "2026-10-01T09:00:00.000Z");
+  expect(await row.getByRole("cell").nth(2).evaluate((cell) => getComputedStyle(cell).textDecorationLine)).toBe("line-through");
   await expect(row.locator(".payment-status")).toBeFocused();
   await expect(page.locator(".page-intro")).toContainText("Paid in all: $10.00.");
   await expect(page.getByRole("button", { name: "Void the payment of $10.00 paid on 2 Oct 2026" })).toBeEnabled();
