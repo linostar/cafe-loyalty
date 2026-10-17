@@ -62,6 +62,10 @@ cat >"$work/api/Caddyfile" <<EOF
 	redir /join/* /c/$CARD_SECRET?lang=en 303
 	redir /f/* /f/$FEEDBACK_TOKEN?lang=en&sent=1 303
 	respond /health/ready "{\"status\":\"ready\",\"database\":\"ok\",\"jobQueue\":\"ok\"}" 200
+	handle /recover {
+		header Referrer-Policy same-origin
+		respond 200
+	}
 	respond /api/cafe 401
 	respond /api/* "api" 200
 	respond 404
@@ -103,6 +107,9 @@ check "every dashboard path is the app" "$(status "$dashboard" /admin)" 200
 check "the dashboard sends the shared CSP" "$(header "$dashboard" / content-security-policy)" "$csp"
 check "index.html is revalidated" "$(header "$dashboard" / cache-control)" no-cache
 check "HSTS" "$(header "$dashboard" / strict-transport-security)" max-age=31536000
+check "no referrer by default" "$(header "$dashboard" / referrer-policy)" no-referrer
+check "a customer page keeps its own referrer policy" "$(header "$public" /recover referrer-policy)" same-origin
+check "a server reply without one gets the default" "$(header "$public" /api/health referrer-policy)" no-referrer
 check "the dashboard's /api reaches the server" "$(status "$dashboard" /api/auth/session)" 200
 check "the counter's /pair is the app" "$(status "$counter" /pair)" 200
 check "the service worker is revalidated" "$(header "$counter" /sw.js cache-control)" no-cache

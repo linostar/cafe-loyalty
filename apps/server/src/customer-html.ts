@@ -280,7 +280,7 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <meta name="robots" content="noindex, nofollow">
 <title>${title}</title>
 <link rel="icon" type="image/svg+xml" href="${LOGO_PATH}">

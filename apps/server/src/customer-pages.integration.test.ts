@@ -50,7 +50,7 @@ describe("signup page", () => {
     expect(arabic.body).toContain('<html lang="ar" dir="rtl">');
     expect(arabic.headers).toMatchObject({
       "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
+      "referrer-policy": "same-origin",
       "x-robots-tag": "noindex, nofollow",
       "x-content-type-options": "nosniff",
     });
@@ -262,13 +262,13 @@ describe("cross-site form posts", () => {
     const cardsOfCafe = async () => (await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.cards WHERE cafe_id = $1", [cafeId])).rows[0]?.n;
     const before = await cardsOfCafe();
     for (const url of routes(code, secret)) {
-      for (const headers of [crossSite, { "sec-fetch-site": "same-site" }, { "sec-fetch-site": "none" }, { origin: "https://evil.example.com" }]) {
+      for (const headers of [crossSite, { "sec-fetch-site": "same-site" }, { "sec-fetch-site": "none" }, { origin: "https://evil.example.com" }, { origin: "null" }]) {
         const refused = await app.inject({ method: "POST", url: `${url}?lang=en`, headers: { ...headers, "content-type": "application/x-www-form-urlencoded" }, payload: `phone=${encodeURIComponent(uniquePhone())}&privacy=yes&email=someone%40example.com&confirm=yes&message=Hi` });
         expect({ url, headers, status: refused.statusCode }).toEqual({ url, headers, status: 403 });
         expect(refused.body).toContain("This form can only be sent from its own page.");
         expect(refused.headers["content-security-policy"]).toBeDefined();
         expect(refused.headers["cache-control"]).toBe("no-store");
-        expect(refused.headers["referrer-policy"]).toBe("no-referrer");
+        expect(refused.headers["referrer-policy"]).toBe("same-origin");
       }
     }
     // Refused before the body is read: an unreadable one gets the same answer.
@@ -280,9 +280,9 @@ describe("cross-site form posts", () => {
     expect((await cardRow(secret))?.email).toBeNull();
   });
 
-  it("accepts a form posted from its own page, from a browser that says nothing, or with the no-referrer policy's null origin", async () => {
+  it("accepts a form posted from its own page, from a browser that says nothing, or with its own Origin", async () => {
     const { app, code } = await cafeWithJoinCode();
-    for (const headers of [{ "sec-fetch-site": "same-origin" }, {}, { origin: "null" }, { origin: new URL(PUBLIC_URL).origin }]) {
+    for (const headers of [{ "sec-fetch-site": "same-origin" }, {}, { origin: new URL(PUBLIC_URL).origin }]) {
       const body = formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" });
       const response = await app.inject({ method: "POST", url: `/join/${code}`, headers: { ...headers, ...body.headers }, payload: body.payload });
       expect({ headers, status: response.statusCode }).toEqual({ headers, status: 303 });
@@ -326,7 +326,9 @@ describe("web card", () => {
     // The apostrophe is escaped in the attribute.
     expect(card.body).toMatch(/<img class="qr" src="data:image\/svg\+xml;charset=utf-8,[^"]+" alt="Your card&#39;s QR code/);
     expect(card.body).not.toContain("<script");
-    expect(card.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+    expect(card.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "same-origin", "x-robots-tag": "noindex, nofollow" });
+    // The page itself says the same, so a meta tag never takes the real Origin off its own form posts.
+    expect(card.body).toContain('<meta name="referrer" content="same-origin">');
   });
 
   it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {
@@ -435,7 +437,7 @@ describe("web card", () => {
     for (const lang of ["en", "ar"] as const) {
       const settings = await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=${lang}` });
       expect(settings.statusCode).toBe(200);
-      expect(settings.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+      expect(settings.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "same-origin", "x-robots-tag": "noindex, nofollow" });
       expect(settings.headers["content-security-policy"]).toContain("default-src 'none'");
       expect(settings.body).not.toContain("<script");
       expect(settings.body).toContain(`<html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}">`);
@@ -688,7 +690,7 @@ describe("feedback", () => {
     // Without a review link: the message form only.
     const plain = await app.inject({ method: "GET", url: `${path}?lang=en` });
     expect(plain.statusCode).toBe(200);
-    expect(plain.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" });
+    expect(plain.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "same-origin", "x-robots-tag": "noindex, nofollow" });
     expect(plain.body).toContain("How was your visit to \u2068Café Test\u2069?");
     expect(plain.body).toContain('<textarea id="message" name="message"');
     expect(plain.body).not.toContain("Write a Google review");

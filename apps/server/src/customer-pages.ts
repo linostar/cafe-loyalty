@@ -239,11 +239,12 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     next(null, Object.fromEntries(new URLSearchParams(typeof body === "string" ? body : body.toString("utf8"))));
   });
 
-  // Card and recovery links carry secrets: never cached, never sent on as a referrer, never indexed, no scripts.
+  // Card and recovery links carry secrets: never cached, never sent on to another site as a referrer (same-origin: only
+  // back here, whose logs never record it, so these pages' own posts carry their real Origin), never indexed, no scripts.
   app.addHook("onRequest", (_request, reply, next) => {
     void reply
       .header("cache-control", "no-store")
-      .header("referrer-policy", "no-referrer")
+      .header("referrer-policy", "same-origin")
       .header("x-robots-tag", "noindex, nofollow")
       .header("content-security-policy", CUSTOMER_CSP)
       .header("x-content-type-options", "nosniff");
@@ -252,7 +253,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
 
   // A customer form is sent from its own page: a post another site makes (sending someone's browser here with values of
   // its choosing) is refused before anything is read. Sec-Fetch-Site says where a request came from; a browser without
-  // it falls back to Origin, which these pages' no-referrer policy turns into "null" for their own posts.
+  // it falls back to Origin, which these pages' own posts send as PUBLIC_URL's (their same-origin referrer policy). An
+  // "null" Origin is refused: a sandboxed or opaque page on another site sends it too.
   const ownOrigin = new URL(options.publicUrl).origin;
   app.addHook("onRequest", (request, _reply, next) => {
     if (request.method !== "POST") {
@@ -261,7 +263,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
     const site = request.headers["sec-fetch-site"];
     const origin = request.headers.origin;
-    const crossSite = site === undefined ? origin !== undefined && origin !== "null" && origin !== ownOrigin : site !== "same-origin";
+    const crossSite = site === undefined ? origin !== undefined && origin !== ownOrigin : site !== "same-origin";
     next(crossSite ? new PageError(403, "crossSite") : undefined);
   });
 
