@@ -30,6 +30,7 @@ export const API_MESSAGES_AR = {
   "This link is incomplete. Open it again from the message.": "هذا الرابط ناقص. افتحه مجدداً من الرسالة.",
   "Enter an email address in Latin letters, such as name@example.com.": "أدخل عنوان بريد بالأحرف اللاتينية، مثل name@example.com.",
   "Enter your password.": "أدخل كلمة المرور.",
+  "This password is too common. Choose another.": "كلمة المرور هذه شائعة جداً. اختر غيرها.",
   // The operator's admin screen.
   "The email or password is wrong. Try again, or ask for a new password from create-operator.":
     "البريد الإلكتروني أو كلمة المرور غير صحيحة. حاول مجدداً، أو اطلب كلمة مرور جديدة عبر create-operator.",

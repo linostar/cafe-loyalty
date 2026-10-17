@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, feedbackUrl, loadCardOffer, loadFeedbackRequest, offerText, signFeedbackToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, feedbackUrl, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -11,7 +11,7 @@ import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
-import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, type FeedbackView } from "./customer-views.js";
+import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
@@ -125,6 +125,26 @@ export function recoveryEmail(to: string, link: string): EmailMessage {
   };
 }
 
+/** Sent to a card's old recovery email when it is changed or removed, with the undo link; never names the new address. */
+export function emailChangedNotice(to: string, cafeName: string, link: string): EmailMessage {
+  return {
+    to,
+    subject: "Your loyalty card's recovery email was changed / تم تغيير بريد استعادة بطاقة الولاء",
+    text: [
+      `The recovery email of your loyalty card at ${cafeName} was changed or removed, so this address can no longer restore it.`,
+      `If you did not do this, open this link within 7 days to put this address back: ${link}`,
+      "Doing so gives you a new card link, and the old links and QR codes stop working. If you made the change, ignore this email.",
+      "",
+      `تم تغيير بريد الاستعادة لبطاقة الولاء في ${cafeName} أو إزالته، فلم يعد هذا العنوان يستعيدها.`,
+      `إذا لم تفعل ذلك، افتح هذا الرابط خلال 7 أيام لإعادة هذا العنوان: ${link}`,
+      "سيعطيك ذلك رابطاً جديداً للبطاقة، وتتوقف الروابط ورموز QR القديمة عن العمل. إذا كنت أنت من غيّره، تجاهل هذه الرسالة.",
+    ].join("\n"),
+  };
+}
+
+/** A stored email as the settings page shows it: the local part's first character, then the domain ("r•••@example.com"). */
+export const maskEmail = (email: string): string => `${email.slice(0, 1)}•••${email.slice(email.lastIndexOf("@"))}`;
+
 /**
  * Deletes a card, with its Apple and Google passes, the Apple registrations, and its feedback requests and messages
  * (foreign key cascades), and, if that was its customer's last card anywhere, the customer (the phone number) too
@@ -168,9 +188,16 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     cardChangesPerCard: new RateLimiter(20, HOUR * 1000),
     // Each Google save link queues a write to Google with the issuer's shared account and quota.
     googleLinksPerCard: new RateLimiter(20, HOUR * 1000),
+    // Each Apple pass download signs a pass.
+    applePassesPerCard: new RateLimiter(20, HOUR * 1000),
     recoverPerIp: new RateLimiter(5, HOUR * 1000),
     recoverPerEmail: new RateLimiter(3, HOUR * 1000),
     restorePerIp: new RateLimiter(10, 15 * MINUTE * 1000),
+    // Change notices go to an address the card holder typed, never verified: a few an hour per card and address, like
+    // recovery mail (keyed with the card, so another card cannot use up the ones a takeover's victim is owed).
+    noticesPerCardEmail: new RateLimiter(3, HOUR * 1000),
+    // Guesses at the old address of an undo link.
+    emailUndoPerIp: new RateLimiter(10, 15 * MINUTE * 1000),
     feedbackPerIp: new RateLimiter(20, HOUR * 1000),
   };
 
@@ -303,7 +330,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   app.get(LOGO_PATH, async (_request, reply) => reply.code(200).header("content-type", "image/svg+xml").header("cache-control", ASSET_CACHE).send(LOGO_SVG));
 
   // Bare or truncated paths get a page in the visitor's language rather than the API's JSON 404.
-  for (const bare of ["/join", "/c", "/r"]) {
+  for (const bare of ["/join", "/c", "/r", "/u"]) {
     app.get(bare, () => {
       throw new PageError(404, "notFound");
     });
@@ -432,7 +459,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     return cardSettingsView(lang, {
       path,
       cafeName: cafe.name,
-      email: card.email,
+      maskedEmail: card.email === null ? null : maskEmail(card.email),
       offersOptedIn: card.offers_opt_in_at !== null,
       notice,
       errors,
@@ -481,6 +508,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
     const { secret } = request.params as { secret: string };
     const card = await cardOrGone(secret);
+    enforce(limits.applePassesPerCard, card.id);
     const token = applePassToken(secrets, secret);
     const found = await withCafe(db, card.cafe_id, async (trx) => {
       await trx
@@ -575,21 +603,61 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     enforce(limits.cardChangesPerCard, card.id);
-    const raw = formOf(request).email?.trim() ?? "";
-    const parsed = raw === "" ? null : ownerEmailSchema.safeParse(raw);
+    // Removing takes its own button: the field starts empty (the stored address is never its value), so an empty Save
+    // is a mistake, not a removal.
+    const form = formOf(request);
+    const parsed = form.remove === "yes" ? null : ownerEmailSchema.safeParse(form.email?.trim() ?? "");
     if (parsed !== null && !parsed.success) {
       return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
     }
     const email = parsed === null ? null : parsed.data;
-    await withCafe(db, card.cafe_id, async (trx) => {
-      await trx
-        .updateTable("cards")
-        .set({ email, email_lookup: email === null ? null : emailLookup(secrets, email) })
+    const replaced = await withCafe(db, card.cafe_id, async (trx) => {
+      // The address it replaces, read under the row lock so two changes at once each tell the one they replaced.
+      // Still this link's card once locked: an undo or a restore committed while this waited re-keyed it.
+      const old = await trx
+        .selectFrom("cards")
+        .select(["email", "email_lookup"])
         .where("id", "=", card.id)
-        .execute();
+        .where("web_secret_hash", "=", hashToken(secret))
+        .forUpdate()
+        .executeTakeFirst();
+      if (old === undefined) {
+        throw new PageError(404, "cardGone");
+      }
+      const lookup = email === null ? null : emailLookup(secrets, email);
+      const changed = old.email_lookup === null ? lookup !== null : lookup?.equals(old.email_lookup) !== true;
+      // A real change counts, so the undo link sent for it is ordered after every earlier one (email-undo.ts).
+      const { email_change_seq: seq } = await trx
+        .updateTable("cards")
+        .set({ email, email_lookup: lookup, ...(changed ? { email_change_seq: sql<number>`email_change_seq + 1` } : {}) })
+        .where("id", "=", card.id)
+        .returning("email_change_seq")
+        .executeTakeFirstOrThrow();
       await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: email === null ? "card.email_removed" : "card.email_set", entityType: "card", entityId: card.id, changes: { source: "customer" } });
+      if (old.email === null || old.email_lookup === null || !changed) {
+        return undefined;
+      }
+      const cafe = await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow();
+      return { email: old.email, lookup: old.email_lookup, cafeName: cafe.name, seq };
     });
     request.log.info({ cafeId: card.cafe_id }, "card recovery email changed");
+    if (replaced !== undefined && limits.noticesPerCardEmail.hit(`${card.id}:${replaced.lookup.toString("base64url")}`) > 0) {
+      request.log.info({ cafeId: card.cafe_id }, "card email change notice skipped: per-card address limit reached");
+    } else if (replaced !== undefined) {
+      // A leaked card link must not take the card for good (recovery with the new address re-keys it): the old
+      // address is told, with a link that puts it back.
+      const token = signEmailUndoToken(secrets, { cafeId: card.cafe_id, cardId: card.id, seq: replaced.seq, emailLookup: replaced.lookup });
+      const log = request.log;
+      options.background.run("card-email-changed-notice", async () => {
+        try {
+          await options.mailer.send(emailChangedNotice(replaced.email, replaced.cafeName, new URL(`${EMAIL_UNDO_PATH}${token}`, options.publicUrl).toString()));
+        } catch (error) {
+          log.error({ err: error, cafeId: card.cafe_id }, "card email change notice failed");
+          return;
+        }
+        log.info({ cafeId: card.cafe_id }, "card email change notice sent");
+      });
+    }
     return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=1`).send();
   });
 
@@ -859,6 +927,91 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         labelled.map((result) => ({ href: `/c/${result.secret}?lang=${lang}`, label: result.label })),
       ),
     );
+  });
+
+  /**
+   * An undo voids the links of the changes after the one its link was sent for, made before it: they went to addresses
+   * set after the one put back, so the address set first keeps the card, whichever link is used first.
+   */
+  const undoVoided = (seq: number, card: { email_undo_floor: number | null; email_undo_seq: number | null }): boolean =>
+    card.email_undo_floor !== null && card.email_undo_seq !== null && seq > card.email_undo_floor && seq < card.email_undo_seq;
+
+  /**
+   * The undo link from a card's email change notice; one that does not verify or has expired, whose card is gone, or that
+   * an undo voided is gone. One whose card uses the old address again still works (a new link again, as /recover would
+   * give that address), so whoever set it back cannot make the old address's link look used.
+   */
+  async function undoToken(token: string) {
+    const verified = verifyEmailUndoToken(secrets, token);
+    const card =
+      verified === null
+        ? undefined
+        : await withCafe(db, verified.cafeId, (trx) =>
+            trx.selectFrom("cards").select(["email_undo_floor", "email_undo_seq"]).where("id", "=", verified.cardId).executeTakeFirst(),
+          );
+    if (verified === null || card === undefined || undoVoided(verified.seq, card)) {
+      throw new PageError(410, "linkExpired");
+    }
+    return verified;
+  }
+
+  /** Asks for the old address, so a mail scanner fetching the link cannot use it. */
+  app.get(`${EMAIL_UNDO_PATH}:token`, async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const lang = langOf(request);
+    await undoToken(token);
+    const path = `${EMAIL_UNDO_PATH}${token}`;
+    return sendPage(reply, 200, undoEmailView(lang, path, undefined, otherLang(path, lang)));
+  });
+
+  /**
+   * Puts the card's old recovery email back, given that address, unless the card already uses it: like a restore, a
+   * new epoch and web link, so whoever changed the email (and any recovery they ran with it) loses the card.
+   */
+  app.post(`${EMAIL_UNDO_PATH}:token`, async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const lang = langOf(request);
+    enforce(limits.emailUndoPerIp, clientKey(request.ip));
+    const ids = await undoToken(token);
+    const path = `${EMAIL_UNDO_PATH}${token}`;
+    const parsed = ownerEmailSchema.safeParse(formOf(request).email ?? "");
+    const lookup = parsed.success ? emailLookup(secrets, parsed.data) : undefined;
+    if (!parsed.success || lookup === undefined || !ids.isFor(lookup)) {
+      return sendPage(reply, 400, undoEmailView(lang, path, t(lang, parsed.success ? "undoWrongEmail" : "emailInvalid"), otherLang(path, lang)));
+    }
+    const secret = newToken();
+    await withCafe(db, ids.cafeId, async (trx) => {
+      const card = await trx
+        .selectFrom("cards")
+        .select(["email_change_seq", "email_undo_floor", "email_undo_seq"])
+        .where("id", "=", ids.cardId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (card === undefined || undoVoided(ids.seq, card)) {
+        throw new PageError(410, "linkExpired");
+      }
+      // Counts as a change, and voids the links of the changes since the one this link was sent for.
+      const seq = card.email_change_seq + 1;
+      await trx
+        .updateTable("cards")
+        .set({
+          email: parsed.data,
+          email_lookup: lookup,
+          epoch: sql<number>`epoch + 1`,
+          web_secret_hash: hashToken(secret),
+          email_change_seq: seq,
+          // Never raised: a later undo (say, of the holder's own typo) must not bring back links an earlier one voided.
+          email_undo_floor: card.email_undo_floor === null ? ids.seq : Math.min(card.email_undo_floor, ids.seq),
+          email_undo_seq: seq,
+        })
+        .where("id", "=", ids.cardId)
+        .execute();
+      await audit(trx, { cafeId: ids.cafeId, actorType: "system", actorId: null, action: "card.email_change_undone", entityType: "card", entityId: ids.cardId, changes: { source: "customer" } });
+      // The other phone's pass fetches itself again and finds itself voided, as after a restore.
+      await queuePassUpdate(trx, options.jobs, ids.cafeId, ids.cardId);
+    });
+    request.log.info({ cafeId: ids.cafeId }, "card email change undone");
+    return reply.code(303).header("location", `/c/${secret}?lang=${lang}`).send();
   });
 
   done();

@@ -16,11 +16,20 @@ export const FEEDBACK_PATH = "/f/";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN = /^([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([a-z0-9]{1,16})\.([A-Za-z0-9_-]{22})$/;
 
-const compact = (uuid: string): string => Buffer.from(uuid.replace(/-/g, ""), "hex").toString("base64url");
+/** A UUID in the 22 base64url characters a signed link carries (here and in email-undo.ts). */
+export const compact = (uuid: string): string => Buffer.from(uuid.replace(/-/g, ""), "hex").toString("base64url");
 const expand = (part: string): string => {
   const hex = Buffer.from(part, "base64url").toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
+/**
+ * The UUID a link's 22 characters carry, or null: base64url of 16 bytes round-trips only from its canonical form, so a
+ * different spelling is refused.
+ */
+export function expandUuid(part: string): string | null {
+  const uuid = expand(part);
+  return UUID.test(uuid) && compact(uuid) === part ? uuid : null;
+}
 // 128 bits of HMAC-SHA256.
 const mac = (key: Buffer, cafeId: string, requestId: string): Buffer =>
   createHmac("sha256", key).update(`${FEEDBACK_SIGNING_PREFIX}${cafeId}\n${requestId}`).digest().subarray(0, 16);
@@ -39,10 +48,9 @@ export function verifyFeedbackToken(secrets: { cardQr: Keyring }, token: string)
   }
   const [, cafePart = "", requestPart = "", keyId, macPart = ""] = parts;
   const entry = secrets.cardQr.keys.find((candidate) => candidate.id === keyId);
-  const cafeId = expand(cafePart);
-  const requestId = expand(requestPart);
-  // base64url of 16 bytes round-trips only from its canonical form; a different spelling is refused.
-  if (entry === undefined || !UUID.test(cafeId) || !UUID.test(requestId) || compact(cafeId) !== cafePart || compact(requestId) !== requestPart) {
+  const cafeId = expandUuid(cafePart);
+  const requestId = expandUuid(requestPart);
+  if (entry === undefined || cafeId === null || requestId === null) {
     return null;
   }
   const given = Buffer.from(macPart, "base64url");

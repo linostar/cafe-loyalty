@@ -10,6 +10,12 @@ import { count, html, page, t, type Lang, type SafeHtml } from "./customer-html.
 const errorBlock = (message: string | undefined, id: string): SafeHtml | false =>
   message !== undefined && html`<p class="field-error" id="${id}" role="alert">${message}</p>`;
 
+/** An aria-describedby attribute naming the ids given, or nothing when none is. */
+const describedBy = (ids: readonly (string | null)[]): SafeHtml | "" => {
+  const named = ids.filter((id) => id !== null).join(" ");
+  return named === "" ? "" : html` aria-describedby="${named}"`;
+};
+
 /** The café's program as the customer reads it, in the page's language. */
 export interface ProgramView {
   stampsRequired: number;
@@ -135,7 +141,8 @@ export interface CardSettingsView {
   /** The card's own path (/c/<secret>): the back link, and the forms post below it. */
   path: string;
   cafeName: string;
-  email: string | null;
+  /** The stored recovery email, masked (never shown in full, nor as the field's value), or null for none. */
+  maskedEmail: string | null;
   offersOptedIn: boolean;
   notice: string | undefined;
   errors: { email?: string; delete?: string };
@@ -160,13 +167,15 @@ ${view.notice === undefined ? null : html`<p class="notice" role="status">${view
 <section aria-labelledby="email-title" class="card">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
 <p>${t(lang, "emailText")}</p>
+${view.maskedEmail === null ? null : html`<p id="email-current">${t(lang, "emailCurrent", { email: view.maskedEmail })}</p>`}
 <form method="post" action="${view.path}/email" novalidate>
 <input type="hidden" name="lang" value="${lang}">
 <label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr" value="${view.email ?? ""}" aria-describedby="email-hint${errors.email === undefined ? "" : " email-error"}"${errors.email === undefined ? "" : html` aria-invalid="true"`}>
-<p id="email-hint" class="hint">${t(lang, "emailRemoveHint")}</p>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr"${describedBy([view.maskedEmail === null ? null : "email-current email-hint", errors.email === undefined ? null : "email-error"])}${errors.email === undefined ? "" : html` aria-invalid="true"`}>
+${view.maskedEmail === null ? null : html`<p id="email-hint" class="hint">${t(lang, "emailRemoveHint")}</p>`}
 ${errorBlock(errors.email, "email-error")}
 <button type="submit">${t(lang, "emailSave")}</button>
+${view.maskedEmail === null ? null : html`<button type="submit" class="quiet" name="remove" value="yes" formnovalidate>${t(lang, "emailRemove")}</button>`}
 </form>
 </section>
 <section aria-labelledby="offers-title" class="card">
@@ -241,6 +250,26 @@ export function restoredView(lang: Lang, cards: readonly { href: string; label: 
 <ul class="card-links">${cards.map((card) => html`<li><a href="${card.href}"><bdi>${card.label}</bdi></a></li>`)}</ul>
 </div>`,
     null,
+  );
+}
+
+/** The undo link sent to a card's old recovery email: asks for that address, so a mail scanner cannot use it. */
+export function undoEmailView(lang: Lang, path: string, error: string | undefined, otherLangHref: string): string {
+  return page(
+    lang,
+    t(lang, "undoTitle"),
+    html`<div class="card">
+<h1>${t(lang, "undoTitle")}</h1>
+<p>${t(lang, "undoText")}</p>
+<form method="post" action="${path}" novalidate>
+<input type="hidden" name="lang" value="${lang}">
+<label for="email">${t(lang, "emailLabel")}</label>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr" required${error === undefined ? "" : html` aria-invalid="true" aria-describedby="email-error"`}>
+${errorBlock(error, "email-error")}
+<button type="submit">${t(lang, "undoButton")}</button>
+</form>
+</div>`,
+    otherLangHref,
   );
 }
 

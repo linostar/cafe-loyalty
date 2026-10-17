@@ -81,7 +81,8 @@ vps "set -e
   done
   age-keygen -o /root/identity.txt 2>/dev/null
   printf '%s\n' BACKUP_AGE_RECIPIENT=\$(age-keygen -y /root/identity.txt) BACKUP_REMOTE=/offsite >/etc/cafe-loyalty/backup.conf
-  # Older backups for the retention policy: 8 nightly and 4 pre-deploy on the VPS, and off-site copies of several ages.
+  # Older backups for the retention policy: 8 nightly and 4 pre-deploy on the VPS, and off-site copies of several ages,
+  # which stay (the storage provider expires them).
   for day in 1 2 3 4 5 6 7 8; do mkdir -m 0700 /srv/cafe-loyalty/production/backups/2020010\${day}T013000Z-nightly; done
   for day in 1 2 3 4; do mkdir -m 0700 /srv/cafe-loyalty/production/backups/2020010\${day}T020000Z-predeploy; done
   mkdir -p /offsite/production/nightly /offsite/production/monthly /offsite/production/predeploy
@@ -115,9 +116,9 @@ check "the roles carry no passwords" "$(vps "grep -ci 'password\|scram' /srv/caf
 check "7 nightly backups are kept on the VPS" "$(vps 'ls -d /srv/cafe-loyalty/production/backups/*-nightly | wc -l')" 7
 check "the oldest go first" "$(vps 'ls /srv/cafe-loyalty/production/backups | grep nightly | head -n 1')" 20200104T013000Z-nightly
 check "no partial files are left" "$(vps 'ls -A /srv/cafe-loyalty/production/backups | grep -c "^\.[0-9]" || true')" 0
-check "the copy is off-site, and the 35-day-old one is gone" "$(vps "ls /offsite/production/nightly | tr '\n' ' '")" \
-  "20200201T013000Z-nightly.tar.age $name.tar.age recent.tar.age "
-check "the 1st of the month's copy is also a monthly one, and monthly copies are kept a year" \
+check "the copy is off-site, and no older one is deleted" "$(vps "ls /offsite/production/nightly | tr '\n' ' '")" \
+  "20200201T013000Z-nightly.tar.age $name.tar.age old.tar.age recent.tar.age "
+check "the 1st of the month's copy is also a monthly one, and older monthly copies stay" \
   "$(vps "ls /offsite/production/monthly | tr '\n' ' '")" "20200201T013000Z-nightly.tar.age old.tar.age "
 check "no other day's copy is a monthly one" "$(vps "ls /offsite/production/monthly | grep -c $name || true")" 0
 check "the off-site copy is age-encrypted" "$(vps "head -c 21 /offsite/production/nightly/$name.tar.age")" "age-encryption.org/v1"
@@ -131,8 +132,8 @@ check "the pre-deploy backup succeeds" "$status" 0
 predeploy=$(vps 'ls /srv/cafe-loyalty/production/backups | grep predeploy' | tail -n 1)
 check "3 pre-deploy backups are kept on the VPS" "$(vps "ls /srv/cafe-loyalty/production/backups | grep predeploy | tr '\n' ' '")" \
   "20200103T020000Z-predeploy 20200104T020000Z-predeploy $predeploy "
-check "pre-deploy copies are kept off-site 14 days" "$(vps "ls /offsite/production/predeploy | tr '\n' ' '")" \
-  "$predeploy.tar.age recent.tar.age "
+check "older pre-deploy copies stay off-site" "$(vps "ls /offsite/production/predeploy | tr '\n' ' '")" \
+  "$predeploy.tar.age old.tar.age recent.tar.age "
 
 run '/opt/cafe-loyalty/bin/restore-test.sh production'
 check "the restore test passes" "$status" 0

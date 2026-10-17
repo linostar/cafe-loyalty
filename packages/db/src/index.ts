@@ -29,6 +29,7 @@ export {
 export type { Job, PgBoss } from "pg-boss";
 export { MigrationStateError, migrate, type MigrateOptions, type MigrationLog, type MigrationOutcome } from "./migrate.js";
 export { MIGRATIONS_DIR, MigrationFileError, loadMigrations, parseMigration, type MigrationFile, type MigrationKind } from "./migrations.js";
+export { EMAIL_UNDO_PATH, EMAIL_UNDO_TTL_SECONDS, signEmailUndoToken, verifyEmailUndoToken } from "./email-undo.js";
 export { FEEDBACK_PATH, feedbackUrl, loadFeedbackRequest, signFeedbackToken, verifyFeedbackToken } from "./feedback.js";
 export { loadCardOffer, offerKey, type CardOffer } from "./offers.js";
 export { base64PemSchema, keyFitsCertificate } from "./pem.js";

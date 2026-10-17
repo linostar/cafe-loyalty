@@ -24,7 +24,7 @@ import { audit, now } from "./db-helpers.js";
 import { importDeviceKey, verifyDeviceSignature } from "./device-routes.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { RateLimiter } from "./rate-limit.js";
-import { applyVisit, insertVisit, planVisit } from "./stamping.js";
+import { applyVisit, insertVisit, planVisit, stampLimitHold } from "./stamping.js";
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -133,7 +133,7 @@ async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secre
     const deviceRow = await trx.selectFrom("devices").select("revoked_at").where("id", "=", device.deviceId).forNoKeyUpdate().executeTakeFirstOrThrow();
     const key = await trx
       .selectFrom("device_keys")
-      .select(["public_key", "revoked_at"])
+      .select(["public_key", "revoked_at", "created_at"])
       .where("id", "=", event.keyId)
       .where("device_id", "=", device.deviceId)
       .executeTakeFirst();
@@ -183,7 +183,15 @@ async function recordEvent(db: Kysely<Database>, jobs: PgBoss | undefined, secre
     // A visit's card and items are checked before it is recorded; a refusal is kept, held or not.
     const plan = event.type === "visit.recorded" ? await planVisit(trx, secrets, device.cafeId, event.payload, new Date(occurredAt)) : undefined;
     const discountRefused = plan?.status === "ready" && plan.discountRefused;
-    const holdReason = event.type === "staff.pin_lockout" ? null : (revokedBy ?? (late ? "late_sync" : discountRefused ? "campaign_check" : null));
+    // Dated before the key that signed it existed (a phone's clock allowed for): backdated, since a key signs only after
+    // pairing. The signing key's own date, so a queue signed before a re-pair with the older key still applies (AC 18).
+    const beforeKey = event.type === "visit.recorded" && occurredAt < key.created_at.getTime() - SYNC_FUTURE_SKEW_MS;
+    const stampLimit = plan?.status === "ready" ? await stampLimitHold(trx, device.cafeId, device.deviceId, plan.stampsEarned) : null;
+    // One reason each: the earlier reasons first, then the visit's date before its key (the plainest sign of
+    // backdating), then its stamps. Checked only as a visit is received; accepting one applies it by applyVisit's rules
+    // alone, so the check that held it never holds it again.
+    const visitHold = late ? "late_sync" : discountRefused ? "campaign_check" : beforeKey ? "before_key" : stampLimit;
+    const holdReason = event.type === "staff.pin_lockout" ? null : (revokedBy ?? visitHold);
     const refusal = plan?.status === "refused" ? plan.code : null;
     const inserted = await trx
       .insertInto("sync_events")

@@ -413,6 +413,9 @@ test("changes the operator's password and returns to the operator sign-in", asyn
   await expect(page).toHaveURL("/admin/password");
   await expect(page.getByRole("heading", { level: 2, name: "Change password" })).toBeVisible();
   await expect(page.getByText("Signed in as operator@example.com")).toBeVisible();
+  // Operators choose longer passwords than owners.
+  await expect(page.getByText("At least 16 characters.")).toBeVisible();
+  await expect(page.getByLabel("New password", { exact: true })).toHaveAttribute("minlength", "16");
   await page.getByLabel("Current password", { exact: true }).fill("fake-operator-password");
   await page.getByLabel("New password", { exact: true }).fill("a brand new password");
   await page.getByRole("button", { name: "Change password" }).click();

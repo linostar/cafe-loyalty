@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Backs up one environment's database (AC 55): `backup.sh <production|staging> [nightly|predeploy]`, as root (the
-# nightly timer, the deploy script, or the deploy user through sudo). Writes /srv/cafe-loyalty/<environment>/backups/
-# <name>/ with roles.sql (roles and memberships, no passwords) and database.dump (pg_dump's custom format), then copies
-# it off-site, together with the environment's app.env and database.env (without which the data is unusable), encrypted
-# with age to the recipient in /etc/cafe-loyalty/backup.conf, whose private key never comes to the VPS. Plaintext never
-# leaves the VPS. Then prunes both places by the retention policy below.
+# nightly timer or the deploy script). Writes /srv/cafe-loyalty/<environment>/backups/<name>/ with roles.sql (roles and
+# memberships, no passwords) and database.dump (pg_dump's custom format), then copies it off-site, together with the
+# environment's app.env and database.env (without which the data is unusable), encrypted with age to the recipient in
+# /etc/cafe-loyalty/backup.conf, whose private key never comes to the VPS. Plaintext never leaves the VPS. Then prunes
+# the VPS's backups by the retention policy below. Nothing here deletes off-site: the storage provider's lifecycle
+# rules expire the copies, and the remote's key cannot delete (README, Backups), so root on the VPS cannot destroy them.
 set -euo pipefail
 
 readonly APP=cafe-loyalty
 readonly SRV_DIR=/srv/$APP
 readonly CONF_DIR=/etc/$APP
-# Retention: backups of each kind kept on the VPS (the newest), and days a copy is kept off-site. The nightly backup of
-# the 1st of each month is also kept off-site as a monthly one.
+# Retention: backups of each kind kept on the VPS (the newest). The nightly backup of the 1st of each month is also
+# copied off-site as a monthly one.
 readonly KEEP_NIGHTLY=7 KEEP_PREDEPLOY=3
-readonly OFFSITE_DAYS_NIGHTLY=35 OFFSITE_DAYS_PREDEPLOY=14 OFFSITE_DAYS_MONTHLY=400
 
 fail() {
   echo "backup: $*" >&2
@@ -94,10 +94,4 @@ for entry in nightly:$KEEP_NIGHTLY predeploy:$KEEP_PREDEPLOY; do
     rm -rf "${found[i]}"
     log "removed $(basename "${found[i]}") from the VPS."
   done
-done
-# Only kinds already copied: rclone fails on a folder that does not exist.
-folders=$(offsite lsf --dirs-only "$remote/$env") || fail "cannot list $remote/$env."
-for entry in nightly:$OFFSITE_DAYS_NIGHTLY predeploy:$OFFSITE_DAYS_PREDEPLOY monthly:$OFFSITE_DAYS_MONTHLY; do
-  grep -Fx "${entry%%:*}/" <<<"$folders" >/dev/null || continue
-  offsite delete --min-age "${entry#*:}d" "$remote/$env/${entry%%:*}" || fail "cannot prune $remote/$env/${entry%%:*}."
 done
