@@ -126,6 +126,7 @@ const MESSAGES = {
     linkExpired: "This link has expired, was already used, or was replaced by a newer one. Ask for a new link.",
     cardGone: "This card link no longer works. If you restored your card on another phone, use the new link there.",
     joinGone: "This signup code is no longer valid. Ask the café for its current code.",
+    crossSite: "This form can only be sent from its own page. Open the page again and send the form from there.",
     joinPaused: "This café is not taking new members right now. Ask the café when you can join.",
     tooMany: "Too many attempts. Wait {minutes} and try again.",
     failed: "Something went wrong on our side. Try again in a moment.",
@@ -207,6 +208,7 @@ const MESSAGES = {
     linkExpired: "انتهت صلاحية هذا الرابط أو استُخدم أو حلّ محله رابط أحدث. اطلب رابطاً جديداً.",
     cardGone: "رابط هذه البطاقة لم يعد يعمل. إذا استعدت بطاقتك على هاتف آخر، فاستخدم الرابط الجديد هناك.",
     joinGone: "رمز التسجيل هذا لم يعد صالحاً. اطلب من المقهى رمزه الحالي.",
+    crossSite: "لا يمكن إرسال هذا النموذج إلا من صفحته. افتح الصفحة مجدداً وأرسل النموذج منها.",
     joinPaused: "هذا المقهى لا يستقبل أعضاء جدداً حالياً. اسأل المقهى متى يمكنك الانضمام.",
     tooMany: "محاولات كثيرة. انتظر {minutes} وحاول مجدداً.",
     failed: "حدث خطأ لدينا. حاول بعد قليل.",
@@ -278,7 +280,7 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <meta name="robots" content="noindex, nofollow">
 <title>${title}</title>
 <link rel="icon" type="image/svg+xml" href="${LOGO_PATH}">
