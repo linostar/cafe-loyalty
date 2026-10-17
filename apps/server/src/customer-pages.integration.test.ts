@@ -643,12 +643,21 @@ describe("email change undo", () => {
   it("shows the stored email masked, never in full", async () => {
     const h = await cafeWithJoinCode();
     const secret = secretOf(await join(h.app, h.code, uniquePhone()));
+    // With none stored: no hint about replacing or removing one, nor a Remove button.
+    const empty = (await h.app.inject({ method: "GET", url: `/c/${secret}/settings?lang=en` })).body;
+    expect(empty).not.toContain("replace it");
+    expect(empty).not.toContain('id="email-hint"');
+    expect(empty).not.toMatch(/<input id="email"[^>]*aria-describedby/);
+    expect(empty).not.toContain('name="remove"');
     await setEmail(h, secret, "rana@example.com");
     for (const lang of ["en", "ar"] as const) {
       const body = (await h.app.inject({ method: "GET", url: `/c/${secret}/settings?lang=${lang}` })).body;
       expect(body).toContain("r•••@example.com");
       expect(body).not.toContain("rana@");
       expect(body).not.toMatch(/name="email"[^>]* value=/);
+      // The field is described by the stored address and the hint; Remove is the form's quiet second button.
+      expect(body).toMatch(/<input id="email"[^>]* aria-describedby="email-current email-hint"/);
+      expect(body).toContain('<button type="submit" class="quiet" name="remove" value="yes" formnovalidate>');
     }
     // Saving a new one still works.
     await setEmail(h, secret, "sami@example.com");
@@ -738,15 +747,90 @@ describe("email change undo", () => {
     expect((await cardRow(secretOf(undone)))?.email).toBe(old);
   });
 
-  it("sends at most 3 change notices an hour to one address", async () => {
+  it("never lets the link sent to an address set later take the card back after the first address's undo, in either order", async () => {
+    for (const attackerFirst of [false, true]) {
+      const h = await cafeWithJoinCode();
+      const victim = secretOf(await join(h.app, h.code, uniquePhone()));
+      const old = `rana-${randomUUID()}@example.com`;
+      const own = `mallory-${randomUUID()}@example.com`;
+      await setEmail(h, victim, old);
+      // With the leaked link: their own address, then away from it again, so it gets an undo link of its own.
+      await setEmail(h, victim, own);
+      await setEmail(h, victim, `other-${randomUUID()}@example.com`);
+      expect(h.mailer.sent.map((mail) => mail.to)).toEqual([old, own]);
+      const [victimUndo, attackerUndo] = [undoPathOf(h, 0), undoPathOf(h, 1)];
+      if (attackerFirst) {
+        expect((await h.app.inject({ method: "POST", url: attackerUndo, ...formBody({ email: own, lang: "en" }) })).statusCode).toBe(303);
+      }
+      const undone = await h.app.inject({ method: "POST", url: victimUndo, ...formBody({ email: old, lang: "en" }) });
+      expect({ attackerFirst, status: undone.statusCode }).toEqual({ attackerFirst, status: 303 });
+      for (const method of ["GET", "POST"] as const) {
+        const refused = await h.app.inject({ method, url: `${attackerUndo}?lang=en`, ...formBody({ email: own, lang: "en" }) });
+        expect({ attackerFirst, method, status: refused.statusCode }).toEqual({ attackerFirst, method, status: 410 });
+      }
+      const card = await cardRow(secretOf(undone));
+      expect(card?.email).toBe(old);
+      expect((await h.app.inject({ method: "GET", url: `/c/${secretOf(undone)}` })).statusCode).toBe(200);
+      // The first address's link still works, and a later change sends a working link again.
+      expect((await h.app.inject({ method: "GET", url: `${victimUndo}?lang=en` })).statusCode).toBe(200);
+      await setEmail(h, secretOf(undone), `new-${randomUUID()}@example.com`);
+      expect((await h.app.inject({ method: "GET", url: `${undoPathOf(h, 2)}?lang=en` })).statusCode).toBe(200);
+    }
+  });
+
+  it("keeps a voided link voided when the holder undoes a later change of their own", async () => {
+    const h = await cafeWithJoinCode();
+    const victim = secretOf(await join(h.app, h.code, uniquePhone()));
+    const old = `rana-${randomUUID()}@example.com`;
+    const own = `mallory-${randomUUID()}@example.com`;
+    await setEmail(h, victim, old);
+    await setEmail(h, victim, own);
+    await setEmail(h, victim, `other-${randomUUID()}@example.com`);
+    const attackerUndo = undoPathOf(h, 1);
+    const back = secretOf(await h.app.inject({ method: "POST", url: undoPathOf(h, 0), ...formBody({ email: old, lang: "en" }) }));
+    // The holder then changes to a mistyped address and undoes that too.
+    await setEmail(h, back, `rana-typo-${randomUUID()}@example.com`);
+    const again = secretOf(await h.app.inject({ method: "POST", url: undoPathOf(h, 2), ...formBody({ email: old, lang: "en" }) }));
+    expect((await h.app.inject({ method: "POST", url: attackerUndo, ...formBody({ email: own, lang: "en" }) })).statusCode).toBe(410);
+    expect((await h.app.inject({ method: "GET", url: `/c/${again}` })).statusCode).toBe(200);
+  });
+
+  it("never applies an email change that waited on the card while an undo or restore re-keyed it", async () => {
     const h = await cafeWithJoinCode();
     const secret = secretOf(await join(h.app, h.code, uniquePhone()));
+    const card = await cardRow(secret);
+    await context.admin.query("BEGIN");
+    await context.admin.query("SELECT 1 FROM app.cards WHERE id = $1 FOR UPDATE", [card?.id]);
+    const change = h.app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "mallory@example.com", lang: "en" }) });
+    // Waits until the change is blocked on the card's row lock, then re-keys the card as an undo would.
+    for (let tries = 0; tries < 100; tries += 1) {
+      const { rows } = await context.admin.query<{ waiting: number }>("SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted");
+      if ((rows[0]?.waiting ?? 0) > 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await context.admin.query("UPDATE app.cards SET web_secret_hash = $1, epoch = epoch + 1 WHERE id = $2", [hashToken(randomUUID()), card?.id]);
+    await context.admin.query("COMMIT");
+    const response = await change;
+    expect(response.statusCode).toBe(404);
+    const { rows } = await context.admin.query<{ email: string | null }>("SELECT email FROM app.cards WHERE id = $1", [card?.id]);
+    expect(rows[0]?.email).toBeNull();
+  });
+
+  it("sends at most 3 change notices an hour per card to one address, whatever other cards send it", async () => {
+    const h = await cafeWithJoinCode();
+    const [first, second] = [secretOf(await join(h.app, h.code, uniquePhone())), secretOf(await join(h.app, h.code, uniquePhone()))];
     for (let round = 0; round < 4; round += 1) {
-      await setEmail(h, secret, "rana@example.com");
-      await setEmail(h, secret, "");
+      await setEmail(h, first, "rana@example.com");
+      await setEmail(h, first, "");
     }
     expect(h.mailer.sent.map((mail) => mail.to)).toEqual(["rana@example.com", "rana@example.com", "rana@example.com"]);
-    expect((await cardRow(secret))?.email).toBeNull();
+    expect((await cardRow(first))?.email).toBeNull();
+    // The first card used up its own, not the second card's: a change there still tells the address.
+    await setEmail(h, second, "rana@example.com");
+    await setEmail(h, second, "");
+    expect(h.mailer.sent).toHaveLength(4);
   });
 
   it("refuses an expired, tampered or unknown card's link", async () => {
@@ -757,8 +841,8 @@ describe("email change undo", () => {
     await setEmail(h, secret, "other@example.com");
     const valid = undoPathOf(h, 0).slice(3);
     const emailLookup = createHmac("sha256", TEST_SECRETS.phoneLookupPepper).update("email:rana@example.com").digest();
-    const expired = signEmailUndoToken(TEST_SECRETS, { cafeId: h.owner.cafeId, cardId: card?.id ?? "", emailLookup }, Date.now() - 7 * 24 * 60 * 60 * 1000 - 1000);
-    const unknown = signEmailUndoToken(TEST_SECRETS, { cafeId: h.owner.cafeId, cardId: randomUUID(), emailLookup });
+    const expired = signEmailUndoToken(TEST_SECRETS, { cafeId: h.owner.cafeId, cardId: card?.id ?? "", seq: 2, emailLookup }, Date.now() - 7 * 24 * 60 * 60 * 1000 - 1000);
+    const unknown = signEmailUndoToken(TEST_SECRETS, { cafeId: h.owner.cafeId, cardId: randomUUID(), seq: 1, emailLookup });
     const tampered = valid.replace(/.$/, (last) => (last === "A" ? "B" : "A"));
     for (const token of [expired, tampered]) {
       expect((await h.app.inject({ method: "GET", url: `/u/${token}?lang=en` })).statusCode).toBe(410);

@@ -193,8 +193,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     recoverPerIp: new RateLimiter(5, HOUR * 1000),
     recoverPerEmail: new RateLimiter(3, HOUR * 1000),
     restorePerIp: new RateLimiter(10, 15 * MINUTE * 1000),
-    // Change notices go to an address the card holder typed, never verified: a few an hour each, like recovery mail.
-    noticesPerEmail: new RateLimiter(3, HOUR * 1000),
+    // Change notices go to an address the card holder typed, never verified: a few an hour per card and address, like
+    // recovery mail (keyed with the card, so another card cannot use up the ones a takeover's victim is owed).
+    noticesPerCardEmail: new RateLimiter(3, HOUR * 1000),
     // Guesses at the old address of an undo link.
     emailUndoPerIp: new RateLimiter(10, 15 * MINUTE * 1000),
     feedbackPerIp: new RateLimiter(20, HOUR * 1000),
@@ -612,23 +613,40 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const email = parsed === null ? null : parsed.data;
     const replaced = await withCafe(db, card.cafe_id, async (trx) => {
       // The address it replaces, read under the row lock so two changes at once each tell the one they replaced.
-      const old = await trx.selectFrom("cards").select(["email", "email_lookup"]).where("id", "=", card.id).forUpdate().executeTakeFirstOrThrow();
+      // Still this link's card once locked: an undo or a restore committed while this waited re-keyed it.
+      const old = await trx
+        .selectFrom("cards")
+        .select(["email", "email_lookup"])
+        .where("id", "=", card.id)
+        .where("web_secret_hash", "=", hashToken(secret))
+        .forUpdate()
+        .executeTakeFirst();
+      if (old === undefined) {
+        throw new PageError(404, "cardGone");
+      }
       const lookup = email === null ? null : emailLookup(secrets, email);
-      await trx.updateTable("cards").set({ email, email_lookup: lookup }).where("id", "=", card.id).execute();
+      const changed = old.email_lookup === null ? lookup !== null : lookup?.equals(old.email_lookup) !== true;
+      // A real change counts, so the undo link sent for it is ordered after every earlier one (email-undo.ts).
+      const { email_change_seq: seq } = await trx
+        .updateTable("cards")
+        .set({ email, email_lookup: lookup, ...(changed ? { email_change_seq: sql<number>`email_change_seq + 1` } : {}) })
+        .where("id", "=", card.id)
+        .returning("email_change_seq")
+        .executeTakeFirstOrThrow();
       await audit(trx, { cafeId: card.cafe_id, actorType: "system", actorId: null, action: email === null ? "card.email_removed" : "card.email_set", entityType: "card", entityId: card.id, changes: { source: "customer" } });
-      if (old.email === null || old.email_lookup === null || lookup?.equals(old.email_lookup) === true) {
+      if (old.email === null || old.email_lookup === null || !changed) {
         return undefined;
       }
       const cafe = await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow();
-      return { email: old.email, lookup: old.email_lookup, cafeName: cafe.name };
+      return { email: old.email, lookup: old.email_lookup, cafeName: cafe.name, seq };
     });
     request.log.info({ cafeId: card.cafe_id }, "card recovery email changed");
-    if (replaced !== undefined && limits.noticesPerEmail.hit(replaced.lookup.toString("base64url")) > 0) {
-      request.log.info({ cafeId: card.cafe_id }, "card email change notice skipped: per-email limit reached");
+    if (replaced !== undefined && limits.noticesPerCardEmail.hit(`${card.id}:${replaced.lookup.toString("base64url")}`) > 0) {
+      request.log.info({ cafeId: card.cafe_id }, "card email change notice skipped: per-card address limit reached");
     } else if (replaced !== undefined) {
       // A leaked card link must not take the card for good (recovery with the new address re-keys it): the old
       // address is told, with a link that puts it back.
-      const token = signEmailUndoToken(secrets, { cafeId: card.cafe_id, cardId: card.id, emailLookup: replaced.lookup });
+      const token = signEmailUndoToken(secrets, { cafeId: card.cafe_id, cardId: card.id, seq: replaced.seq, emailLookup: replaced.lookup });
       const log = request.log;
       options.background.run("card-email-changed-notice", async () => {
         try {
@@ -912,14 +930,26 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   });
 
   /**
-   * The undo link from a card's email change notice; one that does not verify or has expired, or whose card is gone, is
-   * gone. One whose card uses the old address again still works (a new link again, as /recover would give that address),
-   * so whoever set it back cannot make the old address's link look used.
+   * An undo voids the links of the changes after the one its link was sent for, made before it: they went to addresses
+   * set after the one put back, so the address set first keeps the card, whichever link is used first.
+   */
+  const undoVoided = (seq: number, card: { email_undo_floor: number | null; email_undo_seq: number | null }): boolean =>
+    card.email_undo_floor !== null && card.email_undo_seq !== null && seq > card.email_undo_floor && seq < card.email_undo_seq;
+
+  /**
+   * The undo link from a card's email change notice; one that does not verify or has expired, whose card is gone, or that
+   * an undo voided is gone. One whose card uses the old address again still works (a new link again, as /recover would
+   * give that address), so whoever set it back cannot make the old address's link look used.
    */
   async function undoToken(token: string) {
     const verified = verifyEmailUndoToken(secrets, token);
-    const card = verified === null ? undefined : await withCafe(db, verified.cafeId, (trx) => trx.selectFrom("cards").select("id").where("id", "=", verified.cardId).executeTakeFirst());
-    if (verified === null || card === undefined) {
+    const card =
+      verified === null
+        ? undefined
+        : await withCafe(db, verified.cafeId, (trx) =>
+            trx.selectFrom("cards").select(["email_undo_floor", "email_undo_seq"]).where("id", "=", verified.cardId).executeTakeFirst(),
+          );
+    if (verified === null || card === undefined || undoVoided(verified.seq, card)) {
       throw new PageError(410, "linkExpired");
     }
     return verified;
@@ -951,13 +981,29 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
     const secret = newToken();
     await withCafe(db, ids.cafeId, async (trx) => {
-      const card = await trx.selectFrom("cards").select("id").where("id", "=", ids.cardId).forUpdate().executeTakeFirst();
-      if (card === undefined) {
+      const card = await trx
+        .selectFrom("cards")
+        .select(["email_change_seq", "email_undo_floor", "email_undo_seq"])
+        .where("id", "=", ids.cardId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (card === undefined || undoVoided(ids.seq, card)) {
         throw new PageError(410, "linkExpired");
       }
+      // Counts as a change, and voids the links of the changes since the one this link was sent for.
+      const seq = card.email_change_seq + 1;
       await trx
         .updateTable("cards")
-        .set({ email: parsed.data, email_lookup: lookup, epoch: sql<number>`epoch + 1`, web_secret_hash: hashToken(secret) })
+        .set({
+          email: parsed.data,
+          email_lookup: lookup,
+          epoch: sql<number>`epoch + 1`,
+          web_secret_hash: hashToken(secret),
+          email_change_seq: seq,
+          // Never raised: a later undo (say, of the holder's own typo) must not bring back links an earlier one voided.
+          email_undo_floor: card.email_undo_floor === null ? ids.seq : Math.min(card.email_undo_floor, ids.seq),
+          email_undo_seq: seq,
+        })
         .where("id", "=", ids.cardId)
         .execute();
       await audit(trx, { cafeId: ids.cafeId, actorType: "system", actorId: null, action: "card.email_change_undone", entityType: "card", entityId: ids.cardId, changes: { source: "customer" } });

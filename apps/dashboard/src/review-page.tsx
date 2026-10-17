@@ -17,6 +17,7 @@ const AR = {
   "that would take that phone past its most stamps for the day the server received it":
     "كانت ستتجاوز بذلك الهاتف الحد الأقصى من الأختام لليوم الذي استلمها فيه الخادم",
   "dated before that phone was paired with the key that signed it": "بتاريخ يسبق ربط ذلك الهاتف بالمفتاح الذي وقّعها",
+  "for a reason this page does not know yet (reload it)": "لسبب لا تعرفه هذه الصفحة بعد (أعد تحميلها)",
   "the card got stamps less than 30 minutes before it": "حصلت البطاقة على أختام قبلها بأقل من 30 دقيقة",
   "that phone had already added its most stamps for that day": "كان ذلك الهاتف قد أضاف الحد الأقصى من الأختام لذلك اليوم",
   "the customer deleted the card": "حذف الزبون البطاقة",
@@ -57,6 +58,10 @@ const REASONS = {
   daily_cap_received: "that would take that phone past its most stamps for the day the server received it",
   before_key: "dated before that phone was paired with the key that signed it",
 } as const satisfies Readonly<Record<SyncHoldReason, keyof typeof AR>>;
+
+/** A reason this build does not know (from a newer server: after a rollback, or in a page opened before a deploy). */
+const reasonText = (reason: string): keyof typeof AR =>
+  Object.hasOwn(REASONS, reason) ? REASONS[reason as SyncHoldReason] : "for a reason this page does not know yet (reload it)";
 
 /** Why an accepted visit still added no stamps, by its result code. */
 const NO_STAMPS: Readonly<Record<string, keyof typeof AR>> = {
@@ -106,7 +111,7 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
       <strong>{typeLabel(t, item)}</strong>{" "}
       {t("at {time} {reason}: {staff} on {device}.", {
         time: timeFormat.format(new Date(item.occurredAt)),
-        reason: t(REASONS[item.reason]),
+        reason: t(reasonText(item.reason)),
         staff: item.staffName,
         device: item.deviceName,
       })}

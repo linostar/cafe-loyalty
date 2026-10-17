@@ -354,7 +354,7 @@ describe("stamping", () => {
     await app.as("PUT", "/api/cafe/program", { stampsRequired: 50, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" });
     const ten = await app.addType("Box of ten", 10);
     const box = (quantity: number) => [{ orderTypeId: ten, quantity, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1 }];
-    const cards = await Promise.all(Array.from({ length: 8 }, () => issueCard(app.owner.cafeId)));
+    const cards = await Promise.all(Array.from({ length: 10 }, () => issueCard(app.owner.cafeId)));
     const qr = (index: number) => ({ kind: "qr" as const, token: cards[index]?.qr ?? "" });
     const { rows } = await context.admin.query<{ midnight: Date }>(
       "SELECT date_trunc('day', (now() - interval '5 minutes') AT TIME ZONE time_zone) AT TIME ZONE time_zone AS midnight FROM app.cafes WHERE id = $1",
@@ -379,6 +379,14 @@ describe("stamping", () => {
     expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "OK" });
     expect((await app.as("POST", `/api/review-queue/${queue[1]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "DAILY_STAMP_CAP" });
     expect(await stampsOf(cards[full]?.cardId ?? "")).toBe(10);
+    // The accept took this device past the cap for the day received; a visit with no stamps is still never held for it.
+    const cake = [{ orderTypeId: app.cake, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 1 }];
+    expect(await sync(app, [await visit(app, qr(full + 2), { items: cake })])).toEqual([{ status: "applied", code: "OK" }]);
+    // The cap is each device's own: another counter's visit received now, dated the same day before, still applies.
+    const other = await pairDevice(app.app, app.owner, "Counter 2");
+    expect(await sync(app, [await visit(app, qr(full + 3), { at: at(-40), items: box(1), device: other })], other.accessToken)).toEqual([
+      { status: "applied", code: "OK" },
+    ]);
   });
 
   it("holds a visit dated more than 5 minutes before the key that signed it was made", async () => {

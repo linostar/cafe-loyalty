@@ -79,3 +79,13 @@ test("says when a late visit's discount also failed its campaign check (AC 35)",
   await expect(held2).toContainText("with a discount its campaign or the card's win-back offer did not allow at that time");
   await expect(held2).not.toContainText("It also has");
 });
+
+test("still lists a held event whose reason a newer server added, after a rollback or before a reload", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/review-queue": reply(200, { items: [{ ...held(1), reason: "a_reason_from_later" }, held(2)], nextCursor: null }),
+  });
+  await page.goto("/review");
+  await expect(page.getByRole("listitem").filter({ hasText: "01:15" })).toContainText("for a reason this page does not know yet (reload it): Rami on Front counter");
+  await expect(page.getByRole("listitem").filter({ hasText: "02:15" })).toContainText("from a phone you removed");
+});

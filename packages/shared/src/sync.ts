@@ -443,7 +443,8 @@ export const reviewItemSchema = z.object({
   type: z.string(),
   deviceName: z.string(),
   staffName: z.string(),
-  reason: z.enum(SYNC_HOLD_REASONS),
+  // Any text too: a reason added by a newer server (a rollback, or a page opened before a deploy) must not fail the queue.
+  reason: z.union([z.enum(SYNC_HOLD_REASONS), z.string()]),
   /** A visit whose discount its campaign did not allow at that time (AC 35), whatever it was held for. */
   // Defaults for a server from before Step 12 (a rollback), which sends none.
   discountRefused: z.boolean().default(false),

@@ -6,18 +6,19 @@ const older = { id: "k1", key: randomBytes(32) };
 const newer = { id: "k2", key: randomBytes(32) };
 const secrets = { cardQr: { keys: [newer, older] } };
 const lookup = randomBytes(32);
-const card = { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", emailLookup: lookup };
+const card = { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", seq: 2, emailLookup: lookup };
 const now = Date.UTC(2026, 9, 17, 12);
 
 describe("email undo links", () => {
-  it("verify back to their café and card for 7 days, and match only the old email's lookup", () => {
+  it("verify back to their café, card and change count for 7 days, and match only the old email's lookup", () => {
     const token = signEmailUndoToken(secrets, card, now);
-    expect(token).toMatch(/^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}\.[0-9a-z]+\.[A-Za-z0-9_-]{11}\.k2\.[A-Za-z0-9_-]{16}$/);
-    expect(signEmailUndoToken({ cardQr: { keys: [{ id: "k".repeat(16), key: older.key }] } }, card, now).length).toBeLessThanOrEqual(100);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}\.2\.[0-9a-z]+\.[A-Za-z0-9_-]{8}\.k2\.[A-Za-z0-9_-]{16}$/);
+    // Within Fastify's 100-character route parameter with the longest key id, even after 46,655 email changes.
+    expect(signEmailUndoToken({ cardQr: { keys: [{ id: "k".repeat(16), key: older.key }] } }, { ...card, seq: 46_655 }, now).length).toBeLessThanOrEqual(100);
     // No personal data and no raw lookup in it.
     expect(token).not.toContain(lookup.toString("base64url").slice(0, 22));
     const verified = verifyEmailUndoToken(secrets, token, now);
-    expect(verified).toMatchObject({ cafeId: card.cafeId, cardId: card.cardId });
+    expect(verified).toMatchObject({ cafeId: card.cafeId, cardId: card.cardId, seq: 2 });
     expect(verified?.isFor(lookup)).toBe(true);
     expect(verified?.isFor(randomBytes(32))).toBe(false);
     expect(verifyEmailUndoToken(secrets, token, now + EMAIL_UNDO_TTL_SECONDS * 1000 - 1000)).not.toBeNull();
@@ -26,16 +27,18 @@ describe("email undo links", () => {
     expect(verifyEmailUndoToken(secrets, signEmailUndoToken({ cardQr: { keys: [older] } }, card, now), now)?.isFor(lookup)).toBe(true);
   });
 
-  it("refuse a changed card, café, expiry or binding, a wrong or unknown key, and anything malformed", () => {
+  it("refuse a changed card, café, change count, expiry or binding, a wrong or unknown key, and anything malformed", () => {
     const token = signEmailUndoToken(secrets, card, now);
-    const [cafe = "", cardPart = "", expires = "", binding = "", keyId = "", mac = ""] = token.split(".");
+    const [cafe = "", cardPart = "", seq = "", expires = "", binding = "", keyId = "", mac = ""] = token.split(".");
     const other = signEmailUndoToken(secrets, { ...card, cardId: "7a2d2b63-8d66-4b1f-8b6f-1e5d2c3b4a51", emailLookup: randomBytes(32) }, now).split(".");
     const tampered = [
-      [cafe, other[1], expires, binding, keyId, mac],
-      [cafe, cardPart, (parseInt(expires, 36) + 1).toString(36), binding, keyId, mac],
-      [cafe, cardPart, expires, other[3], keyId, mac],
-      [cafe, cardPart, expires, binding, "k1", mac],
-      [cafe, cardPart, expires, binding, "k9", mac],
+      [cafe, other[1], seq, expires, binding, keyId, mac],
+      [cafe, cardPart, "3", expires, binding, keyId, mac],
+      [cafe, cardPart, "02", expires, binding, keyId, mac],
+      [cafe, cardPart, seq, (parseInt(expires, 36) + 1).toString(36), binding, keyId, mac],
+      [cafe, cardPart, seq, expires, other[4], keyId, mac],
+      [cafe, cardPart, seq, expires, binding, "k1", mac],
+      [cafe, cardPart, seq, expires, binding, "k9", mac],
     ];
     for (const parts of tampered) {
       expect(verifyEmailUndoToken(secrets, parts.join("."), now)).toBeNull();

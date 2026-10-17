@@ -278,6 +278,10 @@ export async function insertVisit(
  * could pass it; this one cannot be, yet an honest queue sent after a weekend offline still applies in full up to it.
  */
 export async function stampLimitHold(trx: Transaction<Database>, cafeId: string, deviceId: string, stampsEarned: number): Promise<"large_visit" | "daily_cap_received" | null> {
+  // A visit with no stamps passes no limit (an owner's accepts can take the received-day sum past the cap).
+  if (stampsEarned === 0) {
+    return null;
+  }
   const program = await trx.selectFrom("loyalty_programs").select("stamps_required").executeTakeFirst();
   if (program !== undefined && stampsEarned > program.stamps_required) {
     return "large_visit";

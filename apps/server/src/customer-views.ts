@@ -10,6 +10,12 @@ import { count, html, page, t, type Lang, type SafeHtml } from "./customer-html.
 const errorBlock = (message: string | undefined, id: string): SafeHtml | false =>
   message !== undefined && html`<p class="field-error" id="${id}" role="alert">${message}</p>`;
 
+/** An aria-describedby attribute naming the ids given, or nothing when none is. */
+const describedBy = (ids: readonly (string | null)[]): SafeHtml | "" => {
+  const named = ids.filter((id) => id !== null).join(" ");
+  return named === "" ? "" : html` aria-describedby="${named}"`;
+};
+
 /** The café's program as the customer reads it, in the page's language. */
 export interface ProgramView {
   stampsRequired: number;
@@ -161,15 +167,15 @@ ${view.notice === undefined ? null : html`<p class="notice" role="status">${view
 <section aria-labelledby="email-title" class="card">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
 <p>${t(lang, "emailText")}</p>
-${view.maskedEmail === null ? null : html`<p>${t(lang, "emailCurrent", { email: view.maskedEmail })}</p>`}
+${view.maskedEmail === null ? null : html`<p id="email-current">${t(lang, "emailCurrent", { email: view.maskedEmail })}</p>`}
 <form method="post" action="${view.path}/email" novalidate>
 <input type="hidden" name="lang" value="${lang}">
 <label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr" aria-describedby="email-hint${errors.email === undefined ? "" : " email-error"}"${errors.email === undefined ? "" : html` aria-invalid="true"`}>
-<p id="email-hint" class="hint">${t(lang, "emailRemoveHint")}</p>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr"${describedBy([view.maskedEmail === null ? null : "email-current email-hint", errors.email === undefined ? null : "email-error"])}${errors.email === undefined ? "" : html` aria-invalid="true"`}>
+${view.maskedEmail === null ? null : html`<p id="email-hint" class="hint">${t(lang, "emailRemoveHint")}</p>`}
 ${errorBlock(errors.email, "email-error")}
 <button type="submit">${t(lang, "emailSave")}</button>
-${view.maskedEmail === null ? null : html`<button type="submit" name="remove" value="yes" formnovalidate>${t(lang, "emailRemove")}</button>`}
+${view.maskedEmail === null ? null : html`<button type="submit" class="quiet" name="remove" value="yes" formnovalidate>${t(lang, "emailRemove")}</button>`}
 </form>
 </section>
 <section aria-labelledby="offers-title" class="card">
