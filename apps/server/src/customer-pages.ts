@@ -250,6 +250,21 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     next();
   });
 
+  // A customer form is sent from its own page: a post another site makes (sending someone's browser here with values of
+  // its choosing) is refused before anything is read. Sec-Fetch-Site says where a request came from; a browser without
+  // it falls back to Origin, which these pages' no-referrer policy turns into "null" for their own posts.
+  const ownOrigin = new URL(options.publicUrl).origin;
+  app.addHook("onRequest", (request, _reply, next) => {
+    if (request.method !== "POST") {
+      next();
+      return;
+    }
+    const site = request.headers["sec-fetch-site"];
+    const origin = request.headers.origin;
+    const crossSite = site === undefined ? origin !== undefined && origin !== "null" && origin !== ownOrigin : site !== "same-origin";
+    next(crossSite ? new PageError(403, "crossSite") : undefined);
+  });
+
   app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
     const lang = langOf(request);
     if (error instanceof PageError) {
@@ -332,11 +347,12 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lookup = phoneLookup(secrets, phone);
     // Encrypted whether or not it is stored, so a known number costs the same.
     const encrypted = encryptPhone(secrets, phone);
-    // The card's secret comes from the form's one-time value, so sending the same form twice (a double tap, a retry
-    // on a slow network) lands on the one card it created instead of making a second. Keyed with the pepper, so
-    // knowing the form value alone gives no card.
+    // The card's secret comes from the form's one-time value and the number entered: the same form sent twice with the
+    // same number (a double tap, a retry on a slow network) lands on the one card it made, and the same form with
+    // another number makes another card, so a form value never opens a card someone else signed up with (a page sent
+    // again after Back, or a value an attacker chose). Keyed with the pepper, so neither alone gives a card.
     const formValue = form.form !== undefined && isToken(form.form) ? form.form : newToken();
-    const webSecret = createHmac("sha256", secrets.phoneLookupPepper).update(`web-secret:${cafe.id}:${formValue}`).digest("base64url");
+    const webSecret = createHmac("sha256", secrets.phoneLookupPepper).update(`web-secret:v2:${cafe.id}:${formValue}:${lookup.toString("base64url")}`).digest("base64url");
     const webSecretHash = hashToken(webSecret);
     await withCafe(db, cafe.id, async (trx) => {
       if ((await trx.selectFrom("cards").select("id").where("web_secret_hash", "=", webSecretHash).executeTakeFirst()) !== undefined) {

@@ -188,6 +188,37 @@ describe("signup", () => {
     expect(rows[0]?.n).toBe(1);
   });
 
+  it("never opens a card someone else signed up with when the same form is sent with another number", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const form = /name="form" value="([A-Za-z0-9_-]{43})"/.exec((await app.inject({ method: "GET", url: `/join/${code}` })).body)?.[1] ?? "missing";
+    // The first customer signs up; the next sends the same page again (after Back, on a shared tablet) with their own number.
+    const otherPhone = uniquePhone();
+    const first = await join(app, code, uniquePhone(), { form });
+    const second = await join(app, code, otherPhone, { form });
+    expect([first.statusCode, second.statusCode]).toEqual([303, 303]);
+    expect(secretOf(second)).not.toBe(secretOf(first));
+    const [mine, theirs] = [await cardRow(secretOf(first)), await cardRow(secretOf(second))];
+    expect(mine?.id).not.toBe(theirs?.id);
+    expect(theirs?.customer_id).not.toBeNull();
+    expect(theirs?.customer_id).not.toBe(mine?.customer_id);
+    // And the second one's retry lands on their own card, not the first.
+    expect((await join(app, code, otherPhone, { form })).headers.location).toBe(second.headers.location);
+  });
+
+  it("lands the same form sent twice with a number already here on the one unlinked card it made", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const phone = uniquePhone();
+    const linked = await cardRow(secretOf(await join(app, code, phone)));
+    const form = /name="form" value="([A-Za-z0-9_-]{43})"/.exec((await app.inject({ method: "GET", url: `/join/${code}` })).body)?.[1] ?? "missing";
+    const [first, again] = [await join(app, code, phone, { form }), await join(app, code, phone, { form })];
+    expect(again.headers.location).toBe(first.headers.location);
+    const unlinked = await cardRow(secretOf(first));
+    expect(unlinked?.customer_id).toBeNull();
+    expect(unlinked?.id).not.toBe(linked?.id);
+    const { rows } = await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.cards WHERE cafe_id = $1 AND customer_id IS NULL", [unlinked?.cafe_id]);
+    expect(rows[0]?.n).toBe(1);
+  });
+
   it("does not let invalid submissions use up a café's signups", async () => {
     const { app, code } = await cafeWithJoinCode();
     for (let attempt = 0; attempt < 1_100; attempt += 1) {
@@ -209,6 +240,60 @@ describe("signup", () => {
     const response = await app.inject({ method: "POST", url: `/join/${code}?lang=en`, headers: { "content-type": "text/plain" }, payload: "phone=70123456" });
     expect(response.statusCode).toBe(415);
     expect(response.body).toContain("This form could not be read.");
+  });
+});
+
+describe("cross-site form posts", () => {
+  const crossSite = { "sec-fetch-site": "cross-site" };
+  const routes = (code: string, secret: string) => [
+    `/join/${code}`,
+    `/c/${secret}/email`,
+    `/c/${secret}/offers`,
+    `/c/${secret}/delete`,
+    "/recover",
+    `/r/${secret}`,
+    `/f/${secret}`,
+  ];
+
+  it("refuses every customer form posted from another site, in the visitor's language, before reading it", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const secret = secretOf(await join(app, code, uniquePhone()));
+    const cafeId = (await cardRow(secret))?.cafe_id;
+    const cardsOfCafe = async () => (await context.admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.cards WHERE cafe_id = $1", [cafeId])).rows[0]?.n;
+    const before = await cardsOfCafe();
+    for (const url of routes(code, secret)) {
+      for (const headers of [crossSite, { "sec-fetch-site": "same-site" }, { "sec-fetch-site": "none" }, { origin: "https://evil.example.com" }]) {
+        const refused = await app.inject({ method: "POST", url: `${url}?lang=en`, headers: { ...headers, "content-type": "application/x-www-form-urlencoded" }, payload: `phone=${encodeURIComponent(uniquePhone())}&privacy=yes&email=someone%40example.com&confirm=yes&message=Hi` });
+        expect({ url, headers, status: refused.statusCode }).toEqual({ url, headers, status: 403 });
+        expect(refused.body).toContain("This form can only be sent from its own page.");
+        expect(refused.headers["content-security-policy"]).toBeDefined();
+        expect(refused.headers["cache-control"]).toBe("no-store");
+        expect(refused.headers["referrer-policy"]).toBe("no-referrer");
+      }
+    }
+    // Refused before the body is read: an unreadable one gets the same answer.
+    expect((await app.inject({ method: "POST", url: `/join/${code}`, headers: { ...crossSite, "content-type": "application/json" }, payload: "{" })).statusCode).toBe(403);
+    const arabic = await app.inject({ method: "POST", url: `/recover?lang=ar`, headers: { ...crossSite, "content-type": "application/x-www-form-urlencoded" }, payload: "email=someone%40example.com" });
+    expect(arabic.body).toContain("لا يمكن إرسال هذا النموذج إلا من صفحته.");
+    // Nothing was made or changed: the refused signups (a fresh number each time) left the café's cards as they were.
+    expect(await cardsOfCafe()).toBe(before);
+    expect((await cardRow(secret))?.email).toBeNull();
+  });
+
+  it("accepts a form posted from its own page, from a browser that says nothing, or with the no-referrer policy's null origin", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    for (const headers of [{ "sec-fetch-site": "same-origin" }, {}, { origin: "null" }, { origin: new URL(PUBLIC_URL).origin }]) {
+      const body = formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" });
+      const response = await app.inject({ method: "POST", url: `/join/${code}`, headers: { ...headers, ...body.headers }, payload: body.payload });
+      expect({ headers, status: response.statusCode }).toEqual({ headers, status: 303 });
+    }
+  });
+
+  it("leaves pages opened from other sites and the PassKit web service alone", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    expect((await app.inject({ method: "GET", url: `/join/${code}`, headers: crossSite })).statusCode).toBe(200);
+    const passkit = await app.inject({ method: "POST", url: "/passkit/v1/log", headers: { ...crossSite, "content-type": "application/json" }, payload: { logs: ["test"] } });
+    expect(passkit.statusCode).not.toBe(403);
   });
 });
 
