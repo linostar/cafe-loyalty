@@ -505,7 +505,8 @@ caddyfile_text() {
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
-		Referrer-Policy no-referrer
+		# A default only: the customer pages send their own (same-origin, so their form posts carry a real Origin).
+		?Referrer-Policy no-referrer
 		-Server
 	}
 }
