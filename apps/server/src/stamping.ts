@@ -270,6 +270,36 @@ export async function insertVisit(
   return id;
 }
 
+/**
+ * Why a ready visit must wait for the owner because of its stamps, checked when it is received and never again when
+ * the owner accepts it: more stamps than the program's reward needs (no honest order earns a whole reward and more), or
+ * more than the device's DAILY_STAMP_CAP applied on the café day the server received them (visits.created_at), which
+ * the device cannot set. applyVisit's cap counts the visits' own (device-set) days, so backdating spread over past days
+ * could pass it; this one cannot be, yet an honest queue sent after a weekend offline still applies in full up to it.
+ */
+export async function stampLimitHold(trx: Transaction<Database>, cafeId: string, deviceId: string, stampsEarned: number): Promise<"large_visit" | "daily_cap_received" | null> {
+  const program = await trx.selectFrom("loyalty_programs").select("stamps_required").executeTakeFirst();
+  if (program !== undefined && stampsEarned > program.stamps_required) {
+    return "large_visit";
+  }
+  // Today's café day by the database clock, which also set created_at; its start first, so the sum reads only today
+  // through visits_device_received_idx.
+  const { starts } = await trx
+    .selectFrom("cafes")
+    .select(sql<Date>`date_trunc('day', now() AT TIME ZONE time_zone) AT TIME ZONE time_zone`.as("starts"))
+    .where("id", "=", cafeId)
+    .executeTakeFirstOrThrow();
+  const received = await trx
+    .selectFrom("visits")
+    .select(sql<number>`coalesce(sum(stamps_added), 0)::int`.as("stamps"))
+    .where("cafe_id", "=", cafeId)
+    .where("device_id", "=", deviceId)
+    .where("stamps_added", ">", 0)
+    .where("created_at", ">=", starts)
+    .executeTakeFirstOrThrow();
+  return received.stamps + stampsEarned > DAILY_STAMP_CAP ? "daily_cap_received" : null;
+}
+
 const OUTCOME_CODES: Readonly<Record<Exclude<VisitOutcome, "held" | "discarded">, SyncResultCode>> = {
   stamped: "OK",
   no_stamps: "OK",

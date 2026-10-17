@@ -13,6 +13,10 @@ const AR = {
   "that reached the server more than two days later": "وصل إلى الخادم بعد أكثر من يومين",
   "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)":
     "بخصم لم تسمح به حملته أو عرض الاسترجاع على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك)",
+  "with more stamps than the reward needs": "بأختام أكثر مما تحتاجه المكافأة",
+  "that would take that phone past its most stamps for the day the server received it":
+    "كانت ستتجاوز بذلك الهاتف الحد الأقصى من الأختام لليوم الذي استلمها فيه الخادم",
+  "dated before that phone was paired with the key that signed it": "بتاريخ يسبق ربط ذلك الهاتف بالمفتاح الذي وقّعها",
   "the card got stamps less than 30 minutes before it": "حصلت البطاقة على أختام قبلها بأقل من 30 دقيقة",
   "that phone had already added its most stamps for that day": "كان ذلك الهاتف قد أضاف الحد الأقصى من الأختام لذلك اليوم",
   "the customer deleted the card": "حذف الزبون البطاقة",
@@ -49,6 +53,9 @@ const REASONS = {
   staff_revoked: "by a barista you removed",
   late_sync: "that reached the server more than two days later",
   campaign_check: "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)",
+  large_visit: "with more stamps than the reward needs",
+  daily_cap_received: "that would take that phone past its most stamps for the day the server received it",
+  before_key: "dated before that phone was paired with the key that signed it",
 } as const satisfies Readonly<Record<SyncHoldReason, keyof typeof AR>>;
 
 /** Why an accepted visit still added no stamps, by its result code. */

@@ -294,6 +294,8 @@ export function useApiHarness() {
       });
       expect(paired.statusCode).toBe(201);
       const body = paired.json<{ deviceId: string; keyId: string; accessToken: string }>();
+      // Paired as if a month ago, so tests may date visits back freely: one dated before its key is held (before_key).
+      await context.admin.query("UPDATE app.device_keys SET created_at = now() - interval '30 days' WHERE id = $1", [body.keyId]);
       return { deviceId: body.deviceId, keyId: body.keyId, accessToken: body.accessToken, privateKey };
     },
 

@@ -13,3 +13,12 @@
 **/dist
 **/.env*
 **/*.tsbuildinfo
+# Secrets the re-included directories might hold, after the re-includes so they win.
+**/*.pem
+**/*.p12
+**/*.p8
+**/*.pfx
+**/*.key
+**/*.pkpass
+**/secrets/
+**/*-service-account*.json

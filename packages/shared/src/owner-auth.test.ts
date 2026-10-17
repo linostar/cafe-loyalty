@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkTokenSchema, loginRequestSchema, ownerEmailSchema, ownerPasswordSchema } from "./owner-auth.js";
+import { linkTokenSchema, loginRequestSchema, operatorPasswordSchema, ownerEmailSchema, ownerPasswordSchema } from "./owner-auth.js";
 
 describe("ownerEmailSchema", () => {
   it("trims and lower-cases", () => {
@@ -30,6 +30,16 @@ describe("ownerPasswordSchema", () => {
   it("rejects shorter or longer passwords", () => {
     expect(ownerPasswordSchema.safeParse("123456789").success).toBe(false);
     expect(ownerPasswordSchema.safeParse("x".repeat(129)).success).toBe(false);
+  });
+
+  it("names the upper limit with a listed message", () => {
+    expect(ownerPasswordSchema.safeParse("x".repeat(129)).error?.issues[0]?.message).toBe("Use at most 128 characters.");
+    expect(ownerPasswordSchema.safeParse("x".repeat(600)).error?.issues[0]?.message).toBe("Use at most 128 characters.");
+  });
+
+  it("asks operators for at least 16 characters", () => {
+    expect(operatorPasswordSchema.safeParse("x".repeat(15)).error?.issues[0]?.message).toBe("Use at least 16 characters.");
+    expect(operatorPasswordSchema.safeParse("x".repeat(16)).success).toBe(true);
   });
 
   it("normalises to NFKC and counts characters, not UTF-16 units", () => {

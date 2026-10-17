@@ -14,6 +14,7 @@ import {
   recoverView,
   restoreView,
   restoredView,
+  undoEmailView,
   type CardSettingsView,
   type CardView,
   type FeedbackView,
@@ -56,7 +57,7 @@ const settings = (lang: Lang, overrides: Partial<CardSettingsView> = {}): string
   cardSettingsView(lang, {
     path: "/c/fake",
     cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
-    email: null,
+    maskedEmail: null,
     offersOptedIn: true,
     notice: undefined,
     errors: {},
@@ -98,11 +99,13 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ],
   ["card-no-program", (lang) => card(lang, { program: undefined, stamps: 2, offer: undefined, wallet: null, feedbackHref: undefined })],
   ["card-settings", (lang) => settings(lang)],
-  ["card-settings-saved", (lang) => settings(lang, { email: "rana@example.com", offersOptedIn: false, notice: t(lang, "saved") })],
+  ["card-settings-saved", (lang) => settings(lang, { maskedEmail: "r•••@example.com", offersOptedIn: false, notice: t(lang, "saved") })],
   ["card-settings-errors", (lang) => settings(lang, { errors: { email: t(lang, "emailInvalid"), delete: t(lang, "deleteConfirmRequired") } })],
   ["recover", (lang) => recoverView(lang, false, undefined, `/recover?lang=${other(lang)}`)],
   ["recover-sent", (lang) => recoverView(lang, true, undefined, `/recover?lang=${other(lang)}`)],
   ["restore", (lang) => restoreView(lang, "/r/fake", `/r/fake?lang=${other(lang)}`)],
+  ["undo-email", (lang) => undoEmailView(lang, "/u/fake", undefined, `/u/fake?lang=${other(lang)}`)],
+  ["undo-email-error", (lang) => undoEmailView(lang, "/u/fake", t(lang, "undoWrongEmail"), `/u/fake?lang=${other(lang)}`)],
   [
     "restored",
     (lang) =>

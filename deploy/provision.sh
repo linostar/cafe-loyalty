@@ -8,7 +8,8 @@
 # `provision.sh env-files <dir>` writes a production environment's database.env and app.env into <dir>, both from the
 # *_DOMAIN settings; `provision.sh units <dir>` writes the backup, restore test and alert units and alert.curlrc into
 # <dir>, from the backup settings; `provision.sh authorized-keys` prints the deploy user's authorized_keys from the
-# *_DEPLOY_SSH_PUBLIC_KEY settings, and `provision.sh deploy-conf <dir>` writes deploy.conf into <dir>.
+# *_DEPLOY_SSH_PUBLIC_KEY settings, `provision.sh sudoers` prints the deploy user's sudoers rule from DEPLOY_USER, and
+# `provision.sh deploy-conf <dir>` writes deploy.conf into <dir>.
 set -euo pipefail
 
 readonly APP=cafe-loyalty
@@ -82,8 +83,7 @@ check_input() {
   done
   ((${#missing[@]} == 0)) || fail "set ${missing[*]} (see deploy/provision.conf.example)."
 
-  [[ $DEPLOY_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ && $DEPLOY_USER != root ]] ||
-    fail "DEPLOY_USER must be a new or existing non-root user name (lowercase letters, digits, - and _)."
+  check_deploy_user
   check_deploy_keys
   check_image_repository
   check_domains
@@ -95,6 +95,11 @@ check_input() {
   [[ $admin != "$DEPLOY_USER" ]] || fail "run this as an administrator, not as $DEPLOY_USER."
   [[ -s $admin_home/.ssh/authorized_keys ]] ||
     fail "$admin has no $admin_home/.ssh/authorized_keys: add your SSH key first, or this would lock you out."
+}
+
+check_deploy_user() {
+  [[ ${DEPLOY_USER:-} =~ ^[a-z_][a-z0-9_-]{0,31}$ && $DEPLOY_USER != root ]] ||
+    fail "DEPLOY_USER must be a new or existing non-root user name (lowercase letters, digits, - and _)."
 }
 
 check_deploy_keys() {
@@ -122,6 +127,10 @@ authorized_keys_text() {
   echo "restrict,command=\"$BIN_DIR/ssh-command.sh production\" $PRODUCTION_DEPLOY_SSH_PUBLIC_KEY"
   echo "restrict,command=\"$BIN_DIR/ssh-command.sh staging\" $STAGING_DEPLOY_SSH_PUBLIC_KEY"
 }
+
+# The deploy user may run, as root, only the two scripts ssh-command.sh lets a key run (with any arguments: it checks
+# them), from $BIN_DIR, a directory only root can write.
+sudoers_text() { echo "$DEPLOY_USER ALL=(root) NOPASSWD: $BIN_DIR/deploy.sh, $BIN_DIR/rollback.sh"; }
 
 check_domains() {
   local domains=() domain name
@@ -225,10 +234,9 @@ configure_ssh() {
   install -d -m 0755 /etc/ssh/authorized_keys
   put_file "/etc/ssh/authorized_keys/$DEPLOY_USER" 644 < <(authorized_keys_text) || true
 
-  # The deploy user may run, as root, only the scripts this installs in $BIN_DIR (a directory only root can write).
   local sudoers
   sudoers=$(mktemp)
-  echo "$DEPLOY_USER ALL=(root) NOPASSWD: $BIN_DIR/" >"$sudoers"
+  sudoers_text >"$sudoers"
   chmod 440 "$sudoers"
   visudo -cqf "$sudoers" || fail "the sudoers rule for $DEPLOY_USER is invalid."
   put_file /etc/sudoers.d/$APP-deploy 440 <"$sudoers" || true
@@ -482,7 +490,7 @@ caddyfile_text() {
 			roll_keep 10
 			roll_keep_for 720h
 		}
-		# Card, recovery and feedback links carry secrets in their paths (/c/, /r/, /f/), and the server's redirects to
+		# Card, recovery, feedback and email undo links carry secrets in their paths (/c/, /r/, /f/, /u/), and the server's redirects to
 		# them (and to Google's save links) in Location: every run of 16 or more URL-safe characters in a logged address
 		# is masked, as the server masks secret-like segments in its own logs.
 		format filter {
@@ -770,6 +778,7 @@ caddyfile) check_domains && caddyfile_text ;;
 env-files) [[ -d ${2:-} ]] || fail "usage: $0 env-files <existing directory>"; check_domains && write_env_files "$2" production ;;
 units) [[ -d ${2:-} ]] || fail "usage: $0 units <existing directory>"; check_backup_settings && write_units "$2" && write_alert_config "$2" ;;
 authorized-keys) check_deploy_keys && authorized_keys_text ;;
+sudoers) check_deploy_user && sudoers_text ;;
 deploy-conf) [[ -d ${2:-} ]] || fail "usage: $0 deploy-conf <existing directory>"; check_image_repository && write_deploy_config "$2" ;;
-*) fail "usage: $0 [caddyfile | env-files <directory> | units <directory> | authorized-keys | deploy-conf <directory>]" ;;
+*) fail "usage: $0 [caddyfile | env-files <directory> | units <directory> | authorized-keys | sudoers | deploy-conf <directory>]" ;;
 esac

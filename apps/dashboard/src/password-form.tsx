@@ -14,9 +14,20 @@ const AR = {
 
 /**
  * Changing the owner's (or, with `path`, the operator's) password; the server then ends every session, this one too.
- * `titled` false leaves the heading to the page (the operator's page is about this form alone).
+ * `titled` false leaves the heading to the page (the operator's page is about this form alone); operators pass their
+ * longer `minLength`.
  */
-export function ChangePasswordForm({ onChanged, path = "/api/auth/password", titled = true }: { onChanged: () => void; path?: string; titled?: boolean }) {
+export function ChangePasswordForm({
+  onChanged,
+  path = "/api/auth/password",
+  titled = true,
+  minLength = OWNER_PASSWORD_MIN_LENGTH,
+}: {
+  onChanged: () => void;
+  path?: string;
+  titled?: boolean;
+  minLength?: number;
+}) {
   const t = useT(AR);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -53,8 +64,8 @@ export function ChangePasswordForm({ onChanged, path = "/api/auth/password", tit
           autoComplete="new-password"
           value={newPassword}
           onChange={setNewPassword}
-          hint={t("At least {n} characters.", { n: OWNER_PASSWORD_MIN_LENGTH })}
-          minLength={OWNER_PASSWORD_MIN_LENGTH}
+          hint={t("At least {n} characters.", { n: minLength })}
+          minLength={minLength}
           error={fieldErrors.newPassword}
         />
         <button type="submit" disabled={pending}>

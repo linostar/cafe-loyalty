@@ -427,9 +427,11 @@ export function readSyncResponse(eventCount: number, body: unknown): ClientSyncR
 /**
  * Why an event was held for the owner's review instead of applied: a revoked device or staff member (AC 21), a
  * visit that arrived more than two days after it happened (its time is the device's to set, and decides the daily
- * cap and the cooldown), or a visit with a discount its campaign did not allow at that time (AC 35).
+ * cap and the cooldown), a visit with a discount its campaign did not allow at that time (AC 35), a visit with more
+ * stamps than the reward needs, one past the device's daily cap on the day the server received it, or one dated
+ * before the key that signed it was made.
  */
-export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked", "late_sync", "campaign_check"] as const;
+export const SYNC_HOLD_REASONS = ["device_revoked", "staff_revoked", "late_sync", "campaign_check", "large_visit", "daily_cap_received", "before_key"] as const;
 
 export type SyncHoldReason = (typeof SYNC_HOLD_REASONS)[number];
 

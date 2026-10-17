@@ -44,8 +44,9 @@ load_environment() {
   # A run goes on when whoever started it goes away (the release job's SSH session ends on a timeout or a cancel): a
   # deploy stopped between restarting the containers and recording the outcome would leave releases.log naming a
   # release that no longer runs. Its output also goes to release-output.log, which tee keeps writing once the session's
-  # end of the pipe is gone.
+  # end of the pipe is gone. Root only: a run's output may show settings and data.
   trap '' HUP PIPE
+  touch "$dir/release-output.log" && chmod 0600 "$dir/release-output.log"
   exec > >(tee -p -a "$dir/release-output.log") 2>&1
   # One deploy or rollback of an environment at a time.
   exec 8>"$dir/.release.lock"

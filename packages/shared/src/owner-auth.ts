@@ -14,6 +14,8 @@ export const ownerEmailSchema = z
 
 export const OWNER_PASSWORD_MIN_LENGTH = 10;
 export const OWNER_PASSWORD_MAX_LENGTH = 128;
+/** Operators act on every café, so their chosen passwords are longer. */
+export const OPERATOR_PASSWORD_MIN_LENGTH = 16;
 
 /** Characters as people count them (code points), not UTF-16 units: an emoji or an Arabic letter is one. */
 const characterCount = (value: string): number => Array.from(value).length;
@@ -24,13 +26,20 @@ const characterCount = (value: string): number => Array.from(value).length;
  */
 const passwordInput = z
   .string()
-  .max(OWNER_PASSWORD_MAX_LENGTH * 4, `Use at most ${String(OWNER_PASSWORD_MAX_LENGTH)} characters.`)
+  .max(OWNER_PASSWORD_MAX_LENGTH * 4, apiMessage("Use at most {max} characters.", { max: OWNER_PASSWORD_MAX_LENGTH }))
   .transform((value) => value.normalize("NFKC"));
 
-/** Length is the only rule (NIST SP 800-63B); the upper bound keeps hashing cost bounded. */
-export const ownerPasswordSchema = passwordInput
-  .refine((value) => characterCount(value) >= OWNER_PASSWORD_MIN_LENGTH, apiMessage("Use at least {min} characters.", { min: OWNER_PASSWORD_MIN_LENGTH }))
-  .refine((value) => characterCount(value) <= OWNER_PASSWORD_MAX_LENGTH, `Use at most ${String(OWNER_PASSWORD_MAX_LENGTH)} characters.`);
+/**
+ * Length is the only rule here (NIST SP 800-63B); the upper bound keeps hashing cost bounded. The server also refuses
+ * common passwords (apps/server/src/common-passwords.ts), a list kept out of the web bundles.
+ */
+const newPasswordSchema = (min: number) =>
+  passwordInput
+    .refine((value) => characterCount(value) >= min, apiMessage("Use at least {min} characters.", { min }))
+    .refine((value) => characterCount(value) <= OWNER_PASSWORD_MAX_LENGTH, apiMessage("Use at most {max} characters.", { max: OWNER_PASSWORD_MAX_LENGTH }));
+
+export const ownerPasswordSchema = newPasswordSchema(OWNER_PASSWORD_MIN_LENGTH);
+export const operatorPasswordSchema = newPasswordSchema(OPERATOR_PASSWORD_MIN_LENGTH);
 
 /** A password being checked rather than set: normalised the same way, without the length rule. */
 const enteredPasswordSchema = passwordInput.refine((value) => value.length > 0, apiText("Enter your password."));
@@ -44,6 +53,10 @@ export const loginRequestSchema = z.object({ email: ownerEmailSchema, password: 
 export const passwordChangeRequestSchema = z.object({
   currentPassword: enteredPasswordSchema,
   newPassword: ownerPasswordSchema,
+});
+export const operatorPasswordChangeRequestSchema = z.object({
+  currentPassword: enteredPasswordSchema,
+  newPassword: operatorPasswordSchema,
 });
 export const passwordResetRequestSchema = z.object({ email: ownerEmailSchema });
 export const passwordResetCompleteRequestSchema = z.object({ token: linkTokenSchema, password: ownerPasswordSchema });

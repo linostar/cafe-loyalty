@@ -246,7 +246,7 @@ export interface CardsTable {
 }
 
 export type SyncEventStatus = "applied" | "held" | "discarded" | "rejected";
-export type SyncHoldReason = "device_revoked" | "staff_revoked" | "late_sync" | "campaign_check";
+export type SyncHoldReason = "device_revoked" | "staff_revoked" | "late_sync" | "campaign_check" | "large_visit" | "daily_cap_received" | "before_key";
 
 /** The ledger of synced events (AC 24): no payload, no personal data. Only a held event's review is updated. */
 export interface SyncEventsTable {

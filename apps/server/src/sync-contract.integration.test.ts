@@ -61,6 +61,8 @@ async function seed(fixture: SyncFixture): Promise<string> {
       .values({ cafe_id: cafeId, device_id: fixture.device.deviceId, token_hash: hashToken(token), expires_at: new Date(Date.now() + 60 * 60 * 1000) })
       .execute();
   });
+  // The key was made when the fixture's counter paired, before it recorded its events (a visit dated before its key is held).
+  await context.admin.query("UPDATE app.device_keys SET created_at = $2 WHERE id = $1", [fixture.device.keyId, fixture.builtAt]);
   await context.admin.query(
     `INSERT INTO app.cards (id, cafe_id, customer_id, web_secret_hash, privacy_accepted_at, phone_confirmed_at)
      VALUES ($1, $3, NULL, $4, now(), NULL), ($2, $3, $5, $6, now(), now())`,

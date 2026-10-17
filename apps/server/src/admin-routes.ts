@@ -5,7 +5,7 @@ import {
   cafeCreateSchema,
   cafePlanUpdateSchema,
   loginRequestSchema,
-  passwordChangeRequestSchema,
+  operatorPasswordChangeRequestSchema,
   paymentRecordSchema,
   paymentVoidSchema,
   type AdminCafe,
@@ -17,6 +17,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { OPERATOR_SESSION_ABSOLUTE_TIMEOUT_SECONDS, OPERATOR_SESSION_IDLE_TIMEOUT_SECONDS, findOperatorSession, operatorOf } from "./access.js";
+import { refuseCommonPassword } from "./common-passwords.js";
 import { clearedOperatorCookie, hashPassword, hashToken, newToken, operatorSessionCookie, readOperatorCookie, verifyPassword } from "./credentials.js";
 import { audit, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
@@ -202,7 +203,8 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
   app.post("/password", { config: { access: "operator" } }, async (request, reply) => {
     const operator = operatorOf(request);
     enforce(limits.passwordChangePerOperator, operator.operatorId, reply);
-    const body = parseInput(passwordChangeRequestSchema, request.body);
+    const body = parseInput(operatorPasswordChangeRequestSchema, request.body);
+    refuseCommonPassword(body.newPassword, "newPassword");
     const current = await withOperator(db, operator.operatorId, (trx) =>
       trx.selectFrom("operators").select("password_hash").where("id", "=", operator.operatorId).executeTakeFirstOrThrow(),
     );

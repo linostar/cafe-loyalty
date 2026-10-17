@@ -1,5 +1,6 @@
 import {
   CAFE_PLANS,
+  OPERATOR_PASSWORD_MIN_LENGTH,
   PAYMENT_METHODS,
   adminCafeSchema,
   adminCafesSchema,
@@ -761,7 +762,7 @@ function PasswordPage({ session, onChanged }: { session: OperatorSession; onChan
         {t("Change password")}
       </h2>
       <p className="page-intro">{t("Signed in as {email}", { email: session.operator.email })}</p>
-      <ChangePasswordForm path="/api/admin/password" titled={false} onChanged={onChanged} />
+      <ChangePasswordForm path="/api/admin/password" titled={false} minLength={OPERATOR_PASSWORD_MIN_LENGTH} onChanged={onChanged} />
     </section>
   );
 }
