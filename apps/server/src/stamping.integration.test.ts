@@ -187,10 +187,11 @@ describe("stamping", () => {
 
   it("stops adding stamps at each device's daily cap, counted per day in the café's time zone (AC 30)", async () => {
     const app = await cafeApp();
+    await app.as("PUT", "/api/cafe/program", { stampsRequired: 50, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" });
     const other = await pairDevice(app.app, app.owner, "Counter 2");
     const ten = await app.addType("Box of ten", 10);
     const box = (quantity: number) => [{ orderTypeId: ten, quantity, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1 }];
-    const cards = await Promise.all(Array.from({ length: 4 }, () => issueCard(app.owner.cafeId)));
+    const cards = await Promise.all(Array.from({ length: 9 }, () => issueCard(app.owner.cafeId)));
     const qr = (index: number) => ({ kind: "qr" as const, token: cards[index]?.qr ?? "" });
     // The café's last midnight, from PostgreSQL's own time zone rules: a few minutes either side are two café days but
     // one UTC day (Beirut is two or three hours ahead), on any date, daylight-saving changeovers included.
@@ -201,23 +202,28 @@ describe("stamping", () => {
     expect(rows[0]?.time_zone).toBe("Asia/Beirut");
     const midnight = rows[0]?.midnight.getTime() ?? 0;
     const at = (minutes: number) => new Date(midnight + minutes * MINUTE);
+    // The cap's worth for the day before, in visits of the most stamps one applies (the reward's 50)...
+    const full = DAILY_STAMP_CAP / 50;
+    expect(await sync(app, await Promise.all(Array.from({ length: full }, (_, index) => visit(app, qr(index), { at: at(-1 - index), items: box(5) }))))).toEqual(
+      Array.from({ length: full }, () => ({ status: "applied", code: "OK" })),
+    );
+    // ...received days before, so only the cap by the visits' own day decides the next ones.
+    await context.admin.query("UPDATE app.visits SET created_at = created_at - interval '2 days' WHERE device_id = $1", [app.device.deviceId]);
     expect(
       await sync(app, [
-        await visit(app, qr(0), { at: at(-1), items: box(DAILY_STAMP_CAP / 10) }),
-        await visit(app, qr(1), { at: at(-2), items: box(1) }),
+        await visit(app, qr(full), { at: at(-10), items: box(1) }),
         // The next café day, though the same UTC day.
-        await visit(app, qr(2), { at: at(1), items: box(1) }),
+        await visit(app, qr(full + 1), { at: at(1), items: box(1) }),
       ]),
     ).toEqual([
-      { status: "applied", code: "OK" },
       { status: "applied", code: "DAILY_STAMP_CAP" },
       { status: "applied", code: "OK" },
     ]);
     // Another device's cap is its own.
-    expect(await sync(app, [await visit(app, qr(3), { at: at(-3), items: box(1), device: other })], other.accessToken)).toEqual([
+    expect(await sync(app, [await visit(app, qr(full + 2), { at: at(-3), items: box(1), device: other })], other.accessToken)).toEqual([
       { status: "applied", code: "OK" },
     ]);
-    expect(await stampsOf(cards[1]?.cardId ?? "")).toBe(0);
+    expect(await stampsOf(cards[full]?.cardId ?? "")).toBe(0);
   });
 
   it("stamps by phone number only a card already scanned at the counter, and answers a resend the same (AC 24)", async () => {
@@ -324,6 +330,83 @@ describe("stamping", () => {
     expect(queue).toMatchObject([{ reason: "late_sync" }]);
     await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`);
     expect(await stampsOf(card.cardId)).toBe(2);
+  });
+
+  it("holds a visit with more stamps than the reward needs, and applies it when the owner accepts it", async () => {
+    const app = await cafeApp();
+    const [fits, large] = await Promise.all([issueCard(app.owner.cafeId), issueCard(app.owner.cafeId)]);
+    const coffees = (quantity: number) => [{ orderTypeId: app.coffee, quantity, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1 }];
+    // The reward's 3 stamps apply; one more waits for the owner.
+    expect(
+      await sync(app, [await visit(app, { kind: "qr", token: fits.qr }, { items: coffees(3) }), await visit(app, { kind: "qr", token: large.qr }, { items: coffees(4) })]),
+    ).toEqual([
+      { status: "applied", code: "OK" },
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+    ]);
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string }[] }>().items;
+    expect(queue).toMatchObject([{ reason: "large_visit" }]);
+    expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "OK" });
+    expect(await stampsOf(large.cardId)).toBe(4);
+  });
+
+  it("holds a visit past the device's daily cap on the café day the server received it, however it is dated", async () => {
+    const app = await cafeApp();
+    await app.as("PUT", "/api/cafe/program", { stampsRequired: 50, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" });
+    const ten = await app.addType("Box of ten", 10);
+    const box = (quantity: number) => [{ orderTypeId: ten, quantity, unitPriceCents: 300, unitCostCents: 90, catalogVersion: 1 }];
+    const cards = await Promise.all(Array.from({ length: 10 }, () => issueCard(app.owner.cafeId)));
+    const qr = (index: number) => ({ kind: "qr" as const, token: cards[index]?.qr ?? "" });
+    const { rows } = await context.admin.query<{ midnight: Date }>(
+      "SELECT date_trunc('day', (now() - interval '5 minutes') AT TIME ZONE time_zone) AT TIME ZONE time_zone AS midnight FROM app.cafes WHERE id = $1",
+      [app.owner.cafeId],
+    );
+    const at = (minutes: number) => new Date((rows[0]?.midnight.getTime() ?? 0) + minutes * MINUTE);
+    // A whole cap dated the café day before, inside the two days a visit may be late, received today: all of it applies...
+    const full = DAILY_STAMP_CAP / 50;
+    expect(await sync(app, await Promise.all(Array.from({ length: full }, (_, index) => visit(app, qr(index), { at: at(-1 - index), items: box(5) }))))).toEqual(
+      Array.from({ length: full }, () => ({ status: "applied", code: "OK" })),
+    );
+    // ...and the next visit waits for the owner, dated today (its own day has no stamps yet) or the day before.
+    expect(
+      await sync(app, [await visit(app, qr(full), { at: new Date(Date.now() - MINUTE), items: box(1) }), await visit(app, qr(full + 1), { at: at(-30), items: box(1) })]),
+    ).toEqual([
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+    ]);
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string }[] }>().items;
+    expect(queue.map((item) => item.reason)).toEqual(["daily_cap_received", "daily_cap_received"]);
+    // Accepted, each is applied by the cap of its own day alone: today's has room, the day before's is full.
+    expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "OK" });
+    expect((await app.as("POST", `/api/review-queue/${queue[1]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "DAILY_STAMP_CAP" });
+    expect(await stampsOf(cards[full]?.cardId ?? "")).toBe(10);
+    // The accept took this device past the cap for the day received; a visit with no stamps is still never held for it.
+    const cake = [{ orderTypeId: app.cake, quantity: 1, unitPriceCents: 450, unitCostCents: 150, catalogVersion: 1 }];
+    expect(await sync(app, [await visit(app, qr(full + 2), { items: cake })])).toEqual([{ status: "applied", code: "OK" }]);
+    // The cap is each device's own: another counter's visit received now, dated the same day before, still applies.
+    const other = await pairDevice(app.app, app.owner, "Counter 2");
+    expect(await sync(app, [await visit(app, qr(full + 3), { at: at(-40), items: box(1), device: other })], other.accessToken)).toEqual([
+      { status: "applied", code: "OK" },
+    ]);
+  });
+
+  it("holds a visit dated more than 5 minutes before the key that signed it was made", async () => {
+    const app = await cafeApp();
+    const [early, onTime] = await Promise.all([issueCard(app.owner.cafeId), issueCard(app.owner.cafeId)]);
+    await context.admin.query("UPDATE app.device_keys SET created_at = now() WHERE id = $1", [app.device.keyId]);
+    expect(
+      await sync(app, [
+        await visit(app, { kind: "qr", token: early.qr }, { at: new Date(Date.now() - 6 * MINUTE) }),
+        // A phone clock a little behind.
+        await visit(app, { kind: "qr", token: onTime.qr }, { at: new Date(Date.now() - 4 * MINUTE) }),
+      ]),
+    ).toEqual([
+      { status: "applied", code: "HELD_FOR_REVIEW" },
+      { status: "applied", code: "OK" },
+    ]);
+    const queue = (await app.as("GET", "/api/review-queue")).json<{ items: { id: string; reason: string }[] }>().items;
+    expect(queue).toMatchObject([{ reason: "before_key" }]);
+    expect((await app.as("POST", `/api/review-queue/${queue[0]?.id ?? ""}/accept`)).json()).toEqual({ outcome: "OK" });
+    expect(await stampsOf(early.cardId)).toBe(2);
   });
 
   it("keeps visits and redemptions but no link to a card its holder deletes, and accepting one later adds nothing (AC 9)", async () => {

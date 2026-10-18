@@ -83,6 +83,29 @@ describe("migrate", () => {
     expect(rows[0]).toEqual({ table_name: null });
   });
 
+  it("runs a migration outside a transaction statement by statement, and records it only once all of them ran", async () => {
+    const db = await freshDatabase();
+    const migrations = await loadMigrations();
+    const version = String(migrations.length + 1).padStart(4, "0");
+    const index = (where: string) =>
+      parseMigration(
+        `${version}_index_visits.sql`,
+        `-- migration: expand\n-- transaction: none\nDROP INDEX CONCURRENTLY IF EXISTS visits_test_idx;\nCREATE INDEX CONCURRENTLY visits_test_idx ON visits (cafe_id) WHERE ${where};\n`,
+      );
+    // A failing build (no such column) is not rolled back, and nothing is recorded...
+    const error = await runMigrations(db, [...migrations, index("no_such_column > 0")]).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(MigrationStateError);
+    expect((error as Error).message).toContain("safe to run again");
+    expect(await appliedVersions(db)).toEqual(migrations.map((migration) => migration.version));
+    // ...and the fixed file runs again from the start.
+    expect((await runMigrations(db, [...migrations, index("stamps_added > 0")])).applied).toEqual([version]);
+    const client = new pg.Client({ connectionString: db.adminUrl });
+    await client.connect();
+    const { rows } = await client.query<{ valid: boolean }>("SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = 'app.visits_test_idx'::regclass");
+    await client.end();
+    expect(rows).toEqual([{ valid: true }]);
+  });
+
   it("serialises concurrent runs so each migration is applied exactly once", async () => {
     const db = await freshDatabase();
     const migrations = await loadMigrations();

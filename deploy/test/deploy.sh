@@ -198,6 +198,17 @@ check "provision.sh refuses one key for both environments" "$status" 1
 run "PRODUCTION_DEPLOY_SSH_PUBLIC_KEY='ssh-ed25519 not-a-key' STAGING_DEPLOY_SSH_PUBLIC_KEY=\"\$(cat /root/staging-key.pub)\" \
   bash /deploy/provision.sh authorized-keys"
 check "and a line that is not a key" "$status" 1
+# The sudoers rule provision.sh writes, read by the release's own sudo (the stand-in's sudo on the PATH is a fake).
+vps "useradd deploy && DEPLOY_USER=deploy bash /deploy/provision.sh sudoers >/root/sudoers &&
+  install -m 0440 /root/sudoers /etc/sudoers.d/cafe-loyalty-deploy"
+run "/usr/sbin/visudo -cqf /etc/sudoers.d/cafe-loyalty-deploy"
+check "the deploy user's sudoers rule is valid" "$status" 0
+sudo_allows() { vps "/usr/bin/sudo -n -l -U deploy $1 >/dev/null 2>&1 && echo allowed || echo refused"; }
+check "it lets the deploy user run deploy.sh as root" "$(sudo_allows "/opt/cafe-loyalty/bin/deploy.sh staging $commit_a $digest_a")" allowed
+check "and rollback.sh" "$(sudo_allows "/opt/cafe-loyalty/bin/rollback.sh production")" allowed
+check "but no other script there" "$(sudo_allows "/opt/cafe-loyalty/bin/backup.sh staging")" refused
+run "DEPLOY_USER=root bash /deploy/provision.sh sudoers"
+check "provision.sh refuses root as the deploy user" "$status" 1
 run "IMAGE_REPOSITORY=ghcr.io/owner/cafe-loyalty:latest bash /deploy/provision.sh deploy-conf /tmp"
 check "and an image repository with a tag" "$status" 1
 check "deploy.conf names the repository" "$(vps 'cat /etc/cafe-loyalty/deploy.conf | grep -v "^#"')" "IMAGE_REPOSITORY=$REPO"
@@ -212,6 +223,8 @@ check "another key is refused" "$status" 255
 remote staging rollback.sh "'staging;id'"
 check "remote.sh refuses an argument the remote shell would read" "$status" 2
 
+# A run's output, kept from a release that wrote it readable by all.
+vps "install -m 0644 /dev/null $ENV_DIR/release-output.log"
 remote staging deploy.sh staging "$commit_a" "$digest_a"
 check "the first deploy succeeds" "$status" 0
 [[ $status -eq 0 ]] || show
@@ -232,6 +245,7 @@ check "provision.sh makes no new passwords over a database volume" "$status" 1
 check "it says to restore them" "$(said "the production database volume is there; restore both from a backup")" said
 check "and writes nothing" "$(vps 'ls /root/lost')" ""
 check "the run's output is kept on the VPS" "$(vps "grep -c 'staging runs $commit_a' $ENV_DIR/release-output.log")" 1
+check "and readable by root only" "$(vps "stat -c %a $ENV_DIR/release-output.log")" 600
 sql "INSERT INTO app.cafes (name) VALUES ('Deploy Test Cafe')"
 
 deploy "$commit_b" "$digest_b"

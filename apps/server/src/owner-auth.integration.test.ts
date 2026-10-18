@@ -10,6 +10,7 @@ import { PASSWORD, cookieToken, signIn, uniqueEmail, useApiHarness, withCookie, 
 
 const context = useApiHarness();
 const { harness, invite, signUp, auditActions, holdOwnerRow } = context;
+const COMMON = "This password is too common. Choose another.";
 
 describe("signup", () => {
   it("creates the invited café's owner and signs them in", async () => {
@@ -72,6 +73,15 @@ describe("signup", () => {
     const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: uniqueEmail(), password: "short" } });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "password", issue: "Use at least 10 characters." }] });
+  });
+
+  it("refuses a common password, and keeps the invite", async () => {
+    const { app } = await harness();
+    const { token } = await invite();
+    const response = await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: uniqueEmail(), password: "QWERTYUIOP" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "password", issue: COMMON }] });
+    expect((await app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: token, email: uniqueEmail(), password: PASSWORD } })).statusCode).toBe(201);
   });
 });
 
@@ -264,6 +274,20 @@ describe("password change", () => {
     expect(response.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "currentPassword" }] });
   });
 
+  it("refuses a common new password and keeps the session", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/password",
+      headers: withCookie(owner.session),
+      payload: { currentPassword: PASSWORD, newPassword: "1234567890" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "newPassword", issue: COMMON }] });
+    expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: withCookie(owner.session) })).statusCode).toBe(200);
+  });
+
   it("sets the new password and ends every session and reset link", async () => {
     const { app, background } = await harness();
     const owner = await signUp(app);
@@ -382,6 +406,17 @@ describe("password reset", () => {
       payload: { token: linkToken(h.mailer.sent[0]), password: "reset password 123" },
     });
     expect(response.statusCode).toBe(410);
+  });
+
+  it("refuses a common password and keeps the link", async () => {
+    const h = await harness();
+    const owner = await signUp(h.app);
+    await requestReset(h, owner.email);
+    const token = linkToken(h.mailer.sent[0]);
+    const refused = await h.app.inject({ method: "POST", url: "/api/auth/password-reset/complete", payload: { token, password: "1q2w3e4r5t" } });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "password", issue: COMMON }] });
+    expect((await h.app.inject({ method: "POST", url: "/api/auth/password-reset/complete", payload: { token, password: "reset password 123" } })).statusCode).toBe(204);
   });
 
   it("leaves one working link when requests overlap", async () => {

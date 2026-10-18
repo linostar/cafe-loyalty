@@ -30,6 +30,27 @@ export class MigrationStateError extends Error {
 
 /** Key for the session advisory lock that stops two migration runs overlapping. */
 const LOCK_KEY = 74_201_901;
+/** How long a run waits for another to finish, trying every LOCK_RETRY_MS. */
+const LOCK_WAIT_MS = 10 * 60 * 1000;
+const LOCK_RETRY_MS = 100;
+
+/**
+ * Takes the run's lock by trying, never by waiting inside a statement: a waiting statement is an open transaction,
+ * which a CREATE INDEX CONCURRENTLY in the run holding the lock waits for, so a blocking wait would deadlock.
+ */
+async function lockRun(client: ClientBase): Promise<void> {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    const { rows } = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock($1) AS locked", [LOCK_KEY]);
+    if (rows[0]?.locked === true) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new MigrationStateError("Another migration run has held the lock for over 10 minutes; nothing was migrated.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
+  }
+}
 
 interface AppliedRow {
   version: string;
@@ -38,9 +59,9 @@ interface AppliedRow {
 }
 
 /**
- * Applies pending migrations in order, one transaction each, as the owner role. Refuses to run when the
- * database's history does not match the files: an applied migration was edited, or the database has migrations
- * this release does not know (it is newer than this release; roll forward instead). With `deployedCommits`, also
+ * Applies pending migrations in order, one transaction each (a "-- transaction: none" one statement by statement), as
+ * the owner role. Refuses to run when the database's history does not match the files: an applied migration was
+ * edited, or the database has migrations this release does not know (it is newer than this release; roll forward instead). With `deployedCommits`, also
  * refuses a pending contract migration the running release is not yet at or after (AC 47).
  * `client` must be connected as a login role that is a member of the owner role.
  */
@@ -50,7 +71,7 @@ export async function migrate(client: ClientBase, migrations: readonly Migration
   await client.query("SET idle_in_transaction_session_timeout = '1min'");
   await client.query("SET lock_timeout = '10s'");
   await client.query("SET statement_timeout = '5min'");
-  await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY]);
+  await lockRun(client);
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS meta.schema_migrations (
@@ -70,6 +91,12 @@ export async function migrate(client: ClientBase, migrations: readonly Migration
     }
     const applied: string[] = [];
     for (const migration of pending) {
+      if (migration.statements !== null) {
+        await applyWithoutTransaction(client, migration, migration.statements);
+        applied.push(migration.version);
+        log.info({ version: migration.version, name: migration.name, kind: migration.kind }, "migration applied");
+        continue;
+      }
       await client.query("BEGIN");
       try {
         // Re-set inside every transaction, so nothing a previous migration did can change who owns new objects.
@@ -99,6 +126,31 @@ export async function migrate(client: ClientBase, migrations: readonly Migration
   } catch (error) {
     await release(client).catch(() => undefined);
     throw error;
+  }
+}
+
+/**
+ * A "-- transaction: none" migration: each statement on its own (CREATE INDEX CONCURRENTLY refuses a transaction, and
+ * takes no lock that blocks the running release's writes), then its history row. The session's role and search path
+ * are the owner's and app, set before the loop. Its statements are safe to run again, so a failed one is fixed by
+ * migrating again.
+ */
+async function applyWithoutTransaction(client: ClientBase, migration: MigrationFile, statements: readonly string[]): Promise<void> {
+  try {
+    for (const statement of statements) {
+      await client.query(statement);
+    }
+    await client.query("INSERT INTO meta.schema_migrations (version, name, checksum, requires_deployed) VALUES ($1, $2, $3, $4)", [
+      migration.version,
+      migration.name,
+      migration.checksum,
+      migration.requiresDeployed,
+    ]);
+  } catch (error) {
+    throw new MigrationStateError(
+      `Migration ${migration.fileName} failed; it runs outside a transaction and is safe to run again once the cause is fixed: ${(error as Error).message}`,
+      { cause: error },
+    );
   }
 }
 

@@ -237,6 +237,10 @@ export interface CardsTable {
   offers_opt_in_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
   email: ColumnType<string | null, never, string | null>;
   email_lookup: ColumnType<Buffer | null, never, Buffer | null>;
+  /** The card's email changes and undos so far; each undo link carries the count after its change (migration 0019). */
+  email_change_seq: ColumnType<number, never, number>;
+  /** The link counts every undo so far voided (an int4multirange, written and tested in SQL): those links no longer work. */
+  email_undo_voided: ColumnType<string, never, string>;
   /** When the card was first scanned at a counter: only then may it be stamped by phone number. */
   phone_confirmed_at: ColumnType<Date | null, never, Date>;
   /** When another card here signed up with the same number: from then on this card is never stamped by number. */
@@ -246,7 +250,7 @@ export interface CardsTable {
 }
 
 export type SyncEventStatus = "applied" | "held" | "discarded" | "rejected";
-export type SyncHoldReason = "device_revoked" | "staff_revoked" | "late_sync" | "campaign_check";
+export type SyncHoldReason = "device_revoked" | "staff_revoked" | "late_sync" | "campaign_check" | "large_visit" | "daily_cap_received" | "before_key";
 
 /** The ledger of synced events (AC 24): no payload, no personal data. Only a held event's review is updated. */
 export interface SyncEventsTable {
@@ -559,6 +563,8 @@ export const TABLE_COLUMNS = {
     "phone_disputed_at",
     "created_at",
     "updated_at",
+    "email_change_seq",
+    "email_undo_voided",
   ],
   customer_recovery_tokens: ["id", "email_lookup", "token_hash", "expires_at", "created_at"],
   sync_events: [

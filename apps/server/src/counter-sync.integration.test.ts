@@ -315,7 +315,8 @@ describe("pairing again", () => {
   it("keeps the device id, so a queue from before syncs, and only the new key renews (AC 18)", async () => {
     const setup = await counterApp();
     const { app, owner, device, staffId } = setup;
-    const queued = await visit(device, staffId);
+    // Recorded with the old key before the new one existed: judged by its own key's date, so not held as before_key.
+    const queued = await visit(device, staffId, { occurredAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() });
     await context.admin.query("UPDATE app.devices SET last_renewed_at = now() - interval '8 days' WHERE id = $1", [device.deviceId]);
     expect((await app.inject({ method: "POST", url: "/api/device/token", payload: await signedRenewal(device) })).json()).toMatchObject({ code: "PAIRING_REQUIRED" });
 

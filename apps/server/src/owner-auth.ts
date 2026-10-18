@@ -14,6 +14,7 @@ import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
 import type { Kysely, Transaction } from "kysely";
 import { SESSION_ABSOLUTE_TIMEOUT_SECONDS, SESSION_IDLE_TIMEOUT_SECONDS, findSession, ownerOf } from "./access.js";
 import type { BackgroundTasks } from "./background.js";
+import { refuseCommonPassword } from "./common-passwords.js";
 import { clearedSessionCookie, hashPassword, hashToken, newToken, readSessionCookie, sessionCookie, verifyPassword } from "./credentials.js";
 import { audit, isUniqueViolation, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
@@ -162,6 +163,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
   app.post("/signup", { config: { access: "public" } }, async (request, reply) => {
     enforce(limits.signupPerIp, clientKey(request.ip), reply);
     const body = parseInput(signupRequestSchema, request.body);
+    refuseCommonPassword(body.password, "password");
     const inviteHash = hashToken(body.inviteToken);
     const invite = await withLookup(db, { secretHash: inviteHash }, (trx) =>
       trx
@@ -272,6 +274,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     const owner = ownerOf(request);
     enforce(limits.passwordChangePerOwner, owner.ownerId, reply);
     const body = parseInput(passwordChangeRequestSchema, request.body);
+    refuseCommonPassword(body.newPassword, "newPassword");
     const current = await withCafe(db, owner.cafeId, (trx) =>
       trx.selectFrom("owners").select("password_hash").where("id", "=", owner.ownerId).executeTakeFirstOrThrow(),
     );
@@ -309,6 +312,7 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
   app.post("/password-reset/complete", { config: { access: "public" } }, async (request, reply) => {
     enforce(limits.resetCompletePerIp, clientKey(request.ip), reply);
     const body = parseInput(passwordResetCompleteRequestSchema, request.body);
+    refuseCommonPassword(body.password, "password");
     const tokenHash = hashToken(body.token);
     const reset = await withLookup(db, { secretHash: tokenHash }, (trx) =>
       trx

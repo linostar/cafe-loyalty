@@ -90,10 +90,13 @@ export {
 export { LOG_REDACT_CENSOR, LOG_REDACT_HEADER_PATHS, isSensitiveKey, redactLogObject } from "./logging.js";
 export { MAX_CENTS, centsSchema, formatUsd, type Cents, type DisplayLocale } from "./money.js";
 export {
+  OPERATOR_PASSWORD_MIN_LENGTH,
   OWNER_PASSWORD_MAX_LENGTH,
   OWNER_PASSWORD_MIN_LENGTH,
   linkTokenSchema,
   loginRequestSchema,
+  operatorPasswordChangeRequestSchema,
+  operatorPasswordSchema,
   ownerEmailSchema,
   ownerPasswordSchema,
   ownerSessionSchema,

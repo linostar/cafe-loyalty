@@ -158,7 +158,8 @@ legend {
 
 /*
  * Buttons: a quiet outlined button by default, the form's submit button in copper (each form has one primary action),
- * and `.primary` for a primary action that is not a submit button. `.danger` for what cannot be undone.
+ * and `.primary` for a primary action that is not a submit button. `.danger` for what cannot be undone, and `.quiet` for
+ * a form's second submit button that is not its primary action.
  */
 button {
   display: inline-flex;
@@ -196,6 +197,18 @@ button[type="submit"]:hover,
 button.primary:hover {
   border-color: var(--color-accent-hover);
   background: var(--color-accent-hover);
+}
+
+button[type="submit"].quiet {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: none;
+}
+
+button[type="submit"].quiet:hover {
+  border-color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
 }
 
 button.danger {

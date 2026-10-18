@@ -21,8 +21,22 @@ describe("parseMigration", () => {
     expect(migration).toMatchObject({ kind: "contract", requiresDeployed: SHA });
   });
 
+  it("splits a migration that runs outside a transaction into its statements, and keeps others whole", () => {
+    const migration = parseMigration(
+      "0005_index.sql",
+      "-- migration: expand\n-- transaction: none\n-- Built concurrently; the café's writes go on.\nDROP INDEX CONCURRENTLY IF EXISTS i;\nCREATE INDEX CONCURRENTLY i ON t (a)\n  WHERE b > 0;\n",
+    );
+    expect(migration.statements).toEqual(["DROP INDEX CONCURRENTLY IF EXISTS i", "CREATE INDEX CONCURRENTLY i ON t (a)\n  WHERE b > 0"]);
+    expect(parseMigration("0003_add_things.sql", "-- migration: expand\nCREATE TABLE t (id int);\n").statements).toBeNull();
+  });
+
   it.each([
     ["a bad file name", "4_x.sql", "-- migration: expand\n"],
+    ["a contract migration outside a transaction", "0004_x.sql", `-- migration: contract\n-- requires-deployed: ${SHA}\n-- transaction: none\nDROP INDEX CONCURRENTLY i;\n`],
+    ["a quote outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\nCREATE INDEX CONCURRENTLY i ON t (a) WHERE b = 'x;y';\n"],
+    ["a dollar body outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\nCREATE FUNCTION f() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql;\n"],
+    ["no statement outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\n"],
+    ["a comment after a statement outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\nDROP INDEX CONCURRENTLY IF EXISTS i; -- rebuild; before release\n"],
     ["upper case in the name", "0004_Add.sql", "-- migration: expand\n"],
     ["no kind header", "0004_x.sql", "-- just a comment\nSELECT 1;\n"],
     ["the kind after the first statement", "0004_x.sql", "SELECT 1;\n-- migration: expand\n"],

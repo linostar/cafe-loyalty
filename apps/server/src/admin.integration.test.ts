@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
@@ -140,9 +141,21 @@ describe("operator accounts (AC 39)", () => {
     expect(wrong.statusCode).toBe(400);
     expect(wrong.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "currentPassword" }] });
     expect((await app.asOperator("POST", "/api/admin/password", { currentPassword: app.password, newPassword: "short" })).statusCode).toBe(400);
+    // Operators need 16 characters, and nothing from the common-password list.
+    const fifteen = await app.asOperator("POST", "/api/admin/password", { currentPassword: app.password, newPassword: "fifteen chars!!" });
+    expect(fifteen.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "newPassword", issue: "Use at least 16 characters." }] });
+    // Whichever listed password is long enough, so the test holds whatever the list holds.
+    const listed = readFileSync(new URL("../assets/common-passwords/common-passwords.txt", import.meta.url), "utf8")
+      .split("\n")
+      .find((line) => Array.from(line).length >= 16);
+    const common = await app.asOperator("POST", "/api/admin/password", { currentPassword: app.password, newPassword: listed?.toUpperCase() });
+    expect(common.json()).toMatchObject({ code: "VALIDATION_FAILED", details: [{ path: "newPassword", issue: "This password is too common. Choose another." }] });
     // A refused change leaves the session alone.
     expect((await app.asOperator("GET", "/api/admin/session")).statusCode).toBe(200);
 
+    expect((await app.asOperator("POST", "/api/admin/password", { currentPassword: "not the password", newPassword: "sixteen chars!!!" })).json()).toMatchObject({
+      details: [{ path: "currentPassword" }],
+    });
     const changed = await app.asOperator("POST", "/api/admin/password", { currentPassword: app.password, newPassword: "a brand new password" });
     expect(changed.statusCode).toBe(204);
     expect(String(changed.headers["set-cookie"])).toContain("__Host-cl_operator=; ");

@@ -1,0 +1,15 @@
+# Actions pinned by SHA and images by digest; npm versions are pinned by hand (CLAUDE.md, Version pins).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
