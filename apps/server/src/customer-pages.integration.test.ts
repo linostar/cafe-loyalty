@@ -795,6 +795,26 @@ describe("email change undo", () => {
     expect((await h.app.inject({ method: "GET", url: `/c/${again}` })).statusCode).toBe(200);
   });
 
+  it("keeps an earlier undo's range from voiding the owner's link in a later takeover", async () => {
+    const h = await cafeWithJoinCode();
+    const first = secretOf(await join(h.app, h.code, uniquePhone()));
+    const old = `rana-${randomUUID()}@example.com`;
+    const own = `mallory-${randomUUID()}@example.com`;
+    await setEmail(h, first, old);
+    // The holder's own slip, undone: an undo with nothing in between.
+    await setEmail(h, first, `rana-typo-${randomUUID()}@example.com`);
+    const card = secretOf(await h.app.inject({ method: "POST", url: undoPathOf(h, 0), ...formBody({ email: old, lang: "en" }) }));
+    // Later the card link leaks: their own address, then away from it, and their own link used first.
+    await setEmail(h, card, own);
+    await setEmail(h, card, `other-${randomUUID()}@example.com`);
+    const [ownerUndo, attackerUndo] = [undoPathOf(h, 1), undoPathOf(h, 2)];
+    expect((await h.app.inject({ method: "POST", url: attackerUndo, ...formBody({ email: own, lang: "en" }) })).statusCode).toBe(303);
+    const back = await h.app.inject({ method: "POST", url: ownerUndo, ...formBody({ email: old, lang: "en" }) });
+    expect(back.statusCode).toBe(303);
+    expect((await cardRow(secretOf(back)))?.email).toBe(old);
+    expect((await h.app.inject({ method: "POST", url: attackerUndo, ...formBody({ email: own, lang: "en" }) })).statusCode).toBe(410);
+  });
+
   it("never applies an email change that waited on the card while an undo or restore re-keyed it", async () => {
     const h = await cafeWithJoinCode();
     const secret = secretOf(await join(h.app, h.code, uniquePhone()));

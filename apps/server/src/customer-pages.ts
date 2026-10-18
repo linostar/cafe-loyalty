@@ -930,11 +930,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   });
 
   /**
-   * An undo voids the links of the changes after the one its link was sent for, made before it: they went to addresses
-   * set after the one put back, so the address set first keeps the card, whichever link is used first.
+   * Whether an undo voided a link's change count. An undo voids the links of the changes after the one its link was
+   * sent for, made before it: they went to addresses set after the one put back, so the address set first keeps the
+   * card, whichever link is used first. Every undo's range is kept on its own (email_undo_voided, migration 0019).
    */
-  const undoVoided = (seq: number, card: { email_undo_floor: number | null; email_undo_seq: number | null }): boolean =>
-    card.email_undo_floor !== null && card.email_undo_seq !== null && seq > card.email_undo_floor && seq < card.email_undo_seq;
+  const undoVoided = (seq: number) => sql<boolean>`email_undo_voided @> ${seq}::int4`.as("voided");
 
   /**
    * The undo link from a card's email change notice; one that does not verify or has expired, whose card is gone, or that
@@ -947,9 +947,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       verified === null
         ? undefined
         : await withCafe(db, verified.cafeId, (trx) =>
-            trx.selectFrom("cards").select(["email_undo_floor", "email_undo_seq"]).where("id", "=", verified.cardId).executeTakeFirst(),
+            trx.selectFrom("cards").select(undoVoided(verified.seq)).where("id", "=", verified.cardId).executeTakeFirst(),
           );
-    if (verified === null || card === undefined || undoVoided(verified.seq, card)) {
+    if (verified === null || card === undefined || card.voided) {
       throw new PageError(410, "linkExpired");
     }
     return verified;
@@ -983,11 +983,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     await withCafe(db, ids.cafeId, async (trx) => {
       const card = await trx
         .selectFrom("cards")
-        .select(["email_change_seq", "email_undo_floor", "email_undo_seq"])
+        .select(["email_change_seq", undoVoided(ids.seq)])
         .where("id", "=", ids.cardId)
         .forUpdate()
         .executeTakeFirst();
-      if (card === undefined || undoVoided(ids.seq, card)) {
+      if (card === undefined || card.voided) {
         throw new PageError(410, "linkExpired");
       }
       // Counts as a change, and voids the links of the changes since the one this link was sent for.
@@ -1000,9 +1000,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           epoch: sql<number>`epoch + 1`,
           web_secret_hash: hashToken(secret),
           email_change_seq: seq,
-          // Never raised: a later undo (say, of the holder's own typo) must not bring back links an earlier one voided.
-          email_undo_floor: card.email_undo_floor === null ? ids.seq : Math.min(card.email_undo_floor, ids.seq),
-          email_undo_seq: seq,
+          // Adds this undo's own range (the counts between its link's and its own), never widening an earlier one.
+          email_undo_voided: sql<string>`email_undo_voided + int4multirange(int4range(${ids.seq}::int4, ${seq}::int4, '()'))`,
         })
         .where("id", "=", ids.cardId)
         .execute();

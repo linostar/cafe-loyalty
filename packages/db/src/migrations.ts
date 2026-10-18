@@ -21,6 +21,11 @@ export interface MigrationFile {
   kind: MigrationKind;
   /** For contract migrations: the commit of the release that stopped using what this migration removes. */
   requiresDeployed: string | null;
+  /**
+   * For a migration headed "-- transaction: none" (one that builds an index CONCURRENTLY, which no transaction may
+   * hold), its statements, run one by one outside a transaction; null for the usual one transaction for the file.
+   */
+  statements: readonly string[] | null;
   sql: string;
   /** SHA-256 of the file contents; an applied migration must never change. */
   checksum: string;
@@ -36,6 +41,30 @@ export class MigrationFileError extends Error {
 const FILE_NAME = /^(\d{4})_([a-z0-9]+(?:_[a-z0-9]+)*)\.sql$/;
 const KIND_HEADER = /^--\s*migration:\s*(expand|contract)\s*$/;
 const REQUIRES_HEADER = /^--\s*requires-deployed:\s*([0-9a-f]{40})\s*$/;
+const NO_TRANSACTION_HEADER = /^--\s*transaction:\s*none\s*$/;
+
+/**
+ * The statements of a migration run outside a transaction. Nothing it holds may hide a semicolon (no quotes, dollar
+ * bodies or block comments), so splitting on them is exact; each must be safe to run again, since a failure leaves
+ * the statements before it applied (DROP INDEX CONCURRENTLY IF EXISTS first, then CREATE INDEX CONCURRENTLY).
+ */
+function noTransactionStatements(fileName: string, sql: string): string[] {
+  const body = sql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  if (/['"$]|\/\*/.test(body)) {
+    throw new MigrationFileError(`${fileName}: a "-- transaction: none" migration may hold no quotes, dollar bodies or block comments`);
+  }
+  const statements = body
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter((statement) => statement !== "");
+  if (statements.length === 0) {
+    throw new MigrationFileError(`${fileName}: a "-- transaction: none" migration needs at least one statement`);
+  }
+  return statements;
+}
 
 /** Parses one migration file's name and header comments. */
 export function parseMigration(fileName: string, sql: string): MigrationFile {
@@ -67,12 +96,17 @@ export function parseMigration(fileName: string, sql: string): MigrationFile {
   if (kind === "expand" && requires.length > 0) {
     throw new MigrationFileError(`${fileName}: "requires-deployed" is only allowed on contract migrations`);
   }
+  const noTransaction = header.some((line) => NO_TRANSACTION_HEADER.test(line));
+  if (noTransaction && kind !== "expand") {
+    throw new MigrationFileError(`${fileName}: only an expand migration may run outside a transaction`);
+  }
   return {
     version,
     name,
     fileName,
     kind,
     requiresDeployed: requires[0] ?? null,
+    statements: noTransaction ? noTransactionStatements(fileName, sql) : null,
     sql,
     checksum: createHash("sha256").update(sql).digest("hex"),
   };

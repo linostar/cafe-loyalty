@@ -239,9 +239,8 @@ export interface CardsTable {
   email_lookup: ColumnType<Buffer | null, never, Buffer | null>;
   /** The card's email changes and undos so far; each undo link carries the count after its change (migration 0019). */
   email_change_seq: ColumnType<number, never, number>;
-  /** The lowest link count an undo used (never raised) and the count after the last undo: links in between no longer work. */
-  email_undo_floor: ColumnType<number | null, never, number>;
-  email_undo_seq: ColumnType<number | null, never, number>;
+  /** The link counts every undo so far voided (an int4multirange, written and tested in SQL): those links no longer work. */
+  email_undo_voided: ColumnType<string, never, string>;
   /** When the card was first scanned at a counter: only then may it be stamped by phone number. */
   phone_confirmed_at: ColumnType<Date | null, never, Date>;
   /** When another card here signed up with the same number: from then on this card is never stamped by number. */
@@ -565,8 +564,7 @@ export const TABLE_COLUMNS = {
     "created_at",
     "updated_at",
     "email_change_seq",
-    "email_undo_floor",
-    "email_undo_seq",
+    "email_undo_voided",
   ],
   customer_recovery_tokens: ["id", "email_lookup", "token_hash", "expires_at", "created_at"],
   sync_events: [
