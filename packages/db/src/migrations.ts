@@ -45,7 +45,7 @@ const NO_TRANSACTION_HEADER = /^--\s*transaction:\s*none\s*$/;
 
 /**
  * The statements of a migration run outside a transaction. Nothing it holds may hide a semicolon (no quotes, dollar
- * bodies or block comments), so splitting on them is exact; each must be safe to run again, since a failure leaves
+ * bodies, block comments or comments after a statement; comment lines are fine), so splitting on them is exact; each must be safe to run again, since a failure leaves
  * the statements before it applied (DROP INDEX CONCURRENTLY IF EXISTS first, then CREATE INDEX CONCURRENTLY).
  */
 function noTransactionStatements(fileName: string, sql: string): string[] {
@@ -53,8 +53,8 @@ function noTransactionStatements(fileName: string, sql: string): string[] {
     .split("\n")
     .filter((line) => !line.trim().startsWith("--"))
     .join("\n");
-  if (/['"$]|\/\*/.test(body)) {
-    throw new MigrationFileError(`${fileName}: a "-- transaction: none" migration may hold no quotes, dollar bodies or block comments`);
+  if (/['"$]|\/\*|--/.test(body)) {
+    throw new MigrationFileError(`${fileName}: a "-- transaction: none" migration may hold no quotes, dollar bodies, block comments or comments after a statement`);
   }
   const statements = body
     .split(";")

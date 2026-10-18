@@ -36,6 +36,7 @@ describe("parseMigration", () => {
     ["a quote outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\nCREATE INDEX CONCURRENTLY i ON t (a) WHERE b = 'x;y';\n"],
     ["a dollar body outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\nCREATE FUNCTION f() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql;\n"],
     ["no statement outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\n"],
+    ["a comment after a statement outside a transaction", "0004_x.sql", "-- migration: expand\n-- transaction: none\nDROP INDEX CONCURRENTLY IF EXISTS i; -- rebuild; before release\n"],
     ["upper case in the name", "0004_Add.sql", "-- migration: expand\n"],
     ["no kind header", "0004_x.sql", "-- just a comment\nSELECT 1;\n"],
     ["the kind after the first statement", "0004_x.sql", "SELECT 1;\n-- migration: expand\n"],
