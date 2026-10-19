@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
+import { sql } from "kysely";
 import pg from "pg";
 import { bootstrap, withDatabase } from "../bootstrap.js";
-import { createDatabase, type DatabaseHandle } from "../database.js";
+import { createDatabase, setLookup, type DatabaseHandle } from "../database.js";
 import { migrate } from "../migrate.js";
 import { loadMigrations } from "../migrations.js";
+import { OWNER_GROUP_ROLE } from "../roles.js";
 
 export interface TestDatabase {
   name: string;
@@ -14,6 +16,8 @@ export interface TestDatabase {
   appRole: string;
   /** Pool connected as the app login role, the same way the server and worker connect. */
   app: DatabaseHandle;
+  /** Pool connected as the migrator login role, the way create-operator connects. */
+  migrator: DatabaseHandle;
   cleanup(): Promise<void>;
 }
 
@@ -82,16 +86,19 @@ export async function createTestDatabase(options: { migrate?: boolean } = {}): P
   }
 
   const poolErrors: Error[] = [];
-  const app = createDatabase({
-    connectionString: appUrl,
-    applicationName: "cafe-loyalty-test",
-    maxConnections: 4,
-    connectionTimeoutMs: 10_000,
-    statementTimeoutMs: 10_000,
-    idleInTransactionTimeoutMs: 10_000,
-    idleTimeoutMs: 1_000,
-    onPoolError: (error) => poolErrors.push(error),
-  });
+  const pool = (connectionString: string, maxConnections: number) =>
+    createDatabase({
+      connectionString,
+      applicationName: "cafe-loyalty-test",
+      maxConnections,
+      connectionTimeoutMs: 10_000,
+      statementTimeoutMs: 10_000,
+      idleInTransactionTimeoutMs: 10_000,
+      idleTimeoutMs: 1_000,
+      onPoolError: (error) => poolErrors.push(error),
+    });
+  const app = pool(appUrl, 4);
+  const migrator = pool(migratorUrl, 1);
 
   return {
     name,
@@ -100,12 +107,24 @@ export async function createTestDatabase(options: { migrate?: boolean } = {}): P
     appUrl,
     appRole,
     app,
+    migrator,
     async cleanup() {
       await app.close();
+      await migrator.close();
       await dropTestObjects(adminUrl, name, [migratorRole, appRole]);
       if (poolErrors.length > 0) {
         throw new AggregateError(poolErrors, "The app connection pool reported errors during the test.");
       }
     },
   };
+}
+
+/** Creates an operator as create-operator does, as the owner role (the app role cannot, migration 0022); keeps an existing one. */
+export async function insertOperator(testDb: TestDatabase, values: { id?: string; email: string; password_hash: string }): Promise<string> {
+  return testDb.migrator.db.transaction().execute(async (trx) => {
+    await sql`SET LOCAL ROLE ${sql.id(OWNER_GROUP_ROLE)}`.execute(trx);
+    await setLookup(trx, { operatorEmail: values.email });
+    await trx.insertInto("operators").values(values).onConflict((conflict) => conflict.column("email").doNothing()).execute();
+    return (await trx.selectFrom("operators").select("id").where("email", "=", values.email).executeTakeFirstOrThrow()).id;
+  });
 }

@@ -36,7 +36,7 @@ async function adminApp() {
   const staffId = (await asOwner("POST", "/api/staff", { name: "Rami", pin: "482913" })).json<{ staff: { id: string }[] }>().staff[0]?.id ?? "missing";
   const device = await pairDevice(h.app, owner);
   const email = `operator-${randomUUID()}@example.com`;
-  const { password } = await setOperatorPassword(context.testDb.app.db, email);
+  const { password } = await setOperatorPassword(context.testDb.migrator.db, email);
   const login = await h.app.inject({ method: "POST", url: "/api/admin/login", payload: { email, password } });
   expect(login.statusCode).toBe(200);
   const operator = operatorToken(login);
@@ -81,12 +81,19 @@ describe("operator accounts (AC 39)", () => {
 
   it("lose every session and the old password when create-operator runs again", async () => {
     const app = await adminApp();
-    const replaced = await setOperatorPassword(context.testDb.app.db, app.email);
+    const replaced = await setOperatorPassword(context.testDb.migrator.db, app.email);
     expect(replaced.created).toBe(false);
     expect(replaced.password).not.toBe(app.password);
     expect((await app.asOperator("GET", "/api/admin/session")).statusCode).toBe(401);
     expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: app.password } })).statusCode).toBe(401);
     expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: replaced.password } })).statusCode).toBe(200);
+  });
+
+  it("are never created through the server's app role, only by create-operator as the migrator", async () => {
+    const email = `operator-${randomUUID()}@example.com`;
+    await expect(setOperatorPassword(context.testDb.app.db, email)).rejects.toMatchObject({ code: "42501" });
+    const { rows } = await context.admin.query("SELECT 1 FROM app.operators WHERE email = $1", [email]);
+    expect(rows).toEqual([]);
   });
 
   it("end after 2 hours without a request or 12 hours after sign-in, and stay alive while used", async () => {

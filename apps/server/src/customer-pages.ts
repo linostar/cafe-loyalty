@@ -21,6 +21,8 @@ import { RateLimiter, clientKey } from "./rate-limit.js";
 const MINUTE = 60;
 /** A feedback message's longest length, in characters (the column's check, migration 0015). */
 export const FEEDBACK_MAX_LENGTH = 2000;
+/** How long after a visit its feedback link takes a message, so an old pass cannot fill the inbox months later. */
+export const FEEDBACK_OPEN_DAYS = 30;
 const HOUR = 60 * MINUTE;
 /** A recovery link works for this long (AC 8). */
 export const RECOVERY_TOKEN_TTL_SECONDS = 30 * MINUTE;
@@ -684,7 +686,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
 
   /**
    * A visit's feedback request from its signed link (AC 37), with its café's name and Google review link and whether it
-   * was answered; a link that does not verify, or whose card was deleted since (the request went with it), is not found.
+   * was answered or is closed (FEEDBACK_OPEN_DAYS after the visit, since the link itself never expires); a link that
+   * does not verify, or whose card was deleted since (the request went with it), is not found.
    */
   async function feedbackRequest(token: string) {
     const ids = verifyFeedbackToken(secrets, token);
@@ -692,13 +695,18 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       ids === null
         ? undefined
         : await withCafe(db, ids.cafeId, async (trx) => {
-            const request = await trx.selectFrom("feedback_requests").select("id").where("id", "=", ids.requestId).executeTakeFirst();
+            const request = await trx
+              .selectFrom("feedback_requests")
+              .select(["id", sql<boolean>`created_at <= now() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`.as("closed")])
+              .where("id", "=", ids.requestId)
+              .executeTakeFirst();
             if (request === undefined) {
               return undefined;
             }
             return {
               cafe: await trx.selectFrom("cafes").select(["name", "google_review_url"]).where("id", "=", ids.cafeId).executeTakeFirstOrThrow(),
               answered: (await trx.selectFrom("feedback").select("id").where("request_id", "=", request.id).executeTakeFirst()) !== undefined,
+              closed: request.closed,
             };
           });
     if (ids === null || found === undefined) {
@@ -717,6 +725,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lang = langOf(request);
     const found = await feedbackRequest(token);
     const sent = (request.query as { sent?: unknown } | undefined)?.sent === "1";
+    if (!found.answered && found.closed) {
+      return sendPage(reply, 410, feedbackPage(lang, token, found, "closed"));
+    }
     return sendPage(reply, 200, feedbackPage(lang, token, found, found.answered ? (sent ? "sent" : "done") : "form"));
   });
 
@@ -728,6 +739,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const found = await feedbackRequest(token);
     if (found.answered) {
       return sendPage(reply, 200, feedbackPage(lang, token, found, "done"));
+    }
+    if (found.closed) {
+      return sendPage(reply, 410, feedbackPage(lang, token, found, "closed"));
     }
     // One line ending, and no NUL (which a text column refuses).
     const message = (formOf(request).message ?? "").replace(/\r\n?/g, "\n").replaceAll("\0", "").trim();

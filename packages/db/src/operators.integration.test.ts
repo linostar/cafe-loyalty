@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TenantContextError, withCafe, withLookup, withOperator } from "./database.js";
-import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
+import { createTestDatabase, insertOperator, type TestDatabase } from "./testing/test-database.js";
 
 const PERMISSION_DENIED = "42501";
 
@@ -22,12 +22,7 @@ async function errorCodeOf(promise: Promise<unknown>): Promise<string | undefine
 /** An operator as create-operator makes one (by its email), with one session; returns their ids and the session hash. */
 async function createOperator(): Promise<{ operatorId: string; email: string; tokenHash: Buffer }> {
   const email = `operator-${randomUUID()}@example.com`;
-  const operatorId = await withLookup(
-    testDb.app.db,
-    { operatorEmail: email },
-    async (trx) => (await trx.insertInto("operators").values({ email, password_hash: "fake-hash" }).returning("id").executeTakeFirstOrThrow()).id,
-    "read write",
-  );
+  const operatorId = await insertOperator(testDb, { email, password_hash: "fake-hash" });
   const tokenHash = createHash("sha256").update(randomBytes(32)).digest();
   await withOperator(testDb.app.db, operatorId, (trx) =>
     trx.insertInto("operator_sessions").values({ operator_id: operatorId, token_hash: tokenHash, expires_at: new Date(Date.now() + 60_000) }).execute(),
@@ -60,14 +55,13 @@ describe("operators (AC 39)", () => {
     expect((await sql<{ n: number }>`SELECT count(*)::int AS n FROM operators`.execute(testDb.app.db)).rows).toEqual([{ n: 0 }]);
   });
 
-  it("can only be created by their own email and only change their own password", async () => {
+  it("are never created by the app role, and only change their own password", async () => {
     const { operatorId } = await createOperator();
     const other = await createOperator();
-    // Another email than the one set is refused.
+    // Not even by their own email: only create-operator, as the owner role, creates one (migration 0022).
+    const email = `operator-${randomUUID()}@example.com`;
     expect(
-      await errorCodeOf(
-        withLookup(testDb.app.db, { operatorEmail: "someone@example.com" }, (trx) => trx.insertInto("operators").values({ email: "other@example.com", password_hash: "x" }).execute(), "read write"),
-      ),
+      await errorCodeOf(withLookup(testDb.app.db, { operatorEmail: email }, (trx) => trx.insertInto("operators").values({ email, password_hash: "x" }).execute(), "read write")),
     ).toBe(PERMISSION_DENIED);
     const changed = await withOperator(testDb.app.db, operatorId, (trx) => trx.updateTable("operators").set({ password_hash: "new-hash" }).where("id", "=", other.operatorId).executeTakeFirst());
     expect(changed.numUpdatedRows).toBe(0n);

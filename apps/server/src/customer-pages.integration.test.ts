@@ -1052,6 +1052,26 @@ describe("feedback", () => {
     expect((await as("GET", "/api/feedback")).json<{ items: { message: string }[] }>().items[0]?.message).toHaveLength(2000);
   });
 
+  it("closes a visit's link 30 days after it, so an old pass cannot fill the inbox", async () => {
+    const { app, path, as, card } = await askedCard();
+    const age = (days: number) => context.admin.query("UPDATE app.feedback_requests SET created_at = now() - make_interval(days => $1) WHERE card_id = $2", [days, card?.id]);
+    const send = () => app.inject({ method: "POST", url: path, ...formBody({ message: "Fake feedback", lang: "en" }) });
+    await age(31);
+    const page = await app.inject({ method: "GET", url: `${path}?lang=en` });
+    expect(page.statusCode).toBe(410);
+    expect(page.body).toContain("more than 30 days ago");
+    expect(page.body).not.toContain("<textarea");
+    expect((await app.inject({ method: "GET", url: path, headers: { "accept-language": "ar" } })).body).toContain("أكثر من 30 يوماً");
+    expect((await send()).statusCode).toBe(410);
+    expect((await as("GET", "/api/feedback")).json<{ items: unknown[] }>().items).toEqual([]);
+    await age(29);
+    expect((await app.inject({ method: "GET", url: `${path}?lang=en` })).body).toContain("<textarea");
+    expect((await send()).statusCode).toBe(303);
+    // Answered, then closed: still thanks, not "closed".
+    await age(31);
+    expect((await app.inject({ method: "GET", url: `${path}?lang=en` })).body).toContain("You already sent a message about this visit.");
+  });
+
   it("refuses a link that does not verify or another café's request, and deletes feedback with the card (AC 9)", async () => {
     const first = await askedCard();
     const second = await askedCard();

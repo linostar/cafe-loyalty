@@ -2,10 +2,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { TenantContextError, createDatabase, setLookup, withCafe } from "./database.js";
+import { TenantContextError, createDatabase, withCafe } from "./database.js";
 import { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 import { TABLE_COLUMNS, TENANT_KEY, type Database, type TableName } from "./schema.js";
-import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
+import { createTestDatabase, insertOperator, type TestDatabase } from "./testing/test-database.js";
 
 /** SQLSTATE 42501, insufficient_privilege: raised both by a row-level security WITH CHECK and by a missing grant. */
 const PERMISSION_DENIED = "42501";
@@ -248,15 +248,9 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .execute(),
   feedback: (trx, cafeId) => trx.insertInto("feedback").values({ cafe_id: cafeId, request_id: idOf("feedbackRequest", cafeId), message: "Fake feedback for the tenancy test." }).execute(),
   cafe_payments: async (trx, cafeId) => {
-    // The operator who recorded it, a row of no café: allowed by its own email, as create-operator makes it.
-    const email = `operator-${cafeId}@example.com`;
-    await setLookup(trx, { operatorEmail: email });
-    // Once: the cross-café write test runs this again for a café that already has it.
-    await trx
-      .insertInto("operators")
-      .values({ id: idOf("operator", cafeId), email, password_hash: "fake-hash" })
-      .onConflict((conflict) => conflict.column("email").doNothing())
-      .execute();
+    // The operator who recorded it, a row of no café, made as create-operator makes it; once, since the cross-café
+    // write test runs this again for a café that already has it.
+    await insertOperator(testDb, { id: idOf("operator", cafeId), email: `operator-${cafeId}@example.com`, password_hash: "fake-hash" });
     return trx
       .insertInto("cafe_payments")
       .values({ id: idOf("payment", cafeId), cafe_id: cafeId, amount_cents: 2500, paid_on: "2026-10-01", method: "cash", operator_id: idOf("operator", cafeId) })

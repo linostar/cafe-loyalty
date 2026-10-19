@@ -149,6 +149,7 @@ const MESSAGES = {
     feedbackSend: "Send to the café",
     feedbackSent: "Thank you. Your message is with the café.",
     feedbackDone: "You already sent a message about this visit. Thank you.",
+    feedbackClosed: "This visit was more than 30 days ago, so its feedback link no longer works.",
     feedbackEmpty: "Write a message before you send it.",
     feedbackTooLong: "Keep your message to 2,000 characters.",
     reviewTitle: "Review {cafe} on Google",
@@ -237,6 +238,7 @@ const MESSAGES = {
     feedbackSend: "إرسال إلى المقهى",
     feedbackSent: "شكراً لك. وصلت رسالتك إلى المقهى.",
     feedbackDone: "لقد أرسلت رسالة عن هذه الزيارة. شكراً لك.",
+    feedbackClosed: "مرّ أكثر من 30 يوماً على هذه الزيارة، لذا لم يعد رابط الملاحظات يعمل.",
     feedbackEmpty: "اكتب رسالة قبل إرسالها.",
     feedbackTooLong: "اجعل رسالتك في حدود 2,000 حرف.",
     reviewTitle: "قيّم {cafe} على Google",
@@ -283,7 +285,7 @@ export function count(lang: Lang, noun: keyof typeof COUNTED, n: number): string
 }
 
 /**
- * A whole customer page: language and direction, no referrer, noindex, the one stylesheet, the favicon, a language
+ * A whole customer page: language and direction, a same-origin referrer policy, noindex, the one stylesheet, the favicon, a language
  * switch unless `otherLangHref` is null (a page that cannot be loaded again, such as freshly restored card links), and
  * the product's name in the footer.
  */

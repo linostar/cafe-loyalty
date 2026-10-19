@@ -5,10 +5,10 @@ import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } 
 import { useT, type Later, useLang, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
-const PIN_HINT = "6 to 12 digits; not a repeated digit or a run like 123456. Tell it to the barista in person.";
+const PIN_HINT = "6 to 12 digits; not a repeated digit or a run like 123456. Tell it to the barista in person, and pick one they use nowhere else.";
 
 const AR = {
-  [PIN_HINT]: "من 6 إلى 12 رقماً، لا رقماً مكرراً ولا تسلسلاً مثل 123456. أخبر به الباريستا شخصياً.",
+  [PIN_HINT]: "من 6 إلى 12 رقماً، لا رقماً مكرراً ولا تسلسلاً مثل 123456. أخبر به الباريستا شخصياً، واختر رمزاً لا يستخدمه في أي مكان آخر.",
   "Add a barista": "إضافة باريستا",
   Name: "الاسم",
   PIN: "الرمز السري",
