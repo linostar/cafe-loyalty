@@ -26,7 +26,10 @@ const HOUR = 60 * MINUTE;
 /** A password reset link works for this long (AC 16). */
 export const RESET_TOKEN_TTL_SECONDS = 30 * MINUTE;
 
-export const RESET_REQUESTED_MESSAGE = apiText("If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.");
+// Promises no new email: past the per-email budget none is sent (the newest one sent still works).
+export const RESET_REQUESTED_MESSAGE = apiText(
+  "If an account uses this email, a link to reset the password is on its way or already in its inbox. Use the newest one; each link works for 30 minutes after it was sent.",
+);
 
 export interface OwnerAuthOptions {
   db: Kysely<Database>;
@@ -116,7 +119,9 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     loginFailuresPerAccountAndIp: new RateLimiter(10, 15 * MINUTE * 1000),
     loginFailuresPerAccount: new RateLimiter(100, HOUR * 1000),
     resetRequestPerIp: new RateLimiter(5, HOUR * 1000),
-    resetRequestPerAccount: new RateLimiter(3, HOUR * 1000),
+    // No longer than a link lives: while an email's budget is used up, its newest link (only the newest works) still
+    // does, so requests someone else made cannot leave the owner with no working link.
+    resetRequestPerAccount: new RateLimiter(3, RESET_TOKEN_TTL_SECONDS * 1000),
     resetCompletePerIp: new RateLimiter(10, 15 * MINUTE * 1000),
     passwordChangePerOwner: new RateLimiter(10, 15 * MINUTE * 1000),
   };
@@ -297,14 +302,21 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
 
   /**
    * Starts a password reset. The reply is the same whether or not the email has an account, and it is sent
-   * before any lookup, so its timing cannot tell either (AC 16); the lookup and the email run afterwards.
+   * before any lookup, so its timing cannot tell either (AC 16); the lookup and the email run afterwards. Past the
+   * per-email budget it still answers 202 and sends nothing: a 429 would let anyone who knows the owner's email use up
+   * their reset requests, keeping them locked out of an account they could otherwise recover.
    */
   app.post("/password-reset", { config: { access: "public" } }, async (request, reply) => {
     enforce(limits.resetRequestPerIp, clientKey(request.ip), reply);
     const body = parseInput(passwordResetRequestSchema, request.body);
-    enforce(limits.resetRequestPerAccount, body.email, reply);
     const log = request.log;
-    background.run("password-reset-email", () => sendPasswordReset(body.email, log));
+    const wait = limits.resetRequestPerAccount.hit(body.email);
+    if (wait > 0) {
+      // No address or account in the log: matched to a report by its time, and by when this email may send again.
+      log.info({ retryAfterSeconds: wait }, "password reset email skipped: this email's budget is used until its newest link expires");
+    } else {
+      background.run("password-reset-email", () => sendPasswordReset(body.email, log));
+    }
     return reply.code(202).send({ message: RESET_REQUESTED_MESSAGE });
   });
 

@@ -156,7 +156,7 @@ test("explains a used invite and a link without its token", async ({ page }) => 
 });
 
 test("requests a reset link and sets a new password from it", async ({ page }) => {
-  const message = "If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.";
+  const message = "If an account uses this email, a link to reset the password is on its way or already in its inbox. Use the newest one; each link works for 30 minutes after it was sent.";
   await mockApi(page, {
     "POST /api/auth/password-reset": reply(202, { message }),
     "POST /api/auth/password-reset/complete": async (route) => {

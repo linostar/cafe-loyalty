@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hashPassword, hashToken, newToken } from "./credentials.js";
 import { createOwnerInvite } from "./invites.js";
 import { EmailDeliveryError, type EmailMessage } from "./mailer.js";
@@ -323,8 +323,8 @@ describe("password reset", () => {
     return match[1];
   }
 
-  async function requestReset(h: Harness, email: string): Promise<LightMyRequestResponse> {
-    const response = await h.app.inject({ method: "POST", url: "/api/auth/password-reset", payload: { email } });
+  async function requestReset(h: Harness, email: string, remoteAddress?: string): Promise<LightMyRequestResponse> {
+    const response = await h.app.inject({ method: "POST", url: "/api/auth/password-reset", payload: { email }, ...(remoteAddress === undefined ? {} : { remoteAddress }) });
     await h.background.drain();
     return response;
   }
@@ -461,13 +461,31 @@ describe("password reset", () => {
     expect((await signIn(h.app, owner.email, "reset password 123", "198.51.100.9")).statusCode).toBe(200);
   });
 
-  it("limits requests per email", async () => {
-    const h = await harness();
-    const email = uniqueEmail();
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      expect((await requestReset(h, email)).statusCode).toBe(202);
+  it("limits emails per address silently, so nobody can use up the owner's own request", async () => {
+    // Date only, still running: the limiters read Date.now, captured when the harness builds them.
+    vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+    try {
+      const h = await harness();
+      const owner = await signUp(h.app);
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        expect((await requestReset(h, owner.email)).statusCode).toBe(202);
+      }
+      expect(h.mailer.sent).toHaveLength(3);
+      // Each skip is logged with when the email may send again, and without the address.
+      const skipped = h.logs.filter((line) => line.includes("password reset email skipped"));
+      expect(skipped).toHaveLength(2);
+      const entry = JSON.parse(skipped[0] ?? "{}") as { retryAfterSeconds?: unknown };
+      expect(typeof entry.retryAfterSeconds).toBe("number");
+      expect(skipped.join("\n")).not.toContain(owner.email);
+      // The per-address limit (5 an hour) still answers 429.
+      expect((await requestReset(h, owner.email)).statusCode).toBe(429);
+      // The budget lasts no longer than a link (30 minutes), so the owner is never left without a working one.
+      vi.setSystemTime(Date.now() + 31 * 60 * 1000);
+      expect((await requestReset(h, owner.email, "198.51.100.31")).statusCode).toBe(202);
+      expect(h.mailer.sent).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
     }
-    expect((await requestReset(h, email)).statusCode).toBe(429);
   });
 
   it("logs a failed email with the café and without the address", async () => {

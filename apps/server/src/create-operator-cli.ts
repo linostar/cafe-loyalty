@@ -8,7 +8,7 @@ import { setOperatorPassword } from "./operators.js";
 const USAGE = "Usage: create-operator --email you@example.com   (a new operator, or a new password for an existing one)";
 
 const envSchema = z.object({
-  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+  MIGRATOR_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   DASHBOARD_URL: dashboardUrlSchema,
 });
 
@@ -30,7 +30,7 @@ try {
 }
 
 const database = createDatabase({
-  connectionString: env.DATABASE_URL,
+  connectionString: env.MIGRATOR_DATABASE_URL,
   applicationName: "cafe-loyalty-create-operator",
   maxConnections: 1,
   connectionTimeoutMs: 10_000,

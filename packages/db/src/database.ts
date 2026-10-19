@@ -1,6 +1,7 @@
 import { Kysely, PostgresDialect, sql, type Transaction } from "kysely";
 import pg from "pg";
 import { z } from "zod";
+import { OWNER_GROUP_ROLE } from "./roles.js";
 import type { Database } from "./schema.js";
 
 export interface DatabaseConfig {
@@ -79,8 +80,7 @@ const SECRET_HASH_BYTES = 32;
 /**
  * Runs `work` in one transaction with no café set, in which row-level security shows only the rows matching `key`:
  * the owner or operator with that email, the row with that hash, the device key or the customer with that id. Read-only by
- * default; "read write" only where a policy keyed on that same value allows writes (customer recovery tokens, an
- * operator's own row) or
+ * default; "read write" only where a policy keyed on that same value allows writes (customer recovery tokens) or
  * where the work then switches to the cafés of rows it found (useCafe, customer recovery). Otherwise follow up with
  * withCafe on the café id it returns.
  */
@@ -145,7 +145,28 @@ export async function withOperator<T>(db: Kysely<Database>, operatorId: string, 
     throw new TenantContextError("An operator id must be a UUID.");
   }
   return db.transaction().execute(async (trx) => {
-    await sql`SELECT set_config('app.operator_id', ${operatorId.toLowerCase()}, true)`.execute(trx);
+    await setOperator(trx, operatorId);
+    return work(trx);
+  });
+}
+
+/** Names the operator of a transaction that is already open, as withOperator does. */
+export async function setOperator(trx: Transaction<Database>, operatorId: string): Promise<void> {
+  if (!cafeIdSchema.safeParse(operatorId).success) {
+    throw new TenantContextError("An operator id must be a UUID.");
+  }
+  await sql`SELECT set_config('app.operator_id', ${operatorId.toLowerCase()}, true)`.execute(trx);
+}
+
+/**
+ * Runs `work` in one transaction as the owner role for the operator with this email (migration 0022): only
+ * create-operator, connected as the migrator, creates an operator or replaces a lost password, never the app role.
+ * Row-level security shows it that operator's row, and their sessions once setOperator names them.
+ */
+export async function withOperatorAccount<T>(db: Kysely<Database>, email: string, work: (trx: Transaction<Database>) => Promise<T>): Promise<T> {
+  return db.transaction().execute(async (trx) => {
+    await sql`SET LOCAL ROLE ${sql.id(OWNER_GROUP_ROLE)}`.execute(trx);
+    await setLookup(trx, { operatorEmail: email });
     return work(trx);
   });
 }

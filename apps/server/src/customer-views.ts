@@ -288,8 +288,8 @@ export interface FeedbackView {
   cafeName: string;
   /** The café's Google review link, or null for none. */
   reviewUrl: string | null;
-  /** The form, the thanks after sending, or a request already answered. */
-  state: "form" | "sent" | "done";
+  /** The form, the thanks after sending, a request already answered, or one too old to answer. */
+  state: "form" | "sent" | "done" | "closed";
   message: string;
   error: string | undefined;
   otherLangHref: string;
@@ -323,7 +323,7 @@ ${errorBlock(error, "message-error")}
 </form>`
       : html`<div class="card">
 <h1>${t(lang, "feedbackTitle", { cafe: view.cafeName })}</h1>
-<p class="notice" role="status">${t(lang, view.state === "sent" ? "feedbackSent" : "feedbackDone")}</p>
+<p class="notice" role="status">${t(lang, view.state === "sent" ? "feedbackSent" : view.state === "closed" ? "feedbackClosed" : "feedbackDone")}</p>
 </div>`;
   return page(lang, t(lang, "feedbackTitle", { cafe: view.cafeName }), html`${body}
 ${review}`, view.otherLangHref);

@@ -21,6 +21,8 @@ import { RateLimiter, clientKey } from "./rate-limit.js";
 const MINUTE = 60;
 /** A feedback message's longest length, in characters (the column's check, migration 0015). */
 export const FEEDBACK_MAX_LENGTH = 2000;
+/** How long after a visit its feedback link takes a message, so an old pass cannot fill the inbox months later. */
+export const FEEDBACK_OPEN_DAYS = 30;
 const HOUR = 60 * MINUTE;
 /** A recovery link works for this long (AC 8). */
 export const RECOVERY_TOKEN_TTL_SECONDS = 30 * MINUTE;
@@ -684,21 +686,29 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
 
   /**
    * A visit's feedback request from its signed link (AC 37), with its café's name and Google review link and whether it
-   * was answered; a link that does not verify, or whose card was deleted since (the request went with it), is not found.
+   * was answered or is closed (FEEDBACK_OPEN_DAYS after the visit, since the link itself never expires); a link that
+   * does not verify, or whose card was deleted since (the request went with it), is not found.
    */
+  // The clock as each statement runs (not now(), the transaction's start), so the insert below checks it as it writes.
+  const feedbackOpen = sql<boolean>`created_at > clock_timestamp() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`;
   async function feedbackRequest(token: string) {
     const ids = verifyFeedbackToken(secrets, token);
     const found =
       ids === null
         ? undefined
         : await withCafe(db, ids.cafeId, async (trx) => {
-            const request = await trx.selectFrom("feedback_requests").select("id").where("id", "=", ids.requestId).executeTakeFirst();
+            const request = await trx
+              .selectFrom("feedback_requests")
+              .select(["id", sql<boolean>`NOT ${feedbackOpen}`.as("closed")])
+              .where("id", "=", ids.requestId)
+              .executeTakeFirst();
             if (request === undefined) {
               return undefined;
             }
             return {
               cafe: await trx.selectFrom("cafes").select(["name", "google_review_url"]).where("id", "=", ids.cafeId).executeTakeFirstOrThrow(),
               answered: (await trx.selectFrom("feedback").select("id").where("request_id", "=", request.id).executeTakeFirst()) !== undefined,
+              closed: request.closed,
             };
           });
     if (ids === null || found === undefined) {
@@ -717,6 +727,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lang = langOf(request);
     const found = await feedbackRequest(token);
     const sent = (request.query as { sent?: unknown } | undefined)?.sent === "1";
+    if (!found.answered && found.closed) {
+      return sendPage(reply, 410, feedbackPage(lang, token, found, "closed"));
+    }
     return sendPage(reply, 200, feedbackPage(lang, token, found, found.answered ? (sent ? "sent" : "done") : "form"));
   });
 
@@ -729,6 +742,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     if (found.answered) {
       return sendPage(reply, 200, feedbackPage(lang, token, found, "done"));
     }
+    if (found.closed) {
+      return sendPage(reply, 410, feedbackPage(lang, token, found, "closed"));
+    }
     // One line ending, and no NUL (which a text column refuses).
     const message = (formOf(request).message ?? "").replace(/\r\n?/g, "\n").replaceAll("\0", "").trim();
     // Counted in code points, as the column's check counts them.
@@ -736,13 +752,22 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     if (error !== undefined) {
       return sendPage(reply, 400, feedbackPage(lang, token, found, "form", message, error));
     }
-    await withCafe(db, found.cafeId, (trx) =>
+    // Only while the request is still open as it is written, so one that closes after the check above takes nothing.
+    const inserted = await withCafe(db, found.cafeId, (trx) =>
       trx
         .insertInto("feedback")
-        .values({ cafe_id: found.cafeId, request_id: found.requestId, message })
+        .columns(["cafe_id", "request_id", "message"])
+        .expression((eb) =>
+          eb.selectFrom("feedback_requests").select(["cafe_id", "id", sql<string>`${message}::text`.as("message")]).where("id", "=", found.requestId).where(feedbackOpen),
+        )
         .onConflict((conflict) => conflict.column("request_id").doNothing())
-        .execute(),
+        .executeTakeFirstOrThrow(),
     );
+    if (inserted.numInsertedOrUpdatedRows === 0n) {
+      // Nothing written: another message for this visit came first, or the request closed since the check above.
+      const now = await feedbackRequest(token);
+      return now.answered ? sendPage(reply, 200, feedbackPage(lang, token, now, "done")) : sendPage(reply, 410, feedbackPage(lang, token, now, "closed"));
+    }
     request.log.info({ cafeId: found.cafeId }, "feedback received");
     return reply.code(303).header("location", `${FEEDBACK_PATH}${token}?lang=${lang}&sent=1`).send();
   });
