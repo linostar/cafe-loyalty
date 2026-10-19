@@ -89,7 +89,9 @@ describe("operator accounts (AC 39)", () => {
     expect((await app.app.inject({ method: "POST", url: "/api/admin/login", payload: { email: app.email, password: replaced.password } })).statusCode).toBe(200);
   });
 
-  it("are never created through the server's app role, only by create-operator as the migrator", async () => {
+  it("are created by create-operator only through the migrator's connection, which alone may act as the owner role", async () => {
+    // The app role cannot switch to the owner role; that it cannot insert an operator itself either (migration 0022)
+    // is checked in packages/db (operators.integration.test.ts).
     const email = `operator-${randomUUID()}@example.com`;
     await expect(setOperatorPassword(context.testDb.app.db, email)).rejects.toMatchObject({ code: "42501" });
     const { rows } = await context.admin.query("SELECT 1 FROM app.operators WHERE email = $1", [email]);

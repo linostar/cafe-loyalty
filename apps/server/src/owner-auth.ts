@@ -26,7 +26,10 @@ const HOUR = 60 * MINUTE;
 /** A password reset link works for this long (AC 16). */
 export const RESET_TOKEN_TTL_SECONDS = 30 * MINUTE;
 
-export const RESET_REQUESTED_MESSAGE = apiText("If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.");
+// Promises no new email: past the per-email budget none is sent (the newest one sent still works).
+export const RESET_REQUESTED_MESSAGE = apiText(
+  "If an account uses this email, a link to reset the password is on its way or already in its inbox. Use the newest one; each link works for 30 minutes after it was sent.",
+);
 
 export interface OwnerAuthOptions {
   db: Kysely<Database>;
@@ -307,8 +310,10 @@ export function ownerAuthRoutes(app: FastifyInstance, options: OwnerAuthOptions,
     enforce(limits.resetRequestPerIp, clientKey(request.ip), reply);
     const body = parseInput(passwordResetRequestSchema, request.body);
     const log = request.log;
-    if (limits.resetRequestPerAccount.hit(body.email) > 0) {
-      log.info("password reset email skipped: this email's hourly budget is used");
+    const wait = limits.resetRequestPerAccount.hit(body.email);
+    if (wait > 0) {
+      // No address or account in the log: matched to a report by its time, and by when this email may send again.
+      log.info({ retryAfterSeconds: wait }, "password reset email skipped: this email's budget is used until its newest link expires");
     } else {
       background.run("password-reset-email", () => sendPasswordReset(body.email, log));
     }

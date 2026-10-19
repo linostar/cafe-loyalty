@@ -689,6 +689,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
    * was answered or is closed (FEEDBACK_OPEN_DAYS after the visit, since the link itself never expires); a link that
    * does not verify, or whose card was deleted since (the request went with it), is not found.
    */
+  const feedbackOpen = sql<boolean>`created_at > now() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`;
   async function feedbackRequest(token: string) {
     const ids = verifyFeedbackToken(secrets, token);
     const found =
@@ -697,7 +698,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         : await withCafe(db, ids.cafeId, async (trx) => {
             const request = await trx
               .selectFrom("feedback_requests")
-              .select(["id", sql<boolean>`created_at <= now() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`.as("closed")])
+              .select(["id", sql<boolean>`NOT ${feedbackOpen}`.as("closed")])
               .where("id", "=", ids.requestId)
               .executeTakeFirst();
             if (request === undefined) {
@@ -750,10 +751,14 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     if (error !== undefined) {
       return sendPage(reply, 400, feedbackPage(lang, token, found, "form", message, error));
     }
+    // Only while the request is still open as it is written, so one that closes after the check above takes nothing.
     await withCafe(db, found.cafeId, (trx) =>
       trx
         .insertInto("feedback")
-        .values({ cafe_id: found.cafeId, request_id: found.requestId, message })
+        .columns(["cafe_id", "request_id", "message"])
+        .expression((eb) =>
+          eb.selectFrom("feedback_requests").select(["cafe_id", "id", sql<string>`${message}::text`.as("message")]).where("id", "=", found.requestId).where(feedbackOpen),
+        )
         .onConflict((conflict) => conflict.column("request_id").doNothing())
         .execute(),
     );

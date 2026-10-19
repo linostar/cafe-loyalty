@@ -16,6 +16,7 @@ export const SESSION_ABSOLUTE_TIMEOUT_SECONDS = 30 * DAY;
  * long without a request, and this long after sign-in.
  */
 export const OPERATOR_SESSION_IDLE_TIMEOUT_SECONDS = 2 * 60 * MINUTE;
+/** At most the database's own bound (operator_sessions_lifetime_check, migration 0022), which a longer one fails. */
 export const OPERATOR_SESSION_ABSOLUTE_TIMEOUT_SECONDS = 12 * 60 * MINUTE;
 /** Last-seen times of sessions and devices are written at most this often. */
 const TOUCH_SECONDS = MINUTE;

@@ -1,4 +1,4 @@
-import { OWNER_GROUP_ROLE, setLookup, type Database } from "@cafe-loyalty/db";
+import { setOperator, withOperatorAccount, type Database } from "@cafe-loyalty/db";
 import { sql, type Kysely } from "kysely";
 import { hashPassword, newToken } from "./credentials.js";
 
@@ -19,9 +19,7 @@ export interface OperatorPassword {
 export async function setOperatorPassword(db: Kysely<Database>, email: string): Promise<OperatorPassword> {
   const password = newToken();
   const passwordHash = await hashPassword(password);
-  const row = await db.transaction().execute(async (trx) => {
-    await sql`SET LOCAL ROLE ${sql.id(OWNER_GROUP_ROLE)}`.execute(trx);
-    await setLookup(trx, { operatorEmail: email });
+  const row = await withOperatorAccount(db, email, async (trx) => {
     const operator = await trx
       .insertInto("operators")
       .values({ email, password_hash: passwordHash })
@@ -31,7 +29,7 @@ export async function setOperatorPassword(db: Kysely<Database>, email: string): 
       .executeTakeFirstOrThrow();
     // Sign-in compares the stored hash under a lock (admin-routes.ts), so no session made with the old password is
     // started after this; the ones that exist end here.
-    await sql`SELECT set_config('app.operator_id', ${operator.id}, true)`.execute(trx);
+    await setOperator(trx, operator.id);
     await trx.deleteFrom("operator_sessions").where("operator_id", "=", operator.id).execute();
     return operator;
   });

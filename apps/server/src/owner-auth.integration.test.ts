@@ -471,6 +471,12 @@ describe("password reset", () => {
         expect((await requestReset(h, owner.email)).statusCode).toBe(202);
       }
       expect(h.mailer.sent).toHaveLength(3);
+      // Each skip is logged with when the email may send again, and without the address.
+      const skipped = h.logs.filter((line) => line.includes("password reset email skipped"));
+      expect(skipped).toHaveLength(2);
+      const entry = JSON.parse(skipped[0] ?? "{}") as { retryAfterSeconds?: unknown };
+      expect(typeof entry.retryAfterSeconds).toBe("number");
+      expect(skipped.join("\n")).not.toContain(owner.email);
       // The per-address limit (5 an hour) still answers 429.
       expect((await requestReset(h, owner.email)).statusCode).toBe(429);
       // The budget lasts no longer than a link (30 minutes), so the owner is never left without a working one.

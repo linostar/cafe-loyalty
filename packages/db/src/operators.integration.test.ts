@@ -5,6 +5,7 @@ import { TenantContextError, withCafe, withLookup, withOperator } from "./databa
 import { createTestDatabase, insertOperator, type TestDatabase } from "./testing/test-database.js";
 
 const PERMISSION_DENIED = "42501";
+const CHECK_VIOLATION = "23514";
 
 let testDb: TestDatabase;
 const cafeA = randomUUID();
@@ -86,6 +87,21 @@ describe("operators (AC 39)", () => {
     const deleted = await withOperator(testDb.app.db, first.operatorId, (trx) => trx.deleteFrom("operator_sessions").where("operator_id", "=", second.operatorId).executeTakeFirst());
     expect(deleted.numDeletedRows).toBe(0n);
     expect(await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("operator_sessions").select("id").execute())).toEqual([]);
+  });
+
+  it("get sessions that end within 12 hours of their start, which only the database sets (migration 0022)", async () => {
+    const { operatorId } = await createOperator();
+    const insert = (values: { expires_at: Date; created_at?: Date }) =>
+      withOperator(testDb.app.db, operatorId, (trx) => trx.insertInto("operator_sessions").values({ operator_id: operatorId, token_hash: randomBytes(32), ...values }).execute());
+    const hours = (n: number) => new Date(Date.now() + n * 60 * 60 * 1000);
+    // What sign-in writes is taken; a session the app role makes for itself to outlive a fix is not.
+    // (11 hours from this test's clock; sign-in's own 12 hours come from the database's, admin.integration.test.ts.)
+    await insert({ expires_at: hours(11) });
+    // The latest date a Date holds (year 275760): as good as never.
+    expect(await errorCodeOf(insert({ expires_at: new Date(8.64e15) }))).toBe(CHECK_VIOLATION);
+    expect(await errorCodeOf(insert({ expires_at: hours(13) }))).toBe(CHECK_VIOLATION);
+    // Nor can it start the clock later.
+    expect(await errorCodeOf(insert({ expires_at: hours(30), created_at: hours(20) }))).toBe(PERMISSION_DENIED);
   });
 
   it("list every café's id, and no more, through cafes_for_operator", async () => {

@@ -1,11 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { sql } from "kysely";
 import pg from "pg";
 import { bootstrap, withDatabase } from "../bootstrap.js";
-import { createDatabase, setLookup, type DatabaseHandle } from "../database.js";
+import { createDatabase, withOperatorAccount, type DatabaseHandle } from "../database.js";
 import { migrate } from "../migrate.js";
 import { loadMigrations } from "../migrations.js";
-import { OWNER_GROUP_ROLE } from "../roles.js";
 
 export interface TestDatabase {
   name: string;
@@ -121,9 +119,7 @@ export async function createTestDatabase(options: { migrate?: boolean } = {}): P
 
 /** Creates an operator as create-operator does, as the owner role (the app role cannot, migration 0022); keeps an existing one. */
 export async function insertOperator(testDb: TestDatabase, values: { id?: string; email: string; password_hash: string }): Promise<string> {
-  return testDb.migrator.db.transaction().execute(async (trx) => {
-    await sql`SET LOCAL ROLE ${sql.id(OWNER_GROUP_ROLE)}`.execute(trx);
-    await setLookup(trx, { operatorEmail: values.email });
+  return withOperatorAccount(testDb.migrator.db, values.email, async (trx) => {
     await trx.insertInto("operators").values(values).onConflict((conflict) => conflict.column("email").doNothing()).execute();
     return (await trx.selectFrom("operators").select("id").where("email", "=", values.email).executeTakeFirstOrThrow()).id;
   });

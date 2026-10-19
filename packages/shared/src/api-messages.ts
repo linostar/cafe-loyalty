@@ -25,8 +25,8 @@ export const API_MESSAGES_AR = {
   "This email already has an account. Sign in instead, or use another email.": "لهذا البريد حساب مسبقاً. سجّل الدخول، أو استخدم بريداً آخر.",
   "The current password is wrong. Check it and try again.": "كلمة المرور الحالية غير صحيحة. تحقق منها وحاول مجدداً.",
   "Your password was changed somewhere else just now. Sign in again with the new password.": "تغيّرت كلمة مرورك من مكان آخر للتو. سجّل الدخول مجدداً بكلمة المرور الجديدة.",
-  "If an account uses this email, we sent it a link to reset the password. The link works for 30 minutes.":
-    "إذا كان هناك حساب بهذا البريد، فقد أرسلنا إليه رابطاً لإعادة تعيين كلمة المرور. يعمل الرابط لمدة 30 دقيقة.",
+  "If an account uses this email, a link to reset the password is on its way or already in its inbox. Use the newest one; each link works for 30 minutes after it was sent.":
+    "إذا كان هناك حساب بهذا البريد، فرابط إعادة تعيين كلمة المرور في طريقه إليه أو وصل إلى بريده الوارد. استخدم أحدث رابط؛ يعمل كل رابط لمدة 30 دقيقة من إرساله.",
   "This link is incomplete. Open it again from the message.": "هذا الرابط ناقص. افتحه مجدداً من الرسالة.",
   "Enter an email address in Latin letters, such as name@example.com.": "أدخل عنوان بريد بالأحرف اللاتينية، مثل name@example.com.",
   "Enter your password.": "أدخل كلمة المرور.",
