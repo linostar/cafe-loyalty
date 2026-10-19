@@ -1052,6 +1052,26 @@ describe("feedback", () => {
     expect((await as("GET", "/api/feedback")).json<{ items: { message: string }[] }>().items[0]?.message).toHaveLength(2000);
   });
 
+  it("tells a message that lost the race to another for the same visit that one was already sent, never thanks it", async () => {
+    const { app, path, as, card } = await askedCard();
+    // Another message for this visit, not yet committed: the post below passes its check, then waits on it as it inserts.
+    await context.admin.query("BEGIN");
+    await context.admin.query("INSERT INTO app.feedback (cafe_id, request_id, message) SELECT cafe_id, id, 'Fake first message' FROM app.feedback_requests WHERE card_id = $1", [card?.id]);
+    const second = app.inject({ method: "POST", url: path, ...formBody({ message: "Fake second message", lang: "en" }) });
+    for (let tries = 0; tries < 100; tries += 1) {
+      const { rows } = await context.admin.query<{ waiting: number }>("SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted");
+      if ((rows[0]?.waiting ?? 0) > 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await context.admin.query("COMMIT");
+    const response = await second;
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("You already sent a message about this visit.");
+    expect((await as("GET", "/api/feedback")).json<{ items: { message: string }[] }>().items).toMatchObject([{ message: "Fake first message" }]);
+  });
+
   it("closes a visit's link 30 days after it, so an old pass cannot fill the inbox", async () => {
     const { app, path, as, card } = await askedCard();
     const age = (days: number) => context.admin.query("UPDATE app.feedback_requests SET created_at = now() - make_interval(days => $1) WHERE card_id = $2", [days, card?.id]);

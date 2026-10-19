@@ -689,7 +689,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
    * was answered or is closed (FEEDBACK_OPEN_DAYS after the visit, since the link itself never expires); a link that
    * does not verify, or whose card was deleted since (the request went with it), is not found.
    */
-  const feedbackOpen = sql<boolean>`created_at > now() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`;
+  // The clock as each statement runs (not now(), the transaction's start), so the insert below checks it as it writes.
+  const feedbackOpen = sql<boolean>`created_at > clock_timestamp() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`;
   async function feedbackRequest(token: string) {
     const ids = verifyFeedbackToken(secrets, token);
     const found =
@@ -752,7 +753,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       return sendPage(reply, 400, feedbackPage(lang, token, found, "form", message, error));
     }
     // Only while the request is still open as it is written, so one that closes after the check above takes nothing.
-    await withCafe(db, found.cafeId, (trx) =>
+    const inserted = await withCafe(db, found.cafeId, (trx) =>
       trx
         .insertInto("feedback")
         .columns(["cafe_id", "request_id", "message"])
@@ -760,8 +761,13 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           eb.selectFrom("feedback_requests").select(["cafe_id", "id", sql<string>`${message}::text`.as("message")]).where("id", "=", found.requestId).where(feedbackOpen),
         )
         .onConflict((conflict) => conflict.column("request_id").doNothing())
-        .execute(),
+        .executeTakeFirstOrThrow(),
     );
+    if (inserted.numInsertedOrUpdatedRows === 0n) {
+      // Nothing written: another message for this visit came first, or the request closed since the check above.
+      const now = await feedbackRequest(token);
+      return now.answered ? sendPage(reply, 200, feedbackPage(lang, token, now, "done")) : sendPage(reply, 410, feedbackPage(lang, token, now, "closed"));
+    }
     request.log.info({ cafeId: found.cafeId }, "feedback received");
     return reply.code(303).header("location", `${FEEDBACK_PATH}${token}?lang=${lang}&sent=1`).send();
   });
