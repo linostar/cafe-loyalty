@@ -166,10 +166,74 @@ test("starts a fixed-amount campaign running until midnight, and announces each 
   // Refused on the page, before the server is asked.
   await form.getByRole("button", { name: "Start campaign" }).click();
   await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/would sell below their floor\. Lower the discount, or leave them out\./);
+  // Focus goes to the order type below its floor.
+  await expect(form.getByRole("checkbox", { name: /^Latte/ })).toBeFocused();
   expect(attempts).toBe(0);
   await form.getByRole("checkbox", { name: /^Latte/ }).uncheck();
   await form.getByRole("button", { name: "Start campaign" }).click();
   await expect(page.getByRole("alert")).toContainText("below your minimum margin");
   await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/Espresso would sell for \$2\.00.*Latte would sell for \$2\.50/);
+  // Refused by the server while the page's own check passed: the first picked order type is marked and takes focus.
+  const espresso = form.getByRole("checkbox", { name: /^Espresso/ });
+  await expect(espresso).toHaveAttribute("aria-invalid", "true");
+  await expect(espresso).toBeFocused();
   expect(attempts).toBe(1);
+});
+
+test("leaves focus in the discount while an order type falls below its floor as it is typed", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [] }),
+    // A send that fails with no field named, so nothing above the order types stays marked.
+    "POST /api/campaigns": reply(500, { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true }),
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await form.getByLabel("Name (English)").fill("Quiet afternoons");
+  await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+  await form.getByLabel("Monday").check();
+  await form.getByLabel("Starts at").fill("15:00");
+  await form.getByLabel("Ends at").fill("17:00");
+  await form.getByRole("checkbox", { name: /^Latte/ }).check();
+  const discount = form.getByRole("textbox", { name: "Percent off" });
+  // 10% keeps the latte above its $2.60 floor, so the page sends it, and the server fails.
+  await discount.fill("10");
+  await form.getByRole("button", { name: "Start campaign" }).click();
+  await expect(page.getByRole("alert")).toContainText("Something went wrong");
+  // 20% takes the latte below its floor as it is typed: marked at once, but the keyboard stays where the owner types.
+  await discount.clear();
+  await discount.pressSequentially("20");
+  await expect(form.getByRole("checkbox", { name: /^Latte/ })).toHaveAttribute("aria-invalid", "true");
+  await expect(discount).toBeFocused();
+  await expect(discount).toHaveValue("20");
+});
+
+test("keeps a new campaign being typed when reloading the list fails, and loads only the list again", async ({ page }) => {
+  let listLoads = 0;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": async (route: Route) => {
+      listLoads += 1;
+      // The second load, after the stale end below, fails; the third (Try again) works.
+      await (listLoads === 2
+        ? route.fulfill({ status: 500, json: { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true } })
+        : route.fulfill({ json: { running: listLoads === 1 ? [QUIET] : [], ended: [] } }));
+    },
+    // Ended meanwhile on another device: the page reloads its list.
+    [`POST /api/campaigns/${QUIET.id}/end`]: reply(409, { code: "CONFLICT", message: "This campaign has already ended. Reload the page to see it.", retryable: false }),
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await form.getByLabel("Name (English)").fill("Late evenings");
+  await page.getByRole("button", { name: "End Quiet afternoons" }).click();
+  await page.getByRole("button", { name: "Yes, end Quiet afternoons" }).click();
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+  // The form stays, with what was typed.
+  await expect(form.getByLabel("Name (English)")).toHaveValue("Late evenings");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("No campaigns running.")).toBeVisible();
+  await expect(form.getByLabel("Name (English)")).toHaveValue("Late evenings");
+  expect(listLoads).toBe(3);
 });

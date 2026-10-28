@@ -52,22 +52,24 @@ export function Form({ onSubmit, children, ...props }: Omit<ComponentProps<"form
 }
 
 /**
- * For an input marked `aria-invalid` while `invalid`: when a send of its form leaves it with a problem (found before
- * sending, or in the answer) and it is the form's first control with one, it takes focus, so its message is read. Keyed
- * on whether there is a problem, not on its text, so switching language (which retranslates the text) moves nothing.
+ * For an input marked `aria-invalid` when it has a problem: when a send of its form reports one (`reported`: found before
+ * sending, or in the answer) and the input is the form's first control marked invalid, it takes focus, so its message is
+ * read. Keyed on a send's report, not on the input's state or the message's text: a control that turns invalid as the
+ * owner types elsewhere (a campaign's order type below its floor as the discount changes) and a language switch (which
+ * retranslates the text) move nothing.
  */
-export function useFocusWhenInvalid<T extends HTMLInputElement>(invalid: boolean): RefObject<T | null> {
+export function useFocusWhenInvalid<T extends HTMLInputElement>(reported: boolean): RefObject<T | null> {
   const input = useRef<T>(null);
   const attempt = useContext(SubmitAttemptContext);
   useEffect(() => {
     const element = input.current;
-    if (!invalid || element === null || attempt === 0) {
+    if (!reported || element === null || attempt === 0 || element.getAttribute("aria-invalid") !== "true") {
       return;
     }
     if (element.form?.querySelector('[aria-invalid="true"]') === element) {
       element.focus();
     }
-  }, [invalid, attempt]);
+  }, [reported, attempt]);
   return input;
 }
 
