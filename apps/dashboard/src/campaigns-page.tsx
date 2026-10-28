@@ -13,7 +13,7 @@ import {
 } from "@cafe-loyalty/shared";
 import { useId, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
-import { ConfirmButton, Field, FormError, Notice, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Translate, type Later, useSay } from "./i18n.js";
 import { parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
@@ -159,32 +159,33 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
   const [kind, setKind] = useState<DiscountKind>("percent");
   const [value, setValue] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
-  const [problems, setProblems] = useState<Record<string, string>>({});
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   const onSale = orderTypes.filter((type) => type.active);
   const discountValue = kind === "percent" ? parseWholeNumberInput(value) : parseUsdInput(value);
   const discount = discountValue === null || discountValue < 1 ? null : { kind, value: discountValue };
   const longDay = dateFormat(lang, { weekday: "long", timeZone: "UTC" });
 
   return (
-    <form
+    <Form
       aria-labelledby="new-campaign-title"
       className="card"
+      onChange={clearDone}
       onSubmit={(event) => {
         event.preventDefault();
         const startsMinute = minuteOf(starts, false);
         const endsMinute = minuteOf(ends, true);
         const invalid = {
-          ...(weekdays.length === 0 ? { weekdays: t("Pick at least one day.") } : {}),
-          ...(startsMinute === null ? { startsMinute: t("Enter a start time, such as 15:00.") } : {}),
-          ...(endsMinute === null || (startsMinute !== null && endsMinute <= startsMinute) ? { endsMinute: t("End after the start, on the same day.") } : {}),
+          ...(weekdays.length === 0 ? { weekdays: (say: Translate<typeof AR>) => say("Pick at least one day.") } : {}),
+          ...(startsMinute === null ? { startsMinute: (say: Translate<typeof AR>) => say("Enter a start time, such as 15:00.") } : {}),
+          ...(endsMinute === null || (startsMinute !== null && endsMinute <= startsMinute) ? { endsMinute: (say: Translate<typeof AR>) => say("End after the start, on the same day.") } : {}),
           ...(discount === null || (kind === "percent" && discount.value > 100)
-            ? { discount: kind === "percent" ? t("Enter a whole percentage from 1 to 100.") : t("Enter an amount in dollars, such as 0.50.") }
+            ? { discount: kind === "percent" ? (say: Translate<typeof AR>) => say("Enter a whole percentage from 1 to 100.") : (say: Translate<typeof AR>) => say("Enter an amount in dollars, such as 0.50.") }
             : {}),
           ...(chosen.length === 0
-            ? { orderTypeIds: t("Pick at least one order type.") }
+            ? { orderTypeIds: (say: Translate<typeof AR>) => say("Pick at least one order type.") }
             : discount !== null && onSale.some((type) => chosen.includes(type.id) && !keepsMargin(type.priceCents, type.costCents, discount, minMarginPercent))
-              ? { orderTypeIds: t("Some order types you picked would sell below their floor. Lower the discount, or leave them out.") }
+              ? { orderTypeIds: (say: Translate<typeof AR>) => say("Some order types you picked would sell below their floor. Lower the discount, or leave them out.") }
               : {}),
         };
         setProblems(invalid);
@@ -236,19 +237,19 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           ))}
         </div>
         {problems.weekdays === undefined ? null : (
-          <p id="campaign-days-error" className="field-error">
-            {problems.weekdays}
+          <p id="campaign-days-error" role="alert" className="field-error">
+            {problems.weekdays(t, lang)}
           </p>
         )}
       </fieldset>
       <div className="form-grid">
-        <TimeField label={t("Starts at")} value={starts} onChange={setStarts} error={problems.startsMinute ?? fieldErrors.startsMinute} />
+        <TimeField label={t("Starts at")} value={starts} onChange={setStarts} error={problems.startsMinute?.(t, lang) ?? fieldErrors.startsMinute} />
         <TimeField
           label={t("Ends at")}
           value={ends}
           onChange={setEnds}
           hint={t("Café time. Use 00:00 to run until midnight.")}
-          error={problems.endsMinute ?? fieldErrors.endsMinute}
+          error={problems.endsMinute?.(t, lang) ?? fieldErrors.endsMinute}
         />
       </div>
       <fieldset>
@@ -276,7 +277,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           value={value}
           onChange={setValue}
           hint={kind === "percent" ? t("A whole number, such as 20. The discount rounds down to the cent, in your favour.") : t("Such as 0.50.")}
-          error={problems.discount ?? fieldErrors["discount.value"]}
+          error={problems.discount?.(t, lang) ?? fieldErrors["discount.value"]}
         />
       </fieldset>
       <fieldset aria-describedby={(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? "campaign-types-hint" : "campaign-types-hint campaign-types-error"}>
@@ -319,15 +320,16 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           })}
         </ul>
         {(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? null : (
-          <p id="campaign-types-error" className="field-error">
-            {problems.orderTypeIds ?? say(fieldErrors.orderTypeIds ?? "")}
+          <p id="campaign-types-error" role={problems.orderTypeIds === undefined ? undefined : "alert"} className="field-error">
+            {problems.orderTypeIds?.(t, lang) ?? say(fieldErrors.orderTypeIds ?? "")}
           </p>
         )}
       </fieldset>
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Start campaign")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved. Counter phones pick up the change within 5 minutes.") : null}</Notice>
+    </Form>
   );
 }
 
@@ -345,8 +347,13 @@ export function CampaignsPage() {
   }
   const { orderTypes, cafe } = setup.data;
   const change: Change = async (method, path, body) => {
-    setNotice(null);
     setCampaigns(await apiRequest(method, path, campaignsSchema, body));
+  };
+  // Ending a campaign is said under the page's heading, where focus goes once it is ended; the form that starts one
+  // says so next to its own button.
+  const changeAndSay: Change = async (method, path, body) => {
+    setNotice(null);
+    await change(method, path, body);
     setNotice(() => (say: Translate<typeof AR>) => say("Saved. Counter phones pick up the change within 5 minutes."));
   };
 
@@ -358,7 +365,7 @@ export function CampaignsPage() {
       <p className="page-intro">
         {t("A campaign takes money off chosen order types at quiet hours. The counter gives the discount to every loyalty card holder.")}
       </p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <FormError message={ending.error} />
       <h3>{t("Running")}</h3>
       {state.data.running.length === 0 ? (
@@ -375,7 +382,7 @@ export function CampaignsPage() {
                 confirmLabel={t("Yes, end {name}", { name: nameOf(lang, campaign) })}
                 pending={ending.pending}
                 onConfirm={() => {
-                  void ending.submit(() => change("POST", `/api/campaigns/${campaign.id}/end`)).then((result) => {
+                  void ending.submit(() => changeAndSay("POST", `/api/campaigns/${campaign.id}/end`)).then((result) => {
                     if (!result.ok && isStale(result.error)) {
                       setReloadKey((key) => key + 1);
                     }

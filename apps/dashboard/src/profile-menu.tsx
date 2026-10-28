@@ -95,7 +95,7 @@ export function ProfileMenu({ email, link, logoutPath, onSignedOut }: { email: s
           <li>
             <button
               type="button"
-              disabled={pending}
+              aria-disabled={pending || undefined}
               aria-describedby={`${panelId}-sign-out`}
               onClick={() => {
                 void submit(() => apiRequest("POST", logoutPath, noContent)).then((result) => {

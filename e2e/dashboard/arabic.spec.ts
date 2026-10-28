@@ -48,7 +48,7 @@ for (const path of ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review",
     await mockApi(page, SIGNED_IN);
     await page.goto(path);
     await expect(page.getByRole("navigation", { name: "لوحة التحكم" }).getByRole("link", { name: "الرئيسية" })).toBeVisible();
-    await expect(page.getByRole("status")).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: /\S/ })).toHaveCount(0);
     await expectLanguageAndFit(page, "ar");
     await expectEveryControlNamed(page);
   });
@@ -163,6 +163,6 @@ test("sends a barista's PIN typed on an Arabic keypad as the digits the server t
   await page.getByLabel("الاسم", { exact: true }).fill("Rami");
   await page.getByLabel("الرمز السري", { exact: true }).fill("٤٨٢٩١٣");
   await page.getByRole("button", { name: "إضافة الباريستا" }).click();
-  await expect(page.getByRole("status")).toContainText("تم الحفظ");
+  await expect(page.getByRole("form", { name: "إضافة باريستا" }).getByRole("status")).toContainText("تم الحفظ");
   expect(sent).toEqual([{ name: "Rami", pin: "482913" }]);
 });

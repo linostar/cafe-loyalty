@@ -3,8 +3,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useT, type Translate } from "./i18n.js";
 
 const AR = {
-  "The camera is not allowed. Allow this site to use the camera in the browser's settings, then try again.":
-    "الكاميرا غير مسموح بها. اسمح لهذا الموقع باستخدام الكاميرا من إعدادات المتصفح، ثم حاول مجدداً.",
+  "The camera is not allowed. {next} To scan, allow this site to use the camera in the browser's settings.":
+    "الكاميرا غير مسموح بها. {next} للمسح، اسمح لهذا الموقع باستخدام الكاميرا من إعدادات المتصفح.",
   "No camera was found on this phone. {next}": "لم يُعثر على كاميرا في هذا الهاتف. {next}",
   "The camera could not start. Close other apps that use it, then try again.": "تعذّر تشغيل الكاميرا. أغلق التطبيقات الأخرى التي تستخدمها، ثم حاول مجدداً.",
   "Point the camera at the {purpose}.": "وجّه الكاميرا نحو {purpose}.",
@@ -13,15 +13,19 @@ const AR = {
 /** How often a camera frame is checked for a QR code. */
 const SCAN_INTERVAL_MS = 200;
 
-/** The text of the QR code in an image (RGBA pixels), or null when there is none. */
+/**
+ * The text of the QR code in an image (RGBA pixels), or null when there is none. Inverted codes (light on dark) are
+ * read too: a browser's forced dark mode, or a dark wallet theme, can show the card that way.
+ */
 export function decodeQr(image: { data: Uint8ClampedArray; width: number; height: number }): string | null {
-  return jsQR(image.data, image.width, image.height, { inversionAttempts: "dontInvert" })?.data ?? null;
+  return jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" })?.data ?? null;
 }
 
 function cameraProblem(error: unknown, noCamera: string, t: Translate<typeof AR>): string {
   const name = error instanceof DOMException ? error.name : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return t("The camera is not allowed. Allow this site to use the camera in the browser's settings, then try again.");
+    // What to do now first: the browser setting is for later, and usually needs the owner.
+    return t("The camera is not allowed. {next} To scan, allow this site to use the camera in the browser's settings.", { next: noCamera });
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
     return t("No camera was found on this phone. {next}", { next: noCamera });

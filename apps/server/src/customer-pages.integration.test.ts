@@ -382,8 +382,8 @@ describe("web card", () => {
     const secret = secretOf(await join(app, code, "70 123 456"));
     const saved = await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: " Rana@Example.com ", lang: "en" }) });
     expect(saved.statusCode).toBe(303);
-    // The forms live on the card's settings page (Step 8), so a save lands back there.
-    expect(saved.headers.location).toBe(`/c/${secret}/settings?lang=en&saved=1`);
+    // The forms live on the card's settings page (Step 8), so a save lands back there, at the section it saved.
+    expect(saved.headers.location).toBe(`/c/${secret}/settings?lang=en&saved=email#email-title`);
     expect((await cardRow(secret))?.email).toBe("rana@example.com");
     expect((await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "nope", lang: "en" }) })).statusCode).toBe(400);
     // An empty Save is refused, never a removal: the field starts empty. Removing takes its own button.
@@ -422,13 +422,30 @@ describe("web card", () => {
     expect(await auditActions(first.owner.cafeId)).toContain("card.deleted");
   });
 
-  it("keeps the saved notice when switching language", async () => {
+  it("shows the saved notice in the section that saved, and keeps it when switching language", async () => {
     const { app, code } = await cafeWithJoinCode();
     const secret = secretOf(await join(app, code, uniquePhone()));
-    // On the settings page, where the forms that set it now are (Step 8).
-    const saved = await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=en&saved=1` });
-    expect(saved.body).toContain('<p class="notice" role="status">Saved.</p>');
-    expect(saved.body).toContain(`href="/c/${secret}/settings?lang=ar&amp;saved=1"`);
+    // On the settings page, where the forms that set it now are (Step 8), under the heading of the form that saved.
+    const saved = await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=en&saved=offers` });
+    expect(saved.body).toContain('<h2 id="offers-title">Offers</h2>\n<p class="notice" role="status">Saved.</p>');
+    expect(saved.body.match(/role="status"/g)).toHaveLength(1);
+    expect(saved.body).toContain(`href="/c/${secret}/settings?lang=ar&amp;saved=offers"`);
+    const unknown = await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=en&saved=1` });
+    expect(unknown.body).not.toContain('role="status"');
+  });
+
+  it("posts each settings form to its section, and keeps a mistyped email in its field", async () => {
+    const { app, code } = await cafeWithJoinCode();
+    const secret = secretOf(await join(app, code, uniquePhone()));
+    const settings = (await app.inject({ method: "GET", url: `/c/${secret}/settings?lang=en` })).body;
+    for (const form of ["email", "offers", "delete"]) {
+      expect(settings).toContain(`<form method="post" action="/c/${secret}/${form}#${form}-title"`);
+    }
+    const typo = await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: "rana@example", lang: "en" }) });
+    expect(typo.statusCode).toBe(400);
+    expect(typo.body).toContain('value="rana@example"');
+    const unconfirmed = await app.inject({ method: "POST", url: `/c/${secret}/delete`, ...formBody({ lang: "en" }) });
+    expect(unconfirmed.body).toMatch(/name="confirm" value="yes" aria-describedby="delete-text delete-error" aria-invalid="true"/);
   });
 
   it("links the card to its settings page, which holds the email, offers and delete forms and leads back (AC 11)", async () => {
@@ -448,7 +465,7 @@ describe("web card", () => {
       expect(settings.body).toContain(`href="/c/${secret}?lang=${lang}"`);
       expect(settings.body).toContain(`href="/c/${secret}/settings?lang=${lang === "ar" ? "en" : "ar"}"`);
       for (const form of ["email", "offers", "delete"]) {
-        expect(settings.body).toContain(`<form method="post" action="/c/${secret}/${form}"`);
+        expect(settings.body).toContain(`<form method="post" action="/c/${secret}/${form}#`);
       }
       expect(settings.body).toContain('<section aria-labelledby="delete-title" class="card danger-zone">');
     }
@@ -472,7 +489,7 @@ describe("web card", () => {
 
     const offers = await app.inject({ method: "POST", url: `/c/${secret}/offers`, ...formBody({ lang: "en" }) });
     expect(offers.statusCode).toBe(303);
-    expect(offers.headers.location).toBe(`/c/${secret}/settings?lang=en&saved=1`);
+    expect(offers.headers.location).toBe(`/c/${secret}/settings?lang=en&saved=offers#offers-title`);
     expect((await app.inject({ method: "GET", url: String(offers.headers.location) })).body).not.toContain('name="offers" value="yes" checked');
 
     for (const unknown of ["A".repeat(43), "short"]) {
@@ -490,7 +507,7 @@ describe("web card", () => {
       const response = await app.inject({ method: "GET", url: path });
       expect(response.statusCode).toBe(404);
       expect(response.headers["content-type"]).toContain("text/html");
-      expect(response.body).toContain('<h1 role="alert">No such page.');
+      expect(response.body).toContain("<h1>No such page.");
     }
   });
 
@@ -566,7 +583,16 @@ describe("recovery", () => {
     const { first, secrets, email } = await withEmailCards();
     const customerId = (await cardRow(secrets[0] ?? ""))?.customer_id;
     await requestLink(first, email);
-    const deleted = await first.app.inject({ method: "POST", url: `/r/${tokenOf(first)}`, ...formBody({ action: "delete", lang: "en" }) });
+    const token = tokenOf(first);
+    // Without the ticked box nothing is deleted and the link is not used: the page asks again (WCAG 3.3.4).
+    const unconfirmed = await first.app.inject({ method: "POST", url: `/r/${token}`, ...formBody({ action: "delete", lang: "en" }) });
+    expect(unconfirmed.statusCode).toBe(400);
+    expect(unconfirmed.body).toContain('<p class="field-error" id="restore-delete-error" role="alert">Tick the box to confirm.</p>');
+    expect(unconfirmed.body).toContain('<form method="post" action="/r/' + token + '#restore-delete-title" novalidate>');
+    for (const secret of secrets) {
+      expect(await cardRow(secret)).toBeDefined();
+    }
+    const deleted = await first.app.inject({ method: "POST", url: `/r/${token}`, ...formBody({ action: "delete", confirm: "yes", lang: "en" }) });
     expect(deleted.body).toContain("Your card and its data are deleted.");
     for (const secret of secrets) {
       expect(await cardRow(secret)).toBeUndefined();
@@ -596,6 +622,10 @@ describe("recovery", () => {
     const response = await first.app.inject({ method: "POST", url: `/r/${tokenOf(first)}`, ...formBody({ action: "restore", lang: "en" }) });
     expect(response.statusCode).toBe(410);
     expect(response.body).toContain("This link has expired");
+    // The way on: a page to ask for a new link.
+    expect(response.body).toContain('<a class="link-button" href="/recover?lang=en">Ask for a new link</a>');
+    const unconfirmedDelete = await first.app.inject({ method: "POST", url: `/r/${"A".repeat(43)}`, ...formBody({ action: "delete", lang: "en" }) });
+    expect(unconfirmedDelete.statusCode).toBe(410);
   });
 
   it("answers the same way past the per-email limit, sending nothing more", async () => {

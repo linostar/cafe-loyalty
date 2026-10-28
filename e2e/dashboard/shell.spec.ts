@@ -76,6 +76,72 @@ test("shows the heading and build", async ({ page }) => {
   await expect(page.getByText(/^Build \S+$/)).toBeVisible();
 });
 
+test("titles each window by its page, in the page's language (WCAG 2.4.2)", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, SIGNED_IN);
+  for (const [path, heading] of [
+    ["/staff", "Staff"],
+    ["/campaigns", "Campaigns"],
+    ["/cafe", "Café"],
+  ] as const) {
+    await page.goto(path);
+    await expect(page).toHaveTitle(`${heading} · ${PRODUCT_NAME} Dashboard`);
+  }
+  await page.getByRole("button", { name: "العربية" }).click();
+  await expect(page).toHaveTitle(`المقهى · ${PRODUCT_NAME} لوحة التحكم`);
+});
+
+test("leads the keyboard past the top bar and navigation to the page", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, SIGNED_IN);
+  await page.goto("/staff");
+  await expect(page.getByRole("heading", { level: 2, name: "Staff" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  const skip = page.getByRole("link", { name: "Skip to content" });
+  await expect(skip).toBeFocused();
+  await expect(skip).toBeInViewport();
+  await skip.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+});
+
+test("says an unknown address is no page, with the way home, signed in", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, SIGNED_IN);
+  await page.goto("/setting");
+  await expect(page.getByRole("heading", { level: 2, name: "Page not found" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
+  await expect(page).toHaveTitle(`Page not found · ${PRODUCT_NAME} Dashboard`);
+});
+
+test("keeps badges apart from the text around them under forced colours", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, {
+    ...SIGNED_IN,
+    "GET /api/cafe": reply(200, {
+      cafe: { id: SESSION.cafe.id, name: SESSION.cafe.name, catalogVersion: 1, minMarginPercent: 30, winBack: { discount: null, cooldownDays: 30 } },
+      program: null,
+      orderTypes: [{ id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f03", nameEn: "Croissant", nameAr: "كرواسان", priceCents: 200, costCents: 80, stampsEarned: 0, active: false }],
+    }),
+  });
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.goto("/cafe");
+  const badge = page.locator(".badge", { hasText: "not on sale" });
+  await expect(badge).toBeVisible();
+  // The badge's background is gone in a contrast theme; its outline is what marks it.
+  expect(await badge.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe("solid");
+});
+
+test("says when the connection is gone, and stops saying it when it is back", async ({ page, context }) => {
+  await page.unrouteAll();
+  await mockApi(page, SIGNED_IN);
+  await page.goto("/staff");
+  await expect(page.getByRole("heading", { level: 2, name: "Staff" })).toBeVisible();
+  await context.setOffline(true);
+  await expect(page.getByRole("alert")).toHaveText("You are offline. Pages cannot load and changes cannot be saved until the connection is back.");
+  await context.setOffline(false);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
 for (const path of ["/", "/signup#invite=x", "/forgot-password", "/reset-password#token=x"]) {
   test(`fits a 360 px phone screen without horizontal scrolling at ${path}`, async ({ page }) => {
     await page.goto(path);

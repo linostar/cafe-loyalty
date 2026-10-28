@@ -203,11 +203,11 @@ test("makes fresh signup links on a café's page, each shown once and copied afr
   const shown = page.getByLabel("Owner signup link for Café Najjar");
   await expect(shown).toHaveValue(link("fake-invite-token-1"));
   await page.getByRole("button", { name: "Copy link for Café Najjar" }).click();
-  await expect(page.getByRole("status")).toHaveText("Copied.");
+  await expect(page.getByRole("status").filter({ hasText: "Copied." })).toHaveCount(1);
   await page.getByRole("button", { name: "New signup link for Café Najjar" }).click();
   await expect(shown).toHaveValue(link("fake-invite-token-2"));
   // A fresh link has not been copied yet.
-  await expect(page.getByRole("status")).toHaveText("");
+  await expect(page.getByRole("status").filter({ hasText: "Copied." })).toHaveCount(0);
 });
 
 test("keeps a plan saved while the café's new link was on its way", async ({ page }) => {
@@ -339,14 +339,18 @@ test("voids a payment with its reason: it stays listed, struck through and out o
   await expect(reason).toHaveCount(0);
   await expect(voidWrong).toBeFocused();
 
-  // No reason: an empty field is the browser's to refuse (required); only spaces, the server's, by its field, the form kept.
+  // No reason, or only spaces: refused by the server, by its field in the page's own words (no browser bubble), the form
+  // kept and the field focused so its message is read.
   await voidWrong.click();
   await page.getByRole("button", { name: "Void payment" }).click();
-  expect(await reason.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
+  await expect(reason).toHaveAttribute("aria-invalid", "true");
+  await expect(reason).toHaveAccessibleDescription(/Enter why the payment is voided\.$/);
+  await expect(reason).toBeFocused();
   await reason.fill("   ");
   await page.getByRole("button", { name: "Void payment" }).click();
   await expect(reason).toHaveAttribute("aria-invalid", "true");
   await expect(reason).toHaveAccessibleDescription(/Enter why the payment is voided\.$/);
+  await expect(reason).toBeFocused();
   await reason.fill("Typed the wrong amount");
   await page.getByRole("button", { name: "Void payment" }).click();
 
@@ -362,7 +366,7 @@ test("voids a payment with its reason: it stays listed, struck through and out o
   await expect(row.locator(".payment-status")).toBeFocused();
   await expect(page.locator(".page-intro")).toContainText("Paid in all: $10.00.");
   await expect(page.getByRole("button", { name: "Void the payment of $10.00 paid on 2 Oct 2026" })).toBeEnabled();
-  expect(sent).toEqual([{ reason: "   " }, { reason: "Typed the wrong amount" }]);
+  expect(sent).toEqual([{ reason: "" }, { reason: "   " }, { reason: "Typed the wrong amount" }]);
 });
 
 test("says when another session voided the payment first, keeping its reason, and when the payment is not the café's", async ({ page }) => {

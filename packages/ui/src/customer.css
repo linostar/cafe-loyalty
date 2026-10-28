@@ -2,6 +2,11 @@
  * The customer pages (signup, the web card, recovery and deletion), server-rendered without scripts and read on a
  * phone: one column, the café's loyalty card at the top. The server inlines this after tokens.css and base.css.
  */
+/* Light only, so a browser's forced dark mode never inverts the card's QR, which the counter reads dark on light. */
+:root {
+  color-scheme: light;
+}
+
 body {
   display: flex;
   flex-direction: column;

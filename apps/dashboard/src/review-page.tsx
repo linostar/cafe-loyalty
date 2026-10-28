@@ -1,8 +1,8 @@
-import { reviewDecisionSchema, reviewQueueSchema, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
+import { reviewDecisionSchema, reviewQueueSchema, type Lang, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
 import { useContext, useEffect, useRef, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, FormError, Notice, useSubmit } from "./forms.js";
-import { dateFormat, useLang, useT, type Translate } from "./i18n.js";
+import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
 import { AttentionContext, PageStatus, useApiData } from "./session.js";
 
 const AR = {
@@ -160,7 +160,8 @@ export function ReviewPage() {
   /** Every item loaded so far (the first page, then each "Show more"), less the ones decided here. */
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  /** Built when shown, so it follows a language switch. */
+  const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   /** The first item of the page just loaded, to take focus once it is shown. */
   const [focusId, setFocusId] = useState<string | null>(null);
   const list = useRef<HTMLUListElement>(null);
@@ -190,7 +191,7 @@ export function ReviewPage() {
       <p className="page-intro">
         {t("Visits held for you to check. An accepted visit counts, with its stamps if the card can still get them; a discarded one counts for nothing.")}
       </p>
-      {notice === null ? null : <Notice>{notice}</Notice>}
+      <Notice>{notice?.(t, lang)}</Notice>
       <FormError message={error} />
       {shown.length === 0 ? (
         <p className="empty">{t("Nothing to review. What removed phones or baristas send, and visits held at sync, wait here for you.")}</p>
@@ -208,7 +209,8 @@ export function ReviewPage() {
                     // Taken off the list in place, so the owner keeps every page already loaded.
                     setItems(shown.filter((entry) => entry.id !== item.id));
                     setNextCursor(cursor);
-                    setNotice(decided(t, dateFormat(lang, TIME_OPTIONS), decision, item, result.value.outcome));
+                    const { outcome } = result.value;
+                    setNotice(() => (say: T, shownIn: Lang) => decided(say, dateFormat(shownIn, TIME_OPTIONS), decision, item, outcome));
                     // The navigation's count, too.
                     attention.reload();
                   } else if (isStale(result.error)) {
@@ -223,7 +225,7 @@ export function ReviewPage() {
       {cursor === null ? null : (
         <button
           type="button"
-          disabled={pending}
+          aria-disabled={pending || undefined}
           onClick={() => {
             void submit(() => apiRequest("GET", `/api/review-queue?cursor=${encodeURIComponent(cursor)}`, reviewQueueSchema)).then((result) => {
               if (result.ok) {

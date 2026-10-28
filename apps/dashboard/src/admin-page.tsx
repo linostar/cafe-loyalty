@@ -18,7 +18,7 @@ import {
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale } from "./api.js";
-import { Field, FormError, Notice, useSubmit } from "./forms.js";
+import { Field, Form, FormError, Notice, useSubmit } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
 import { ChangePasswordForm } from "./password-form.js";
@@ -127,8 +127,8 @@ function AdminLoginForm({ notice, onSignedIn }: { notice: string | null; onSigne
     <section aria-labelledby="admin-login-title">
       <h2 id="admin-login-title">{t("Operator sign-in")}</h2>
       <p className="page-intro">{t("For the service's operator. Café owners sign in on the dashboard's home page.")}</p>
-      {notice === null ? null : <Notice>{api(notice)}</Notice>}
-      <form
+      <Notice>{notice === null ? null : api(notice)}</Notice>
+      <Form
         onSubmit={(event) => {
           event.preventDefault();
           void submit(() => apiRequest("POST", "/api/admin/login", operatorSessionSchema, { email, password })).then((result) => {
@@ -141,10 +141,10 @@ function AdminLoginForm({ notice, onSignedIn }: { notice: string | null; onSigne
         <FormError message={error} />
         <Field label={t("Email")} name="email" type="email" autoComplete="username" value={email} onChange={setEmail} error={fieldErrors.email} />
         <Field label={t("Password")} name="password" type="password" autoComplete="current-password" value={password} onChange={setPassword} error={fieldErrors.password} />
-        <button type="submit" disabled={pending}>
+        <button type="submit" aria-disabled={pending || undefined}>
           {pending ? t("Signing in…") : t("Sign in")}
         </button>
-      </form>
+      </Form>
     </section>
   );
 }
@@ -156,9 +156,13 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
   const whyId = `plan-unchanged-${cafe.id}`;
   const { pending, error, submit } = useSubmit();
   return (
-    <form
+    <Form
       onSubmit={(event) => {
         event.preventDefault();
+        // The button stays focusable when there is nothing to save (aria-disabled), so a press does nothing here.
+        if (unchanged) {
+          return;
+        }
         void submit(() => apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { plan })).then((result) => {
           if (result.ok) {
             const plan = result.value.plan;
@@ -187,7 +191,8 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
         </div>
         <p className="hint">{t(PLAN_HINTS[plan])}</p>
       </fieldset>
-      <button type="submit" disabled={pending || unchanged} aria-describedby={unchanged ? whyId : undefined}>
+      {/* aria-disabled, not disabled: once saved the plan is unchanged, and a disabled button would drop focus to the page. */}
+      <button type="submit" aria-disabled={pending || unchanged || undefined} aria-describedby={unchanged ? whyId : undefined}>
         {pending ? t("Saving…") : t("Save plan")}
         {forCafe(t("of {name}", { name: cafe.name }))}
       </button>
@@ -197,7 +202,7 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
           {t("Choose another plan to save.")}
         </p>
       ) : null}
-    </form>
+    </Form>
   );
 }
 
@@ -215,7 +220,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   const titleId = `payment-title-${cafe.id}`;
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby={titleId}
       onSubmit={(event) => {
         event.preventDefault();
@@ -247,10 +252,10 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         });
       }}
     >
-      <h4 id={titleId}>
+      <h3 id={titleId}>
         {t("Record a payment")}
         {forThis}
-      </h4>
+      </h3>
       <FormError message={error} />
       <Field
         label={
@@ -322,11 +327,11 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         hint={t("Optional: a receipt or transfer number. No names or phone numbers.")}
         error={fieldErrors.reference}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Recording…") : t("Record payment")}
         {forThis}
       </button>
-    </form>
+    </Form>
   );
 }
 
@@ -337,7 +342,7 @@ function NewCafeForm({ onCreated }: { onCreated: (invite: AdminInvite) => void }
   const [cafeId, setCafeId] = useState(() => crypto.randomUUID());
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="admin-new-cafe-title"
       className="card"
       onSubmit={(event) => {
@@ -356,10 +361,10 @@ function NewCafeForm({ onCreated }: { onCreated: (invite: AdminInvite) => void }
     >
       <FormError message={error} />
       <Field label={t("Café name")} name="cafeName" type="text" value={name} onChange={setName} maxLength={120} hint={t("Creates the café on the pilot plan and a signup link for its owner.")} error={fieldErrors.name} />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Creating…") : t("Create café")}
       </button>
-    </form>
+    </Form>
   );
 }
 
@@ -421,7 +426,7 @@ function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invit
       <FormError message={error} />
       <button
         type="button"
-        disabled={pending}
+        aria-disabled={pending || undefined}
         onClick={() => {
           void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/invites`, adminInviteSchema, {})).then((result) => {
             if (result.ok) {
@@ -467,7 +472,7 @@ function VoidPaymentForm({
     }
   };
   return (
-    <form
+    <Form
       ref={form}
       aria-labelledby={titleId}
       className="void-payment"
@@ -488,7 +493,7 @@ function VoidPaymentForm({
         });
       }}
     >
-      <h5 id={titleId}>{t("Void the payment of {amount} paid on {day}", { amount, day: dayFormat.format(new Date(payment.paidOn)) })}</h5>
+      <h4 id={titleId}>{t("Void the payment of {amount} paid on {day}", { amount, day: dayFormat.format(new Date(payment.paidOn)) })}</h4>
       <FormError message={error} />
       <Field
         label={t("Reason")}
@@ -502,14 +507,14 @@ function VoidPaymentForm({
         error={fieldErrors.reason}
       />
       <div className="actions">
-        <button type="submit" className="danger" disabled={pending} onKeyDown={cancelOnEscape}>
+        <button type="submit" className="danger" aria-disabled={pending || undefined} onKeyDown={cancelOnEscape}>
           {pending ? t("Voiding…") : t("Void payment")}
         </button>
-        <button type="button" disabled={pending} onKeyDown={cancelOnEscape} onClick={onCancel}>
+        <button type="button" aria-disabled={pending || undefined} onKeyDown={cancelOnEscape} onClick={() => { if (!pending) { onCancel(); } }}>
           {common("Cancel")}
         </button>
       </div>
-    </form>
+    </Form>
   );
 }
 
@@ -533,10 +538,10 @@ function PaymentsTable({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Adm
   }, [voiding, cafe]);
   // Its own heading, so voiding a payment comes under the payments, not under recording one.
   const heading = (
-    <h4 className="payments-title">
+    <h3 className="payments-title">
       {t("Payments")}
       {forCafe(t("of {name}", { name: cafe.name }))}
-    </h4>
+    </h3>
   );
   if (cafe.payments.length === 0) {
     return (
@@ -729,7 +734,7 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       <p className="page-intro">
         {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
       </p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <div className="card">
         {/* A link leaves the café as listed: its copy of it may be older than a plan or payment saved meanwhile. */}
         <NewLinkButton

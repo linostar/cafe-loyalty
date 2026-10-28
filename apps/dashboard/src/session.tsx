@@ -75,14 +75,25 @@ export function useApiData<T extends z.ZodType>(
   ];
 }
 
-/** The loading and failure states every page shows before its content. */
+/** The loading and failure states every page shows before its content; a failed load offers to load the page again. */
 export function PageStatus({ state }: { state: ApiData<unknown> }) {
   const t = useCommonT();
   const api = useApiText();
   return state.status === "failed" ? (
-    <p role="alert" className="form-error">
-      {api(state.message)}
-    </p>
+    <>
+      <p role="alert" className="form-error">
+        {api(state.message)}
+      </p>
+      <button
+        type="button"
+        className="primary"
+        onClick={() => {
+          window.location.reload();
+        }}
+      >
+        {t("Try again")}
+      </button>
+    </>
   ) : (
     <p role="status">{t("Loading…")}</p>
   );

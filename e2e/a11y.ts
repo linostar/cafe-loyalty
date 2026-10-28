@@ -57,13 +57,22 @@ export async function expectLanguageAndFit(page: Page, lang: "ar" | "en"): Promi
 const WCAG_AA = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
 /**
+ * Rules outside the WCAG tags that still guard what screen-reader users rely on: headings that never skip a level, so
+ * the outline read from them has no gaps (WCAG 1.3.1's intent; axe files it under best practice).
+ */
+const EXTRA_RULES = ["heading-order"];
+
+/**
  * Fails on any WCAG 2.2 A or AA violation axe finds in the page as drawn: contrast of the colours actually rendered,
- * ARIA validity, landmarks, headings, lists, duplicate ids, and targets of at least 24 px (2.5.8). `skip` names rules a
- * screen leaves out, each with its reason at the call.
+ * ARIA validity, landmarks, headings, lists, duplicate ids, and targets of at least 24 px (2.5.8), and on EXTRA_RULES.
+ * `skip` names rules a screen leaves out, each with its reason at the call.
  */
 export async function expectNoAxeViolations(page: Page, skip: readonly string[] = []): Promise<void> {
+  // Two passes: axe runs either rule tags or named rules, not both at once.
   const { violations } = await new AxeBuilder({ page }).withTags(WCAG_AA).disableRules([...skip]).analyze();
-  const found = violations.map((violation) => `${violation.id}: ${violation.help} (${violation.nodes.map((node) => node.target.join(" ")).join(", ")})`);
+  const extra = EXTRA_RULES.filter((rule) => !skip.includes(rule));
+  const more = extra.length === 0 ? [] : (await new AxeBuilder({ page }).withRules(extra).analyze()).violations;
+  const found = [...violations, ...more].map((violation) => `${violation.id}: ${violation.help} (${violation.nodes.map((node) => node.target.join(" ")).join(", ")})`);
   expect(found, "WCAG 2.2 AA violations").toEqual([]);
 }
 

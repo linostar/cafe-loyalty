@@ -1,5 +1,5 @@
 import { apiText, linkTokenSchema } from "@cafe-loyalty/shared";
-import { useContext, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ApiRequestError } from "./api.js";
 import { useApiText, useCommonT } from "./i18n.js";
 import { SessionEndedContext } from "./session.js";
@@ -27,17 +27,56 @@ interface FieldProps {
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
 }
 
-/** A labelled input whose hint and error are announced with it. */
+/** How many times the form around a field was sent, so a field can tell a new failed attempt from the last one. */
+const SubmitAttemptContext = createContext(0);
+
+/**
+ * A form that checks its own fields: the browser's validation bubbles are off (they come in the browser's language,
+ * not the page's, and vanish), so every problem shows as the field's own message, and after each attempt the first
+ * field with one gets focus (Field).
+ */
+export function Form({ onSubmit, children, ...props }: Omit<ComponentProps<"form">, "noValidate">) {
+  const [attempt, setAttempt] = useState(0);
+  return (
+    <form
+      {...props}
+      noValidate
+      onSubmit={(event) => {
+        setAttempt((count) => count + 1);
+        onSubmit?.(event);
+      }}
+    >
+      <SubmitAttemptContext.Provider value={attempt}>{children}</SubmitAttemptContext.Provider>
+    </form>
+  );
+}
+
+/**
+ * A labelled input whose hint and error are announced with it. When a send of its form leaves it with an error (found
+ * before sending, or in the answer) and it is the form's first field with one, it takes focus, so its message is read.
+ */
 export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [hint === undefined ? null : hintId, error === undefined ? null : errorId].filter((part) => part !== null).join(" ");
   const api = useApiText();
+  const input = useRef<HTMLInputElement>(null);
+  const attempt = useContext(SubmitAttemptContext);
+  useEffect(() => {
+    const element = input.current;
+    if (error === undefined || element === null || attempt === 0) {
+      return;
+    }
+    if (element.form?.querySelector('[aria-invalid="true"]') === element) {
+      element.focus();
+    }
+  }, [error, attempt]);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
       <input
+        ref={input}
         id={id}
         name={name}
         type={type}
@@ -71,29 +110,54 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
 }
 
 export interface SubmitState {
+  /**
+   * A request is on its way. Buttons show it with `aria-disabled`, never `disabled`: a focused button that becomes
+   * disabled drops keyboard focus to the page (WCAG 2.4.3); `submit` ignores what is sent meanwhile instead.
+   */
   pending: boolean;
   /** The message to show for the last failure, if any, in English as the API sent it (FormError translates it). */
   error: string | null;
   /** Per-field messages from the last failure, by field name, in English (Field translates them). */
   fieldErrors: Readonly<Record<string, string>>;
-  /** Runs `action`, tracking pending and errors. */
+  /** The last request succeeded, until the next one starts or `clearDone`: the form shows "Saved." next to its button. */
+  done: boolean;
+  clearDone: () => void;
+  /** Runs `action`, tracking pending and errors; while one is pending, another is not run (a failed result, nothing shown). */
   submit: <T>(action: () => Promise<T>) => Promise<SubmitResult<T>>;
 }
 
 export type SubmitResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+/** The failure `submit` gives a request sent while another is pending; nothing is shown for it. */
+export class StillPendingError extends Error {
+  constructor() {
+    super("A request is already on its way");
+    this.name = "StillPendingError";
+  }
+}
 
 export function useSubmit(): SubmitState {
   const onSessionEnded = useContext(SessionEndedContext);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [done, setDone] = useState(false);
+  // Read and set synchronously: two clicks before a re-render would both see `pending` false.
+  const inFlight = useRef(false);
 
   async function submit<T>(action: () => Promise<T>): Promise<SubmitResult<T>> {
+    if (inFlight.current) {
+      return { ok: false, error: new StillPendingError() };
+    }
+    inFlight.current = true;
     setPending(true);
     setError(null);
     setFieldErrors({});
+    setDone(false);
     try {
-      return { ok: true, value: await action() };
+      const value = await action();
+      setDone(true);
+      return { ok: true, value };
     } catch (caught) {
       if (caught instanceof ApiRequestError && caught.failure.code === "UNAUTHENTICATED" && onSessionEnded !== null) {
         onSessionEnded(caught.message);
@@ -112,11 +176,21 @@ export function useSubmit(): SubmitState {
       }
       return { ok: false, error: caught };
     } finally {
+      inFlight.current = false;
       setPending(false);
     }
   }
 
-  return { pending, error, fieldErrors, submit };
+  return {
+    pending,
+    error,
+    fieldErrors,
+    done,
+    clearDone: () => {
+      setDone(false);
+    },
+    submit,
+  };
 }
 
 /** The form's failure message in the page's language, announced when it appears. */
@@ -129,8 +203,11 @@ export function FormError({ message }: { message: string | null }) {
   );
 }
 
-/** A confirmation, announced politely when it appears. */
-export function Notice({ children }: { children: ReactNode }) {
+/**
+ * A confirmation, announced politely. Render it all the time, with no children while there is nothing to say: screen
+ * readers announce text that changes in a status region already in the page, but often miss one added with its text.
+ */
+export function Notice({ children }: { children?: ReactNode }) {
   return (
     <p role="status" className="notice">
       {children}
@@ -212,9 +289,12 @@ export function ConfirmButton({
             type="button"
             className="danger"
             aria-label={confirmName}
-            disabled={pending}
+            aria-disabled={pending || undefined}
             onKeyDown={cancelOnEscape}
             onClick={() => {
+              if (pending) {
+                return;
+              }
               // The item may change or disappear, so focus moves to its section's heading, which stays.
               container.current?.closest("section")?.querySelector<HTMLElement>("[data-focus-after-change]")?.focus();
               setAsking(false);
@@ -223,7 +303,7 @@ export function ConfirmButton({
           >
             {confirmLabel}
           </button>
-          <button type="button" data-confirm-cancel disabled={pending} onKeyDown={cancelOnEscape} onClick={cancel}>
+          <button type="button" data-confirm-cancel onKeyDown={cancelOnEscape} onClick={cancel}>
             {t("Cancel")}
           </button>
         </>
@@ -231,8 +311,11 @@ export function ConfirmButton({
         <button
           type="button"
           aria-label={name}
-          disabled={pending}
+          aria-disabled={pending || undefined}
           onClick={() => {
+            if (pending) {
+              return;
+            }
             focusNext.current = "cancel";
             setAsking(true);
           }}

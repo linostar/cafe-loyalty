@@ -42,7 +42,7 @@ export function joinView(lang: Lang, view: JoinView): string {
     html`<header class="hero">
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1>${t(lang, "joinTitle", { cafe: cafeName })}</h1>
-${program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: program.stampsRequired, reward: program.reward })}</p>`}
+${program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: count(lang, "stamps", program.stampsRequired), reward: program.reward })}</p>`}
 </header>
 <form method="post" action="${view.path}" novalidate class="card">
 <input type="hidden" name="lang" value="${lang}">
@@ -144,10 +144,21 @@ export interface CardSettingsView {
   /** The stored recovery email, masked (never shown in full, nor as the field's value), or null for none. */
   maskedEmail: string | null;
   offersOptedIn: boolean;
-  notice: string | undefined;
+  /** The section whose form was just saved, which shows "Saved." under its heading. */
+  saved: SettingsSection | undefined;
+  /** What was typed into a field the page answers with an error, so it is not lost. */
+  values: { email?: string };
   errors: { email?: string; delete?: string };
   otherLangHref: string;
 }
+
+/**
+ * The settings sections with a form that saves. Each form posts with its section's heading as the URL fragment, so
+ * the page that answers it (an error, or "Saved." after the redirect) opens at that section, not the top.
+ */
+export type SettingsSection = "email" | "offers";
+
+const savedNotice = (lang: Lang, shown: boolean): SafeHtml | null => (shown ? html`<p class="notice" role="status">${t(lang, "saved")}</p>` : null);
 
 /**
  * The card's settings (AC 8, 9): its recovery email, offers, and deletion apart at the end, with a way back to the
@@ -163,15 +174,15 @@ export function cardSettingsView(lang: Lang, view: CardSettingsView): string {
 <p class="kicker">${view.cafeName}</p>
 <h1>${t(lang, "settingsTitle")}</h1>
 </header>
-${view.notice === undefined ? null : html`<p class="notice" role="status">${view.notice}</p>`}
 <section aria-labelledby="email-title" class="card">
 <h2 id="email-title">${t(lang, "emailTitle")}</h2>
+${savedNotice(lang, view.saved === "email")}
 <p>${t(lang, "emailText")}</p>
 ${view.maskedEmail === null ? null : html`<p id="email-current">${t(lang, "emailCurrent", { email: view.maskedEmail })}</p>`}
-<form method="post" action="${view.path}/email" novalidate>
+<form method="post" action="${view.path}/email#email-title" novalidate>
 <input type="hidden" name="lang" value="${lang}">
 <label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr"${describedBy([view.maskedEmail === null ? null : "email-current email-hint", errors.email === undefined ? null : "email-error"])}${errors.email === undefined ? "" : html` aria-invalid="true"`}>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr"${view.values.email === undefined ? "" : html` value="${view.values.email}"`}${describedBy([view.maskedEmail === null ? null : "email-current email-hint", errors.email === undefined ? null : "email-error"])}${errors.email === undefined ? "" : html` aria-invalid="true"`}>
 ${view.maskedEmail === null ? null : html`<p id="email-hint" class="hint">${t(lang, "emailRemoveHint")}</p>`}
 ${errorBlock(errors.email, "email-error")}
 <button type="submit">${t(lang, "emailSave")}</button>
@@ -180,7 +191,8 @@ ${view.maskedEmail === null ? null : html`<button type="submit" class="quiet" na
 </section>
 <section aria-labelledby="offers-title" class="card">
 <h2 id="offers-title">${t(lang, "offersTitle")}</h2>
-<form method="post" action="${view.path}/offers">
+${savedNotice(lang, view.saved === "offers")}
+<form method="post" action="${view.path}/offers#offers-title">
 <input type="hidden" name="lang" value="${lang}">
 <label class="check"><input type="checkbox" name="offers" value="yes"${view.offersOptedIn ? html` checked` : ""}> ${t(lang, "offersLabel", { cafe: view.cafeName })}</label>
 <button type="submit">${t(lang, "offersSave")}</button>
@@ -189,9 +201,9 @@ ${view.maskedEmail === null ? null : html`<button type="submit" class="quiet" na
 <section aria-labelledby="delete-title" class="card danger-zone">
 <h2 id="delete-title">${t(lang, "deleteTitle")}</h2>
 <p id="delete-text">${t(lang, "deleteText")}</p>
-<form method="post" action="${view.path}/delete" novalidate>
+<form method="post" action="${view.path}/delete#delete-title" novalidate>
 <input type="hidden" name="lang" value="${lang}">
-<label class="check"><input type="checkbox" name="confirm" value="yes" aria-describedby="delete-text${errors.delete === undefined ? "" : " delete-error"}"> ${t(lang, "deleteConfirm")}</label>
+<label class="check"><input type="checkbox" name="confirm" value="yes" aria-describedby="delete-text${errors.delete === undefined ? "" : " delete-error"}"${errors.delete === undefined ? "" : html` aria-invalid="true"`}> ${t(lang, "deleteConfirm")}</label>
 ${errorBlock(errors.delete, "delete-error")}
 <button type="submit" class="danger">${t(lang, "deleteButton")}</button>
 </form>
@@ -201,7 +213,7 @@ ${errorBlock(errors.delete, "delete-error")}
 }
 
 /** Card recovery by email: the form, and once sent, the same answer whether or not a card uses it (AC 8). */
-export function recoverView(lang: Lang, sent: boolean, error: string | undefined, otherLangHref: string): string {
+export function recoverView(lang: Lang, sent: boolean, error: string | undefined, otherLangHref: string, email = ""): string {
   return page(
     lang,
     t(lang, "recoverTitle"),
@@ -212,7 +224,7 @@ ${sent ? html`<p class="notice" role="status">${t(lang, "recoverSent")}</p>` : n
 <form method="post" action="/recover" novalidate>
 <input type="hidden" name="lang" value="${lang}">
 <label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr" required${error === undefined ? "" : html` aria-invalid="true" aria-describedby="email-error"`}>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr" required value="${email}"${error === undefined ? "" : html` aria-invalid="true" aria-describedby="email-error"`}>
 ${errorBlock(error, "email-error")}
 <button type="submit">${t(lang, "recoverButton")}</button>
 </form>
@@ -221,8 +233,11 @@ ${errorBlock(error, "email-error")}
   );
 }
 
-/** The recovery link's page: buttons, so a mail scanner fetching the link cannot use it up (AC 8, 9). */
-export function restoreView(lang: Lang, path: string, otherLangHref: string): string {
+/**
+ * The recovery link's page: buttons, so a mail scanner fetching the link cannot use it up (AC 8, 9). Deleting every
+ * card cannot be undone, so it takes a ticked box as well; `deleteError` answers a delete sent without it.
+ */
+export function restoreView(lang: Lang, path: string, otherLangHref: string, deleteError?: string): string {
   return page(
     lang,
     t(lang, "restoreTitle"),
@@ -231,10 +246,17 @@ export function restoreView(lang: Lang, path: string, otherLangHref: string): st
 <p>${t(lang, "restoreText")}</p>
 <form method="post" action="${path}"><input type="hidden" name="lang" value="${lang}"><input type="hidden" name="action" value="restore"><button type="submit">${t(lang, "restoreButton")}</button></form>
 </div>
-<div class="card">
-<p>${t(lang, "restoreDeleteText")}</p>
-<form method="post" action="${path}"><input type="hidden" name="lang" value="${lang}"><input type="hidden" name="action" value="delete"><button type="submit" class="danger">${t(lang, "restoreDeleteButton")}</button></form>
-</div>`,
+<section aria-labelledby="restore-delete-title" class="card danger-zone">
+<h2 id="restore-delete-title">${t(lang, "restoreDeleteTitle")}</h2>
+<p id="restore-delete-text">${t(lang, "restoreDeleteText")}</p>
+<form method="post" action="${path}#restore-delete-title" novalidate>
+<input type="hidden" name="lang" value="${lang}">
+<input type="hidden" name="action" value="delete">
+<label class="check"><input type="checkbox" name="confirm" value="yes" aria-describedby="restore-delete-text${deleteError === undefined ? "" : " restore-delete-error"}"${deleteError === undefined ? "" : html` aria-invalid="true"`}> ${t(lang, "restoreDeleteConfirm")}</label>
+${errorBlock(deleteError, "restore-delete-error")}
+<button type="submit" class="danger">${t(lang, "restoreDeleteButton")}</button>
+</form>
+</section>`,
     otherLangHref,
   );
 }
@@ -254,7 +276,7 @@ export function restoredView(lang: Lang, cards: readonly { href: string; label: 
 }
 
 /** The undo link sent to a card's old recovery email: asks for that address, so a mail scanner cannot use it. */
-export function undoEmailView(lang: Lang, path: string, error: string | undefined, otherLangHref: string): string {
+export function undoEmailView(lang: Lang, path: string, error: string | undefined, otherLangHref: string, email = ""): string {
   return page(
     lang,
     t(lang, "undoTitle"),
@@ -264,7 +286,7 @@ export function undoEmailView(lang: Lang, path: string, error: string | undefine
 <form method="post" action="${path}" novalidate>
 <input type="hidden" name="lang" value="${lang}">
 <label for="email">${t(lang, "emailLabel")}</label>
-<input id="email" name="email" type="email" autocomplete="email" dir="ltr" required${error === undefined ? "" : html` aria-invalid="true" aria-describedby="email-error"`}>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr" required value="${email}"${error === undefined ? "" : html` aria-invalid="true" aria-describedby="email-error"`}>
 ${errorBlock(error, "email-error")}
 <button type="submit">${t(lang, "undoButton")}</button>
 </form>
@@ -278,9 +300,20 @@ export function deletedView(lang: Lang, otherLangHref: string): string {
   return page(lang, t(lang, "deletedTitle"), html`<div class="card"><h1>${t(lang, "deletedTitle")}</h1><p role="status">${t(lang, "deletedText")}</p></div>`, otherLangHref);
 }
 
-/** An error page: the message as its heading. */
-export function errorView(lang: Lang, message: string, otherLangHref: string): string {
-  return page(lang, t(lang, "siteTitle"), html`<div class="card"><h1 role="alert">${message}</h1></div>`, otherLangHref);
+/** The way on from an error page, such as asking for a new link. */
+export interface NextStep {
+  href: string;
+  label: string;
+}
+
+/** An error page: the message as its heading, and the way on from it when there is one. */
+export function errorView(lang: Lang, message: string, otherLangHref: string, next?: NextStep): string {
+  return page(
+    lang,
+    t(lang, "errorTitle"),
+    html`<div class="card"><h1>${message}</h1>${next === undefined ? null : html`<p class="link-row"><a class="link-button" href="${next.href}">${next.label}</a></p>`}</div>`,
+    otherLangHref,
+  );
 }
 
 export interface FeedbackView {

@@ -57,7 +57,7 @@ test("saves the program, then adds and edits an order type", async ({ page }) =>
   await page.getByLabel("Reward (Arabic)").fill("قهوة مجانية");
   await expect(page.getByLabel("Reward (Arabic)")).toHaveAttribute("dir", "rtl");
   await page.getByRole("button", { name: "Save program" }).click();
-  await expect(page.getByRole("status")).toHaveText("Saved.");
+  await expect(page.getByRole("form", { name: "Loyalty program" }).getByRole("status")).toHaveText("Saved.");
 
   const add = page.getByRole("form", { name: "Add an order type" });
   await add.getByLabel("Name (English)").fill("Espresso");
@@ -111,7 +111,7 @@ test("adds a barista with a PIN and removes one after confirming", async ({ page
   await expect(page.getByLabel("PIN")).toHaveAttribute("inputmode", "numeric");
   await page.getByLabel("PIN").fill("482913");
   await page.getByRole("button", { name: "Add barista" }).click();
-  await expect(page.getByRole("status")).toContainText("Saved.");
+  await expect(page.getByRole("form", { name: "Add a barista" }).getByRole("status")).toContainText("Saved.");
 
   await page.getByRole("button", { name: "Remove Rami" }).click();
   // Focus goes to the safe choice, Escape backs out, and after confirming it lands on the section heading.
@@ -235,9 +235,32 @@ test("saves the minimum margin campaigns must keep", async ({ page }) => {
   const margin = page.getByRole("form", { name: "Minimum margin" });
   await expect(margin.getByLabel("Minimum margin over cost (%)")).toHaveValue("30");
   await margin.getByLabel("Minimum margin over cost (%)").fill("thirty");
-  await margin.getByRole("button", { name: "Save margin" }).click();
+  await margin.getByRole("button", { name: "Save margin" }).press("Enter");
   await expect(margin.getByText("Enter a whole percentage from 0 to 1000, such as 30.")).toBeVisible();
+  // The field with the problem takes focus, so its message is read with it (WCAG 3.3.1).
+  await expect(margin.getByLabel("Minimum margin over cost (%)")).toBeFocused();
   await margin.getByLabel("Minimum margin over cost (%)").fill("35");
-  await margin.getByRole("button", { name: "Save margin" }).click();
-  await expect(page.getByRole("status")).toHaveText("Saved.");
+  await margin.getByRole("button", { name: "Save margin" }).press("Enter");
+  // Next to the form that saved, and the keyboard is still on its button (WCAG 2.4.3).
+  await expect(margin.getByRole("status")).toHaveText("Saved.");
+  await expect(margin.getByRole("button", { name: "Save margin" })).toBeFocused();
+  // Typing again clears the old confirmation.
+  await margin.getByLabel("Minimum margin over cost (%)").fill("36");
+  await expect(margin.getByRole("status")).toHaveText("");
+});
+
+test("checks the café's own fields itself, in the page's language, and focuses the first with a problem", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [] }),
+    "GET /api/cafe/join": reply(200, JOIN),
+  });
+  await page.goto("/cafe");
+  const add = page.getByRole("form", { name: "Add an order type" });
+  // No browser validation bubbles: the form is sent to the page's own checks.
+  await expect(add).toHaveAttribute("novalidate", "");
+  await add.getByLabel("Price (USD)").fill("abc");
+  await add.getByRole("button", { name: "Add order type" }).click();
+  await expect(add.getByText("Enter a price in dollars up to 1,000,000, such as 2.50.")).toBeVisible();
+  await expect(add.getByLabel("Price (USD)")).toBeFocused();
 });

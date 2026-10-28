@@ -1,7 +1,7 @@
 import { STAFF_PIN_MAX_LENGTH, staffListSchema, type StaffMember, toLatinDigits } from "@cafe-loyalty/shared";
 import { useState } from "react";
 import { apiRequest, isStale } from "./api.js";
-import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import { useT, type Later, useLang, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -41,11 +41,12 @@ function AddStaffForm({ change }: { change: Change }) {
   const t = useT(AR);
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="add-staff-title"
       className="card form-grid"
+      onChange={clearDone}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(() => change("POST", "/api/staff", { name, pin: toLatinDigits(pin) })).then((result) => {
@@ -71,10 +72,11 @@ function AddStaffForm({ change }: { change: Change }) {
         hint={t(PIN_HINT)}
         error={fieldErrors.pin}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Adding…") : t("Add barista")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved. Counter phones pick up the change when they next sync.") : null}</Notice>
+    </Form>
   );
 }
 
@@ -101,7 +103,7 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
       </span>
       <FormError message={error} />
       {member.revoked ? null : changingPin ? (
-        <form
+        <Form
           aria-label={t("New PIN for {name}", { name: member.name })}
           className="row-form"
           onSubmit={(event) => {
@@ -128,7 +130,7 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
             error={fieldErrors.pin}
           />
           <div className="actions">
-            <button type="submit" disabled={pending}>
+            <button type="submit" aria-disabled={pending || undefined}>
               {pending ? t("Saving…") : t("Save PIN")}
             </button>
             <button
@@ -141,7 +143,7 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
               {t("Cancel")}
             </button>
           </div>
-        </form>
+        </Form>
       ) : (
         <span className="actions">
           <button
@@ -183,8 +185,13 @@ export function StaffPage() {
   const staff = state.data.staff;
 
   const change: Change = async (method, path, body) => {
-    setNotice(null);
     setList(await apiRequest(method, path, staffListSchema, body));
+  };
+  // A change to a barista in the list is said under the page's heading, where focus goes once it is made; the form
+  // that adds one says so next to its own button.
+  const changeAndSay: Change = async (method, path, body) => {
+    setNotice(null);
+    await change(method, path, body);
     setNotice(() => (say: Translate<typeof AR>) => say("Saved. Counter phones pick up the change when they next sync."));
   };
 
@@ -194,13 +201,13 @@ export function StaffPage() {
         {t("Staff")}
       </h2>
       <p className="page-intro">{t("Baristas sign in on the counter phones with their PIN, and every stamp they give is recorded under their name.")}</p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       {staff.length === 0 ? (
         <p className="empty">{t("No baristas yet. Each one gets a PIN to use at the counter.")}</p>
       ) : (
         <ul className="items">
           {staff.map((member) => (
-            <StaffItem key={member.id} member={member} change={change} reload={reload} />
+            <StaffItem key={member.id} member={member} change={changeAndSay} reload={reload} />
           ))}
         </ul>
       )}

@@ -667,6 +667,28 @@ form > .actions {
   border-radius: 3px;
 }
 
+/*
+ * Forced colours drop the shading, so the busier hours are framed instead: a thin frame at busy, a thick one at the
+ * busiest. The numbers in the cells say the same either way.
+ */
+@media (forced-colors: active) {
+  .visit-hours .level-3,
+  .heat-swatch.level-3 {
+    outline: 1px solid CanvasText;
+    outline-offset: -3px;
+  }
+
+  .visit-hours .level-4,
+  .heat-swatch.level-4 {
+    outline: 3px solid CanvasText;
+    outline-offset: -4px;
+  }
+
+  .heat-swatch {
+    border: 1px solid CanvasText;
+  }
+}
+
 @media (max-width: 30rem) {
   .card {
     padding: var(--space-4) var(--space-3);

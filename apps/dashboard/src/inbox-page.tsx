@@ -49,7 +49,7 @@ function Message({ item, pending, onRead }: { item: FeedbackItem; pending: boole
       </p>
       {item.read ? null : (
         <div className="actions">
-          <button type="button" disabled={pending} onClick={onRead}>
+          <button type="button" aria-disabled={pending || undefined} onClick={onRead}>
             {t("Mark the message of {received} as read", { received })}
           </button>
         </div>
@@ -81,7 +81,7 @@ export function InboxPage() {
         )}
       </p>
       <p>{unread === 0 ? t("No unread messages.") : plural(lang, UNREAD, unread)}</p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <FormError message={error} />
       {items.length === 0 ? (
         <p className="empty">{t("No messages yet. What customers write about their visits arrives here.")}</p>

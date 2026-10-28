@@ -16,7 +16,7 @@ import {
   type VisitHours as VisitHoursData,
 } from "@cafe-loyalty/shared";
 import logoUrl from "@cafe-loyalty/ui/logo.svg";
-import { useCallback, useContext, useEffect, useId, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import { AdminArea } from "./admin-page.js";
 import { ApiRequestError, apiRequest } from "./api.js";
 import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./auth-pages.js";
@@ -33,6 +33,12 @@ import { AttentionContext, PageStatus, SessionEndedContext, useApiData } from ".
 import { StaffPage } from "./staff-page.js";
 
 const AR = {
+  "Skip to content": "انتقل إلى المحتوى",
+  "Page not found": "الصفحة غير موجودة",
+  "There is no page at this address. Check it, or go to Home.": "لا توجد صفحة على هذا العنوان. تحقق منه، أو اذهب إلى الرئيسية.",
+  "Go to Home": "الذهاب إلى الرئيسية",
+  "You are offline. Pages cannot load and changes cannot be saved until the connection is back.":
+    "أنت غير متصل بالإنترنت. لا يمكن تحميل الصفحات ولا حفظ التغييرات حتى يعود الاتصال.",
   Home: "الرئيسية",
   Café: "المقهى",
   Campaigns: "الحملات",
@@ -462,7 +468,7 @@ function AccountPage({ session, onSignedOut }: { session: OwnerSession; onSigned
   );
 }
 
-function OwnerNav({ path }: { path: OwnerPath }) {
+function OwnerNav({ path }: { path: OwnerPath | null }) {
   const t = useT(AR);
   const { review, inbox } = useContext(AttentionContext);
   const [open, setOpen] = useState(false);
@@ -504,12 +510,33 @@ review.status === "loaded" && review.data.items.length > 0 ? <ReviewCount queue=
   );
 }
 
-/** The product's mark and name: the page's one h1, also the window's title. */
+/**
+ * The product's mark and name: the page's one h1. The window's title is the page's own heading (its first h2, as
+ * screen readers announce it) before the product's name, kept in step as the page loads, changes and switches
+ * language, so tabs and history tell the pages apart (WCAG 2.4.2).
+ */
 function Brand({ app = "Dashboard" }: { app?: "Dashboard" | "Admin" | undefined }) {
   const t = useT(AR);
   const appName = t(app);
   useEffect(() => {
-    document.title = `${PRODUCT_NAME} ${appName}`;
+    const product = `${PRODUCT_NAME} ${appName}`;
+    const main = document.querySelector("main");
+    const update = () => {
+      const heading = main?.querySelector("h2")?.textContent.trim() ?? "";
+      const title = heading === "" ? product : `${heading} · ${product}`;
+      if (document.title !== title) {
+        document.title = title;
+      }
+    };
+    update();
+    if (main === null) {
+      return;
+    }
+    const observer = new MutationObserver(update);
+    observer.observe(main, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+    };
   }, [appName]);
   return (
     <div className="brand">
@@ -534,6 +561,50 @@ function BuildFooter() {
   );
 }
 
+/** A way past the top bar and the navigation, first in Tab order; the main it leads to takes focus without being a stop. */
+function SkipLink() {
+  const t = useT(AR);
+  return (
+    <a className="skip-link" href="#main">
+      {t("Skip to content")}
+    </a>
+  );
+}
+
+/** Says the connection is gone, while it is: an alert, so it is announced when it appears. */
+function OfflineNotice() {
+  const t = useT(AR);
+  const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine);
+  return online ? null : (
+    <p role="alert" className="warning-box offline-notice">
+      {t("You are offline. Pages cannot load and changes cannot be saved until the connection is back.")}
+    </p>
+  );
+}
+
+function subscribeOnline(onChange: () => void): () => void {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
+
+/** An address that is no page of the dashboard: says so, with the way back. */
+function NotFoundPage() {
+  const t = useT(AR);
+  return (
+    <section aria-labelledby="not-found-title">
+      <h2 id="not-found-title">{t("Page not found")}</h2>
+      <p>{t("There is no page at this address. Check it, or go to Home.")}</p>
+      <p>
+        <a href="/">{t("Go to Home")}</a>
+      </p>
+    </section>
+  );
+}
+
 /** The pages before a session (sign-in, signup, password reset, the session check): one card, centred, the brand above it. */
 function AuthLayout({ children, app }: { children: ReactNode; app?: "Admin" }) {
   return (
@@ -549,7 +620,7 @@ function AuthLayout({ children, app }: { children: ReactNode; app?: "Admin" }) {
 }
 
 /** The signed-in pages: the top bar with the café, the account and the language, the navigation, then the page. */
-function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerSession; path: OwnerPath; onSignedOut: (notice: string) => void; children: ReactNode }) {
+function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerSession; path: OwnerPath | null; onSignedOut: (notice: string) => void; children: ReactNode }) {
   const [attentionKey, setAttentionKey] = useState(0);
   const [review] = useApiData("/api/review-queue", reviewQueueSchema, attentionKey);
   const [inbox] = useApiData("/api/feedback", feedbackInboxSchema, attentionKey);
@@ -559,6 +630,7 @@ function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerS
   return (
     <AttentionContext.Provider value={{ review, inbox, reload }}>
     <div className="owner-layout">
+      <SkipLink />
       <header className="topbar">
         <Brand />
         <div className="topbar-end">
@@ -575,7 +647,10 @@ function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerS
         </div>
       </header>
       <OwnerNav path={path} />
-      <main className="owner-main">{children}</main>
+      <main id="main" tabIndex={-1} className="owner-main">
+        <OfflineNotice />
+        {children}
+      </main>
       <BuildFooter />
     </div>
     </AttentionContext.Provider>
@@ -586,6 +661,7 @@ function OwnerLayout({ session, path, onSignedOut, children }: { session: OwnerS
 function AdminLayout({ session, path, onSignedOut, children }: { session: OperatorSession; path: string; onSignedOut: (notice: string) => void; children: ReactNode }) {
   return (
     <div className="owner-layout admin-layout">
+      <SkipLink />
       <header className="topbar">
         <Brand app="Admin" />
         <div className="topbar-end">
@@ -598,14 +674,18 @@ function AdminLayout({ session, path, onSignedOut, children }: { session: Operat
           <LanguageSwitch />
         </div>
       </header>
-      <main className="admin-main page page-medium">{children}</main>
+      <main id="main" tabIndex={-1} className="admin-main page page-medium">
+        <OfflineNotice />
+        {children}
+      </main>
       <BuildFooter />
     </div>
   );
 }
 
 /** The owner's pages: checks the session once, shows sign-in when there is none, and the page with its nav when there is. */
-function OwnerArea({ path }: { path: OwnerPath }) {
+/** `path` is null for an address that is no page: signed in, it says so (NotFoundPage). */
+function OwnerArea({ path }: { path: OwnerPath | null }) {
   const t = useT(AR);
   const api = useApiText();
   const [state, setState] = useState<SessionState>({ status: "loading" });
@@ -677,6 +757,9 @@ function OwnerArea({ path }: { path: OwnerPath }) {
       );
     case "signed-in":
       switch (path) {
+        case null:
+          content = <NotFoundPage />;
+          break;
         case "/":
           content = <HomePage session={state.session} />;
           break;
@@ -752,7 +835,7 @@ function Page({ path }: { path: string }) {
         </AuthLayout>
       );
     default:
-      return <OwnerArea path={isOwnerPath(path) ? path : "/"} />;
+      return <OwnerArea path={isOwnerPath(path) ? path : null} />;
   }
 }
 
