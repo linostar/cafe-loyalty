@@ -59,7 +59,8 @@ const settings = (lang: Lang, overrides: Partial<CardSettingsView> = {}): string
     cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
     maskedEmail: null,
     offersOptedIn: true,
-    notice: undefined,
+    saved: undefined,
+    values: {},
     errors: {},
     otherLangHref: `/c/fake/settings?lang=${other(lang)}`,
     ...overrides,
@@ -99,11 +100,15 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ],
   ["card-no-program", (lang) => card(lang, { program: undefined, stamps: 2, offer: undefined, wallet: null, feedbackHref: undefined })],
   ["card-settings", (lang) => settings(lang)],
-  ["card-settings-saved", (lang) => settings(lang, { maskedEmail: "r•••@example.com", offersOptedIn: false, notice: t(lang, "saved") })],
-  ["card-settings-errors", (lang) => settings(lang, { errors: { email: t(lang, "emailInvalid"), delete: t(lang, "deleteConfirmRequired") } })],
+  ["card-settings-saved", (lang) => settings(lang, { maskedEmail: "r•••@example.com", offersOptedIn: false, saved: "offers" })],
+  [
+    "card-settings-errors",
+    (lang) => settings(lang, { values: { email: "rana@example" }, errors: { email: t(lang, "emailInvalid"), delete: t(lang, "deleteConfirmRequired") } }),
+  ],
   ["recover", (lang) => recoverView(lang, false, undefined, `/recover?lang=${other(lang)}`)],
   ["recover-sent", (lang) => recoverView(lang, true, undefined, `/recover?lang=${other(lang)}`)],
   ["restore", (lang) => restoreView(lang, "/r/fake", `/r/fake?lang=${other(lang)}`)],
+  ["restore-delete-error", (lang) => restoreView(lang, "/r/fake", `/r/fake?lang=${other(lang)}`, t(lang, "deleteConfirmRequired"))],
   ["undo-email", (lang) => undoEmailView(lang, "/u/fake", undefined, `/u/fake?lang=${other(lang)}`)],
   ["undo-email-error", (lang) => undoEmailView(lang, "/u/fake", t(lang, "undoWrongEmail"), `/u/fake?lang=${other(lang)}`)],
   [
@@ -118,7 +123,8 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ["feedback", (lang) => feedback(lang)],
   ["feedback-no-review", (lang) => feedback(lang, { reviewUrl: null, message: "", error: t(lang, "feedbackEmpty") })],
   ["feedback-sent", (lang) => feedback(lang, { state: "sent" })],
-  ["error", (lang) => errorView(lang, t(lang, "cardGone"), `/c/fake?lang=${other(lang)}`)],
+  ["error", (lang) => errorView(lang, t(lang, "cardGone"), `/c/fake?lang=${other(lang)}`, { href: `/recover?lang=${lang}`, label: t(lang, "restoreCard") })],
+  ["error-no-next-step", (lang) => errorView(lang, t(lang, "joinPaused", { cafe: lang === "ar" ? "مقهى النجار" : "Café Najjar" }), `/join/fake?lang=${other(lang)}`)],
 ];
 
 const PAGES = VIEWS.flatMap(([name, view]) => (["en", "ar"] as const).map((lang) => ({ name: `${name}-${lang}`, html: view(lang), lang })));
@@ -162,8 +168,8 @@ for (const width of [1440, 1024, 390, 320] as const) {
       test(name, async ({ page }, testInfo) => {
         const { blocked } = await serve(page, html);
         await page.goto(`${ORIGIN}/`);
-        // By element: the error page's h1 is an alert.
-        await expect(page.locator("h1")).toBeVisible();
+        // Every page, error pages included, has one level-one heading.
+        await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
         // The self-hosted font loaded under the page's own policy, and nothing was refused.
         expect(await page.evaluate(() => document.fonts.check('16px "IBM Plex Sans Arabic"'))).toBe(true);
         expect(blocked).toEqual([]);

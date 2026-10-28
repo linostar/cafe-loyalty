@@ -667,6 +667,53 @@ form > .actions {
   border-radius: 3px;
 }
 
+/*
+ * Forced colours drop the shading (and the count badge's fill), so each of the four busy levels gets its own frame
+ * instead, one step heavier per level (dotted, thin, medium, thick), in the cells and in the legend alike. The numbers
+ * in the cells say the same either way.
+ */
+@media (forced-colors: active) {
+  .visit-hours .level-1 {
+    outline: 1px dotted CanvasText;
+    outline-offset: -3px;
+  }
+
+  .visit-hours .level-2 {
+    outline: 1px solid CanvasText;
+    outline-offset: -3px;
+  }
+
+  .visit-hours .level-3 {
+    outline: 2px solid CanvasText;
+    outline-offset: -3px;
+  }
+
+  .visit-hours .level-4 {
+    outline: 4px solid CanvasText;
+    outline-offset: -5px;
+  }
+
+  .heat-swatch.level-1 {
+    border: 1px dotted CanvasText;
+  }
+
+  .heat-swatch.level-2 {
+    border: 1px solid CanvasText;
+  }
+
+  .heat-swatch.level-3 {
+    border: 2px solid CanvasText;
+  }
+
+  .heat-swatch.level-4 {
+    border: 4px solid CanvasText;
+  }
+
+  .count-badge {
+    border: 1px solid CanvasText;
+  }
+}
+
 @media (max-width: 30rem) {
   .card {
     padding: var(--space-4) var(--space-3);

@@ -25,6 +25,27 @@ describe("t", () => {
     expect(t("en", "joinTitle", { cafe: "مقهى <ب>" })).toBe("Get your loyalty card at ⁨مقهى <ب>⁩");
     expect(html`${t("en", "joinTitle", { cafe: "<x>" })}`.value).toContain("&lt;x&gt;");
   });
+
+  it("keeps Arabic text's example phone numbers in reading order, inside left-to-right isolates", () => {
+    // In a right-to-left paragraph, digit groups split by spaces are laid out right to left ("456 123 70") unless isolated.
+    for (const key of ["phoneHint", "phoneInvalid"] as const) {
+      const text = t("ar", key);
+      const numbers = [...text.matchAll(/\+?\d+(?: \d+)+/g)];
+      expect(numbers.length).toBeGreaterThan(0);
+      for (const number of numbers) {
+        const start = number.index;
+        expect(text[start - 1]).toBe("⁦");
+        expect(text[start + number[0].length]).toBe("⁩");
+      }
+    }
+  });
+
+  it("counts the program's stamps in each language's plural form, as the object of collect", () => {
+    // The object of "اجمع" takes the accusative in Arabic's one and two forms.
+    expect([1, 2, 3, 11].map((n) => count("ar", "stampsToCollect", n))).toEqual(["ختماً واحداً", "ختمين", "3 أختام", "11 ختمًا"]);
+    expect(t("ar", "programSummary", { stamps: count("ar", "stampsToCollect", 1), reward: "قهوة" })).toBe("اجمع ⁨ختماً واحداً⁩ واحصل على: ⁨قهوة⁩.");
+    expect(t("en", "programSummary", { stamps: count("en", "stampsToCollect", 1), reward: "Coffee" })).toBe("Collect ⁨1 stamp⁩ and get: ⁨Coffee⁩.");
+  });
 });
 
 describe("count", () => {
@@ -69,6 +90,11 @@ describe("page", () => {
     expect(page("ar", "x", html``, "/x?lang=en")).toContain('<html lang="ar" dir="rtl">');
     expect(page("en", "x", html``, "/x?lang=ar")).toContain('<a href="/x?lang=ar" lang="ar">العربية</a>');
     expect(page("en", "x", html``, null)).not.toContain('class="lang"');
+  });
+
+  it("declares a light colour scheme, so a browser's forced dark mode leaves the card's QR dark on light", () => {
+    expect(page("en", "x", html``, null)).toContain('<meta name="color-scheme" content="light">');
+    expect(/<style>([\s\S]*)<\/style>/.exec(page("en", "x", html``, null))?.[1]).toMatch(/:root \{\s*color-scheme: light;/);
   });
 });
 

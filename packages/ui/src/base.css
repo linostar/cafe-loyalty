@@ -321,6 +321,13 @@ button[aria-disabled="true"] {
   color: var(--color-warning);
 }
 
+/* A notice stays in the page while empty, so screen readers announce the text it gets later; empty, it takes no room. */
+.notice:empty {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .form-error > :last-child,
 .notice > :last-child,
 .warning-box > :last-child {

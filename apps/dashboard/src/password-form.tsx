@@ -1,7 +1,7 @@
 import { OWNER_PASSWORD_MIN_LENGTH } from "@cafe-loyalty/shared";
 import { useState } from "react";
 import { apiRequest, noContent } from "./api.js";
-import { Field, FormError, useSubmit } from "./forms.js";
+import { Field, Form, FormError, useSubmit } from "./forms.js";
 import { useT } from "./i18n.js";
 
 const AR = {
@@ -37,7 +37,7 @@ export function ChangePasswordForm({
     <section aria-labelledby={titled ? "password-title" : undefined} aria-label={titled ? undefined : t("Change password")} className="card">
       {titled ? <h3 id="password-title">{t("Change password")}</h3> : null}
       <p>{t("Changing your password signs you out everywhere, on this device too.")}</p>
-      <form
+      <Form
         onSubmit={(event) => {
           event.preventDefault();
           void submit(() => apiRequest("POST", path, noContent, { currentPassword, newPassword })).then((result) => {
@@ -68,10 +68,10 @@ export function ChangePasswordForm({
           minLength={minLength}
           error={fieldErrors.newPassword}
         />
-        <button type="submit" disabled={pending}>
+        <button type="submit" aria-disabled={pending || undefined}>
           {pending ? t("Saving…") : t("Change password")}
         </button>
-      </form>
+      </Form>
     </section>
   );
 }

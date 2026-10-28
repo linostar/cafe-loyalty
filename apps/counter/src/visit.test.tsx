@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import { getMeta, listQueued, setMeta } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice } from "./test-helpers.js";
+import { LangProvider } from "./i18n.js";
 import { CounterScreen, cafeClock } from "./visit.js";
 
 /** What the camera "sees" next; the real scanner needs a camera, which tests do not have. */
@@ -58,6 +59,46 @@ async function counter(options: { online?: boolean; catalog?: DeviceCatalog } = 
 }
 
 describe("visits", () => {
+  it("keeps the phone number left to right in Arabic, and its example in reading order", async () => {
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(["ar-LB"]);
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    render(
+      <LangProvider>
+        <CounterScreen device={device} barista={barista} catalog={CATALOG} online onBusy={vi.fn()} />
+      </LangProvider>,
+    );
+    const phone = screen.getByLabelText("لا بطاقة؟ رقم هاتف الزبون المحمول");
+    // Digits typed into a right-to-left page would otherwise show their groups right to left ("456 123 70").
+    expect(phone).toHaveAttribute("dir", "ltr");
+    fireEvent.click(screen.getByRole("button", { name: /^زيادة .*قهوة/ }));
+    fireEvent.change(phone, { target: { value: "70 12" } });
+    fireEvent.click(screen.getByRole("button", { name: "تسجيل الزيارة" }));
+    // The example number sits in left-to-right isolates.
+    expect(await screen.findByRole("alert")).toHaveTextContent("مثل ⁦70 123 456⁩.");
+  });
+
+  it("says an offline visit is sent once the phone is online", async () => {
+    await counter({ online: false });
+    fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+    fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+    expect(await screen.findByText("Visit saved, earning up to 1 stamp. It is sent as soon as the phone is online.")).toBeInTheDocument();
+  });
+
+  it("says the connection as it is when the save completes, not when Record was tapped", async () => {
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    const props = { device, barista, catalog: CATALOG, onBusy: vi.fn() };
+    const { rerender } = render(<CounterScreen {...props} online />);
+    fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+    fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+    // The save (IndexedDB) is still pending: the phone goes offline meanwhile.
+    rerender(<CounterScreen {...props} online={false} />);
+    expect(await screen.findByText("Visit saved, earning up to 1 stamp. It is sent as soon as the phone is online.")).toBeInTheDocument();
+  });
+
   it("records what was ordered, priced as the menu shows it, for a phone number (AC 22, 32)", async () => {
     const { barista, onBusy } = await counter();
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
@@ -69,7 +110,7 @@ describe("visits", () => {
     });
     fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
     fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
-    expect(await screen.findByText("Visit saved, earning up to 2 stamps. It is sent as soon as the phone is online.")).toBeInTheDocument();
+    expect(await screen.findByText("Visit saved, earning up to 2 stamps. Sending it now.")).toBeInTheDocument();
     const [queued] = await listQueued(10);
     expect(queued?.event).toMatchObject({
       type: "visit.recorded",
@@ -140,12 +181,12 @@ describe("visits", () => {
       await counter({ catalog: { ...CATALOG, campaigns: [QUIET], winBackOffers: [offer] } });
       fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
       fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
-      expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
+      expect(screen.queryByRole("checkbox", { name: /welcome-back offer/ })).toBeNull();
       scanCard();
       expect(screen.getByText("Total $6.00 · 1 stamp")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("checkbox", { name: "This card has a win-back offer, 60% off: apply it" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Apply the welcome-back offer: 60% off" }));
       // Coffee: 60% ($1.80) beats the campaign's 50%; cake: no win-back discount below its floor.
-      expect(screen.getByText("$1.20 (Win-back offer)", { exact: false })).toBeInTheDocument();
+      expect(screen.getByText("$1.20 (Welcome-back offer)", { exact: false })).toBeInTheDocument();
       expect(screen.getByText("Total $5.70 · 1 stamp")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
       await screen.findByText(/^Visit saved/);
@@ -174,7 +215,7 @@ describe("visits", () => {
       await counter({ catalog: { ...CATALOG, campaigns: [QUIET], winBackOffers: [offer] } });
       fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
       scanCard();
-      fireEvent.click(screen.getByRole("checkbox", { name: /This card has a win-back offer, 10% off/ }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Apply the welcome-back offer: 10% off" }));
       expect(screen.getByText("$1.50 (Quiet hours)", { exact: false })).toBeInTheDocument();
       expect(screen.getByText(/The offer takes nothing off this order/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
@@ -190,10 +231,10 @@ describe("visits", () => {
     await counter({ catalog: { ...CATALOG, winBackOffers: [{ cardId: "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", discount: { kind: "percent", value: 20 }, minMarginPercent: 0 }] } });
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
     scanCard();
-    expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /welcome-back offer/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Clear card" }));
     fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
-    expect(screen.queryByRole("checkbox", { name: /win-back offer/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /welcome-back offer/ })).toBeNull();
   });
 
   it("gives a fixed amount off, and says which price was and which is now", async () => {

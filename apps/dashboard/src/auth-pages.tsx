@@ -1,7 +1,7 @@
 import { OWNER_PASSWORD_MIN_LENGTH, ownerSessionSchema, type OwnerSession } from "@cafe-loyalty/shared";
 import { useState } from "react";
 import { apiRequest, messageSchema, noContent } from "./api.js";
-import { Field, FormError, Notice, useLinkToken, useSubmit } from "./forms.js";
+import { Field, Form, FormError, Notice, useLinkToken, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
 
 const AR = {
@@ -38,8 +38,8 @@ export function LoginForm({ notice, onSignedIn }: { notice: string | null; onSig
   return (
     <section aria-labelledby="login-title">
       <h2 id="login-title">{t("Sign in")}</h2>
-      {notice === null ? null : <Notice>{api(notice)}</Notice>}
-      <form
+      <Notice>{notice === null ? null : api(notice)}</Notice>
+      <Form
         onSubmit={(event) => {
           event.preventDefault();
           void submit(() => apiRequest("POST", "/api/auth/login", ownerSessionSchema, { email, password })).then((result) => {
@@ -52,10 +52,10 @@ export function LoginForm({ notice, onSignedIn }: { notice: string | null; onSig
         <FormError message={error} />
         <Field label={t("Email")} name="email" type="email" autoComplete="username" value={email} onChange={setEmail} error={fieldErrors.email} />
         <Field label={t("Password")} name="password" type="password" autoComplete="current-password" value={password} onChange={setPassword} error={fieldErrors.password} />
-        <button type="submit" disabled={pending}>
+        <button type="submit" aria-disabled={pending || undefined}>
           {pending ? t("Signing in…") : t("Sign in")}
         </button>
-      </form>
+      </Form>
       <p>
         <a href="/forgot-password">{t("Forgot your password?")}</a>
       </p>
@@ -78,7 +78,7 @@ export function SignupPage() {
           {t("This invite link is incomplete. Open it again from the message you received, or ask for a new invite.")}
         </p>
       ) : (
-        <form
+        <Form
           onSubmit={(event) => {
             event.preventDefault();
             void submit(() => apiRequest("POST", "/api/auth/signup", ownerSessionSchema, { inviteToken, email, password })).then((result) => {
@@ -101,10 +101,10 @@ export function SignupPage() {
             minLength={OWNER_PASSWORD_MIN_LENGTH}
             error={fieldErrors.password}
           />
-          <button type="submit" disabled={pending}>
+          <button type="submit" aria-disabled={pending || undefined}>
             {pending ? t("Creating your account…") : t("Create account")}
           </button>
-        </form>
+        </Form>
       )}
     </section>
   );
@@ -121,7 +121,7 @@ export function ForgotPasswordPage() {
     <section aria-labelledby="forgot-title">
       <h2 id="forgot-title">{t("Reset your password")}</h2>
       {sent === null ? (
-        <form
+        <Form
           onSubmit={(event) => {
             event.preventDefault();
             void submit(() => apiRequest("POST", "/api/auth/password-reset", messageSchema, { email })).then((result) => {
@@ -134,10 +134,10 @@ export function ForgotPasswordPage() {
           <p>{t("Enter the email you sign in with. We will send it a link to choose a new password.")}</p>
           <FormError message={error} />
           <Field label={t("Email")} name="email" type="email" autoComplete="email" value={email} onChange={setEmail} error={fieldErrors.email} />
-          <button type="submit" disabled={pending}>
+          <button type="submit" aria-disabled={pending || undefined}>
             {pending ? t("Sending…") : t("Send reset link")}
           </button>
-        </form>
+        </Form>
       ) : (
         <Notice>{api(sent)}</Notice>
       )}
@@ -166,7 +166,7 @@ export function ResetPasswordPage() {
     content = <Notice>{t("Your password is changed. Sign in with the new password.")}</Notice>;
   } else {
     content = (
-      <form
+      <Form
         onSubmit={(event) => {
           event.preventDefault();
           void submit(() => apiRequest("POST", "/api/auth/password-reset/complete", noContent, { token, password })).then((result) => {
@@ -188,10 +188,10 @@ export function ResetPasswordPage() {
           minLength={OWNER_PASSWORD_MIN_LENGTH}
           error={fieldErrors.password}
         />
-        <button type="submit" disabled={pending}>
+        <button type="submit" aria-disabled={pending || undefined}>
           {pending ? t("Saving…") : t("Save new password")}
         </button>
-      </form>
+      </Form>
     );
   }
 

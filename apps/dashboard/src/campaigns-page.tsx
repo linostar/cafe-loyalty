@@ -11,9 +11,9 @@ import {
   type Lang,
   type OrderType,
 } from "@cafe-loyalty/shared";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { apiRequest, isStale } from "./api.js";
-import { ConfirmButton, Field, FormError, Notice, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Translate, type Later, useSay } from "./i18n.js";
 import { parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
@@ -110,14 +110,57 @@ function describe(t: T, lang: Lang, campaign: Campaign, orderTypes: readonly Ord
   });
 }
 
-/** A labelled time of day; the hint says what an empty or midnight end means. */
+/**
+ * A checkbox and its label, marked invalid when `invalid`: the first day when none is picked, an order type below its
+ * floor, the first picked order type when the order types are refused as a whole. `reported` is whether the last send
+ * found a problem with its group (days, or order types), which is when it takes focus (useFocusWhenInvalid); an order
+ * type that falls below its floor while the discount is typed is marked at once but leaves focus where it is.
+ */
+function Choice({
+  invalid,
+  reported,
+  describedBy,
+  checked,
+  onChange,
+  className,
+  children,
+}: {
+  invalid: boolean;
+  reported: boolean;
+  describedBy: string | undefined;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const input = useFocusWhenInvalid(reported);
+  return (
+    <label className={className}>
+      <input
+        ref={input}
+        type="checkbox"
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={describedBy}
+        checked={checked}
+        onChange={(event) => {
+          onChange(event.target.checked);
+        }}
+      />{" "}
+      {children}
+    </label>
+  );
+}
+
+/** A labelled time of day; the hint says what an empty or midnight end means. Focused after a failed send, as a Field is. */
 function TimeField({ label, value, onChange, hint, error }: { label: string; value: string; onChange: (value: string) => void; hint?: string; error?: string | undefined }) {
   const id = useId();
   const describedBy = [hint === undefined ? null : `${id}-hint`, error === undefined ? null : `${id}-error`].filter((part) => part !== null).join(" ");
+  const input = useFocusWhenInvalid(error !== undefined);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
       <input
+        ref={input}
         id={id}
         type="time"
         step={60}
@@ -159,32 +202,38 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
   const [kind, setKind] = useState<DiscountKind>("percent");
   const [value, setValue] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
-  const [problems, setProblems] = useState<Record<string, string>>({});
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   const onSale = orderTypes.filter((type) => type.active);
   const discountValue = kind === "percent" ? parseWholeNumberInput(value) : parseUsdInput(value);
   const discount = discountValue === null || discountValue < 1 ? null : { kind, value: discountValue };
   const longDay = dateFormat(lang, { weekday: "long", timeZone: "UTC" });
+  /** The last send found a problem with the order types as a whole: in the page's checks or in the server's answer. */
+  const typesProblem = (problems.orderTypeIds ?? fieldErrors.orderTypeIds) !== undefined;
+  const anyBelowFloor = discount !== null && onSale.some((type) => chosen.includes(type.id) && !keepsMargin(type.priceCents, type.costCents, discount, minMarginPercent));
+  /** Where a problem with the order types as a whole is marked: the first picked one, or the first with none picked. */
+  const firstTypeTarget = Math.max(0, onSale.findIndex((type) => chosen.includes(type.id)));
 
   return (
-    <form
+    <Form
       aria-labelledby="new-campaign-title"
       className="card"
+      onChange={clearDone}
       onSubmit={(event) => {
         event.preventDefault();
         const startsMinute = minuteOf(starts, false);
         const endsMinute = minuteOf(ends, true);
         const invalid = {
-          ...(weekdays.length === 0 ? { weekdays: t("Pick at least one day.") } : {}),
-          ...(startsMinute === null ? { startsMinute: t("Enter a start time, such as 15:00.") } : {}),
-          ...(endsMinute === null || (startsMinute !== null && endsMinute <= startsMinute) ? { endsMinute: t("End after the start, on the same day.") } : {}),
+          ...(weekdays.length === 0 ? { weekdays: (say: Translate<typeof AR>) => say("Pick at least one day.") } : {}),
+          ...(startsMinute === null ? { startsMinute: (say: Translate<typeof AR>) => say("Enter a start time, such as 15:00.") } : {}),
+          ...(endsMinute === null || (startsMinute !== null && endsMinute <= startsMinute) ? { endsMinute: (say: Translate<typeof AR>) => say("End after the start, on the same day.") } : {}),
           ...(discount === null || (kind === "percent" && discount.value > 100)
-            ? { discount: kind === "percent" ? t("Enter a whole percentage from 1 to 100.") : t("Enter an amount in dollars, such as 0.50.") }
+            ? { discount: kind === "percent" ? (say: Translate<typeof AR>) => say("Enter a whole percentage from 1 to 100.") : (say: Translate<typeof AR>) => say("Enter an amount in dollars, such as 0.50.") }
             : {}),
           ...(chosen.length === 0
-            ? { orderTypeIds: t("Pick at least one order type.") }
+            ? { orderTypeIds: (say: Translate<typeof AR>) => say("Pick at least one order type.") }
             : discount !== null && onSale.some((type) => chosen.includes(type.id) && !keepsMargin(type.priceCents, type.costCents, discount, minMarginPercent))
-              ? { orderTypeIds: t("Some order types you picked would sell below their floor. Lower the discount, or leave them out.") }
+              ? { orderTypeIds: (say: Translate<typeof AR>) => say("Some order types you picked would sell below their floor. Lower the discount, or leave them out.") }
               : {}),
         };
         setProblems(invalid);
@@ -223,32 +272,34 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
         <legend>{t("Days")}</legend>
         <div className="choices">
           {WEEK.map((day, index) => (
-            <label key={day.getTime()}>
-              <input
-                type="checkbox"
-                checked={weekdays.includes(index + 1)}
-                onChange={(event) => {
-                  setWeekdays(event.target.checked ? [...weekdays, index + 1] : weekdays.filter((entry) => entry !== index + 1));
-                }}
-              />{" "}
+            <Choice
+              key={day.getTime()}
+              invalid={problems.weekdays !== undefined && index === 0}
+              reported={problems.weekdays !== undefined}
+              describedBy={problems.weekdays !== undefined && index === 0 ? "campaign-days-error" : undefined}
+              checked={weekdays.includes(index + 1)}
+              onChange={(checked) => {
+                setWeekdays(checked ? [...weekdays, index + 1] : weekdays.filter((entry) => entry !== index + 1));
+              }}
+            >
               {longDay.format(day)}
-            </label>
+            </Choice>
           ))}
         </div>
         {problems.weekdays === undefined ? null : (
-          <p id="campaign-days-error" className="field-error">
-            {problems.weekdays}
+          <p id="campaign-days-error" role="alert" className="field-error">
+            {problems.weekdays(t, lang)}
           </p>
         )}
       </fieldset>
       <div className="form-grid">
-        <TimeField label={t("Starts at")} value={starts} onChange={setStarts} error={problems.startsMinute ?? fieldErrors.startsMinute} />
+        <TimeField label={t("Starts at")} value={starts} onChange={setStarts} error={problems.startsMinute?.(t, lang) ?? fieldErrors.startsMinute} />
         <TimeField
           label={t("Ends at")}
           value={ends}
           onChange={setEnds}
           hint={t("Café time. Use 00:00 to run until midnight.")}
-          error={problems.endsMinute ?? fieldErrors.endsMinute}
+          error={problems.endsMinute?.(t, lang) ?? fieldErrors.endsMinute}
         />
       </div>
       <fieldset>
@@ -276,7 +327,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           value={value}
           onChange={setValue}
           hint={kind === "percent" ? t("A whole number, such as 20. The discount rounds down to the cent, in your favour.") : t("Such as 0.50.")}
-          error={problems.discount ?? fieldErrors["discount.value"]}
+          error={problems.discount?.(t, lang) ?? fieldErrors["discount.value"]}
         />
       </fieldset>
       <fieldset aria-describedby={(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? "campaign-types-hint" : "campaign-types-hint campaign-types-error"}>
@@ -288,27 +339,31 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
         </p>
         {onSale.length === 0 ? <p>{t("No order types on sale. Add some on the Café page first.")}</p> : null}
         <ul className="choices-list">
-          {onSale.map((type) => {
+          {onSale.map((type, index) => {
             const floor = marginFloorCents(type.costCents, minMarginPercent);
             const kept = discount === null || keepsMargin(type.priceCents, type.costCents, discount, minMarginPercent);
             const after = discount === null ? null : type.priceCents - unitDiscountCents(type.priceCents, discount);
             const prices = { name: nameOf(lang, type), price: formatUsd(type.priceCents, "en"), floor: formatUsd(floor, "en") };
+            const belowFloor = !kept && chosen.includes(type.id);
+            // A problem with the order types as a whole (none picked, or the server refusing them) marks the first
+            // picked one (or the first, with none picked) unless a type below its floor already says where it is.
+            const listFlag = typesProblem && !anyBelowFloor && index === firstTypeTarget;
             return (
               <li key={type.id}>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    aria-invalid={kept || !chosen.includes(type.id) ? undefined : true}
-                    aria-describedby={kept || !chosen.includes(type.id) ? undefined : `campaign-type-${type.id}-error`}
-                    checked={chosen.includes(type.id)}
-                    onChange={(event) => {
-                      setChosen(event.target.checked ? [...chosen, type.id] : chosen.filter((id) => id !== type.id));
-                    }}
-                  />{" "}
+                <Choice
+                  className="check"
+                  invalid={belowFloor || listFlag}
+                  reported={typesProblem}
+                  describedBy={belowFloor ? `campaign-type-${type.id}-error` : listFlag ? "campaign-types-error" : undefined}
+                  checked={chosen.includes(type.id)}
+                  onChange={(checked) => {
+                    setChosen(checked ? [...chosen, type.id] : chosen.filter((id) => id !== type.id));
+                  }}
+                >
                   {after === null
                     ? t("{name}: {price} (floor {floor})", prices)
                     : t("{name}: {price}, {after} with the discount (floor {floor})", { ...prices, after: formatUsd(after, "en") })}
-                </label>
+                </Choice>
                 {kept || !chosen.includes(type.id) ? null : (
                   <p id={`campaign-type-${type.id}-error`} className="field-error">
                     {t("Below its floor: lower the discount or leave it out.")}
@@ -319,15 +374,16 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           })}
         </ul>
         {(problems.orderTypeIds ?? fieldErrors.orderTypeIds) === undefined ? null : (
-          <p id="campaign-types-error" className="field-error">
-            {problems.orderTypeIds ?? say(fieldErrors.orderTypeIds ?? "")}
+          <p id="campaign-types-error" role={problems.orderTypeIds === undefined ? undefined : "alert"} className="field-error">
+            {problems.orderTypeIds?.(t, lang) ?? say(fieldErrors.orderTypeIds ?? "")}
           </p>
         )}
       </fieldset>
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Start campaign")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved. Counter phones pick up the change within 5 minutes.") : null}</Notice>
+    </Form>
   );
 }
 
@@ -336,17 +392,25 @@ export function CampaignsPage() {
   const t = useT(AR);
   const lang = useLang();
   const [reloadKey, setReloadKey] = useState(0);
-  const [state, setCampaigns] = useApiData("/api/campaigns", campaignsSchema, reloadKey);
-  const [setup] = useApiData("/api/cafe", cafeSetupSchema);
+  const [state, setCampaigns, retryCampaigns] = useApiData("/api/campaigns", campaignsSchema, reloadKey);
+  const [setup, , retrySetup] = useApiData("/api/cafe", cafeSetupSchema);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const ending = useSubmit();
-  if (state.status !== "loaded" || setup.status !== "loaded") {
-    return <PageStatus state={state.status === "failed" ? state : setup} />;
+  // Only the café's setup holds the page back. The campaigns' own load (and a reload after a stale end) shows its state
+  // in place of the lists, so the new campaign form, and anything typed into it, stays.
+  if (setup.status !== "loaded") {
+    return <PageStatus state={setup} onRetry={retrySetup} />;
   }
   const { orderTypes, cafe } = setup.data;
+  const campaigns = state.status === "loaded" ? state.data : null;
   const change: Change = async (method, path, body) => {
-    setNotice(null);
     setCampaigns(await apiRequest(method, path, campaignsSchema, body));
+  };
+  // Ending a campaign is said under the page's heading, where focus goes once it is ended; the form that starts one
+  // says so next to its own button.
+  const changeAndSay: Change = async (method, path, body) => {
+    setNotice(null);
+    await change(method, path, body);
     setNotice(() => (say: Translate<typeof AR>) => say("Saved. Counter phones pick up the change within 5 minutes."));
   };
 
@@ -358,14 +422,16 @@ export function CampaignsPage() {
       <p className="page-intro">
         {t("A campaign takes money off chosen order types at quiet hours. The counter gives the discount to every loyalty card holder.")}
       </p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <FormError message={ending.error} />
       <h3>{t("Running")}</h3>
-      {state.data.running.length === 0 ? (
+      {campaigns === null ? (
+        <PageStatus state={state} onRetry={retryCampaigns} />
+      ) : campaigns.running.length === 0 ? (
         <p className="empty">{t("No campaigns running. Start one below for the hours the busy and quiet hours show as quiet.")}</p>
       ) : (
         <ul className="items">
-          {state.data.running.map((campaign) => (
+          {campaigns.running.map((campaign) => (
             <li key={campaign.id} className="row">
               <span className="row-main">
                 <strong>{nameOf(lang, campaign)}</strong>: {describe(t, lang, campaign, orderTypes)} <span className="badge badge-success">{t("running")}</span>
@@ -375,7 +441,7 @@ export function CampaignsPage() {
                 confirmLabel={t("Yes, end {name}", { name: nameOf(lang, campaign) })}
                 pending={ending.pending}
                 onConfirm={() => {
-                  void ending.submit(() => change("POST", `/api/campaigns/${campaign.id}/end`)).then((result) => {
+                  void ending.submit(() => changeAndSay("POST", `/api/campaigns/${campaign.id}/end`)).then((result) => {
                     if (!result.ok && isStale(result.error)) {
                       setReloadKey((key) => key + 1);
                     }
@@ -387,11 +453,11 @@ export function CampaignsPage() {
         </ul>
       )}
       <NewCampaignForm orderTypes={orderTypes} minMarginPercent={cafe.minMarginPercent} change={change} />
-      {state.data.ended.length === 0 ? null : (
+      {campaigns === null || campaigns.ended.length === 0 ? null : (
         <>
           <h3>{t("Ended")}</h3>
           <ul className="items">
-            {state.data.ended.map((campaign) => (
+            {campaigns.ended.map((campaign) => (
               <li key={campaign.id} className="row">
                 <span className="row-main">
                   <strong>{nameOf(lang, campaign)}</strong>: {describe(t, lang, campaign, orderTypes)} <span className="badge">{t("ended")}</span>

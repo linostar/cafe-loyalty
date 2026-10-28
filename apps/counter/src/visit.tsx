@@ -25,15 +25,18 @@ const AR = {
     "رمز QR هذا ليس بطاقة ولاء. امسح البطاقة التي يُظهرها الزبون في محفظته أو متصفحه.",
   "That card is for another café. Ask for this café's card, or sign the customer up with the counter QR.":
     "هذه البطاقة لمقهى آخر. اطلب بطاقة هذا المقهى، أو سجّل الزبون عبر رمز QR الخاص بالكاونتر.",
-  "Win-back offer": "عرض الاسترجاع",
+  "Welcome-back offer": "عرض العودة",
   "{value}% off": "خصم {value}%",
   "{amount} off": "خصم {amount}",
   "Scan the customer's card, or enter their mobile number.": "امسح بطاقة الزبون، أو أدخل رقم هاتفه المحمول.",
-  "Enter a Lebanese mobile number, such as 70 123 456.": "أدخل رقم هاتف محمول لبنانياً، مثل 70 123 456.",
+  // The example number in left-to-right isolates: in Arabic text, digit groups split by spaces read right to left.
+  "Enter a Lebanese mobile number, such as 70 123 456.": "أدخل رقم هاتف محمول لبنانياً، مثل ⁦70 123 456⁩.",
   "Add what the customer ordered first.": "أضف ما طلبه الزبون أولاً.",
   "This order is too large to record. Split it into two visits.": "هذا الطلب أكبر من أن يُسجَّل. قسّمه على زيارتين.",
   "Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.": "حُفظت الزيارة، وتكسب حتى {stamps}. تُرسل فور اتصال الهاتف بالإنترنت.",
   "Visit saved. It is sent as soon as the phone is online.": "حُفظت الزيارة. تُرسل فور اتصال الهاتف بالإنترنت.",
+  "Visit saved, earning up to {stamps}. Sending it now.": "حُفظت الزيارة، وتكسب حتى {stamps}. جارٍ إرسالها الآن.",
+  "Visit saved. Sending it now.": "حُفظت الزيارة. جارٍ إرسالها الآن.",
   "The visit could not be saved on this phone. Reload the page and record it again.": "تعذّر حفظ الزيارة على هذا الهاتف. أعد تحميل الصفحة وسجّلها مجدداً.",
   "Scan the customer's card": "امسح بطاقة الزبون",
   "customer's loyalty card QR code": "رمز QR لبطاقة ولاء الزبون",
@@ -46,7 +49,7 @@ const AR = {
   "An item": "صنف",
   "No longer on sale, so left out of this order: {names}. The total does not include it.": "لم يعد معروضاً للبيع، فاستُبعد من هذا الطلب: {names}. المجموع لا يشمله.",
   "No longer on sale, so left out of this order: {names}. The total does not include them.": "لم تعد معروضة للبيع، فاستُبعدت من هذا الطلب: {names}. المجموع لا يشملها.",
-  "This card has a win-back offer, {discount}: apply it": "لهذه البطاقة عرض استرجاع، {discount}: طبّقه",
+  "Apply the welcome-back offer: {discount}": "طبّق عرض العودة: {discount}",
   "The offer takes nothing off this order: a campaign already gives more, or it would sell below the margin floor. The card keeps the offer for its next visit.":
     "لا يخصم العرض شيئاً من هذا الطلب: إما أن حملة تعطي أكثر، وإما أنه سيبيع دون حد الهامش الأدنى. تحتفظ البطاقة بالعرض لزيارتها التالية.",
   "Total {total} · {stamps}": "المجموع {total} · {stamps}",
@@ -153,13 +156,15 @@ interface VisitFormProps {
   device: DeviceRecord;
   barista: StaffEntry;
   catalog: DeviceCatalog;
+  /** Whether the phone is online, which says whether a saved visit is sent now or later. */
+  online: boolean;
   scanner: ScanPurpose | null;
   onScanner: (purpose: ScanPurpose | null) => void;
   onBusy: (busy: boolean) => void;
 }
 
 /** Records a visit offline: what was ordered and whose card, by QR or phone number (AC 22, 30, 32). */
-function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: VisitFormProps) {
+function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBusy }: VisitFormProps) {
   const t = useT(AR);
   const lang = useLang();
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -177,6 +182,11 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
   const problemId = useId();
   const scanButton = useRef<HTMLButtonElement>(null);
   const recordButton = useRef<HTMLButtonElement>(null);
+  /** The connection now, read when a save completes: the phone may go offline while it is saved. */
+  const onlineNow = useRef(online);
+  useEffect(() => {
+    onlineNow.current = online;
+  }, [online]);
 
   const items = catalog.orderTypes.filter((type) => (quantities[type.id] ?? 0) > 0).map((type) => ({ type, quantity: quantities[type.id] ?? 0 }));
   // Taken off sale by the owner while this order was open: left out, and said so by name.
@@ -268,10 +278,15 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
         setPhone("");
         setApplyWinBack(false);
         // The server decides the stamps (cooldown, daily cap), so the counter promises no more than the order earns.
+        // Now or later, as the phone's connection is when saved; the queue sends it either way.
+        const sending = onlineNow.current;
         setNotice(() =>
           stamps > 0
-            ? (say: T, shownIn: Lang) => say("Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.", { stamps: plural(shownIn, STAMPS, stamps) })
-            : (say: T) => say("Visit saved. It is sent as soon as the phone is online."),
+            ? (say: T, shownIn: Lang) =>
+                sending
+                  ? say("Visit saved, earning up to {stamps}. Sending it now.", { stamps: plural(shownIn, STAMPS, stamps) })
+                  : say("Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.", { stamps: plural(shownIn, STAMPS, stamps) })
+            : (say: T) => (sending ? say("Visit saved. Sending it now.") : say("Visit saved. It is sent as soon as the phone is online.")),
         );
       },
       (caught: unknown) => {
@@ -334,7 +349,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                       {formatUsd(type.priceCents, "en")}
                     </s>{" "}
                     <span className="visually-hidden">{t("now ")}</span>
-                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign === null ? t("Win-back offer") : nameIn(lang, offer.campaign)})
+                    {formatUsd(type.priceCents - offer.unitDiscountCents, "en")} ({offer.campaign === null ? t("Welcome-back offer") : nameIn(lang, offer.campaign)})
                   </>
                 )}
                 {type.stampsEarned > 0 ? ` · ${plural(lang, STAMPS, type.stampsEarned)}` : ""}
@@ -390,7 +405,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                     setNotice(null);
                   }}
                 />{" "}
-                {t("This card has a win-back offer, {discount}: apply it", { discount: discountText(offer.discount, t) })}
+                {t("Apply the welcome-back offer: {discount}", { discount: discountText(offer.discount, t) })}
               </label>
               {winBack !== null && items.length > 0 && !linesAt(shownAt).some((line) => line.campaignId === null && line.unitDiscountCents > 0) ? (
                 <p role="status">
@@ -410,6 +425,7 @@ function VisitForm({ device, barista, catalog, scanner, onScanner, onBusy }: Vis
                 type="tel"
                 inputMode="tel"
                 autoComplete="off"
+                dir="ltr"
                 value={phone}
                 aria-invalid={problem?.phone === true ? true : undefined}
                 aria-describedby={problem?.phone === true ? problemId : undefined}
@@ -723,7 +739,7 @@ export function CounterScreen({
   // Both stay mounted (an open order survives a reward); the other's scan button is disabled while one scans.
   return (
     <div className="counter-screen">
-      <VisitForm device={device} barista={barista} catalog={catalog} scanner={scanner} onScanner={setScanner} onBusy={setVisitBusy} />
+      <VisitForm device={device} barista={barista} catalog={catalog} online={online} scanner={scanner} onScanner={setScanner} onBusy={setVisitBusy} />
       <RedeemPanel device={device} barista={barista} catalog={catalog} online={online} scanner={scanner} onScanner={setScanner} onBusy={setRewardBusy} />
     </div>
   );

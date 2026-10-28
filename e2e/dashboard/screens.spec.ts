@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectUsableInForcedColors, shownText } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
@@ -162,7 +163,10 @@ for (const { lang, locale } of LANGS) {
           await mockApi(page, SIGNED_IN);
           await page.goto(path);
           await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
-          await expect(page.getByRole("status")).toHaveCount(0);
+          await expect(page.getByRole("status").filter({ hasText: /\S/ })).toHaveCount(0);
+          // The window is titled by the page's own heading, in its language (WCAG 2.4.2).
+          const heading = ((await page.getByRole("heading", { level: 2 }).first().textContent()) ?? "").trim();
+          await expect(page).toHaveTitle(`${heading} · ${PRODUCT_NAME} ${lang === "ar" ? "لوحة التحكم" : "Dashboard"}`);
           await capture(page, testInfo, `dashboard${path === "/" ? "-home" : path.replace("/", "-")}${suffix}`);
           await check(page);
           await expectFocusNeverHidden(page);
@@ -179,6 +183,9 @@ for (const { lang, locale } of LANGS) {
           await mockApi(page, ADMIN);
           await page.goto(path);
           await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+          // Titled by the page's heading, as the owner's pages are (WCAG 2.4.2).
+          const heading = ((await page.getByRole("heading", { level: 2 }).textContent()) ?? "").trim();
+          await expect(page).toHaveTitle(`${heading} · ${PRODUCT_NAME} ${lang === "ar" ? "الإدارة" : "Admin"}`);
           await capture(page, testInfo, `dashboard-${name}${suffix}`);
           await check(page);
           await expectFocusNeverHidden(page);

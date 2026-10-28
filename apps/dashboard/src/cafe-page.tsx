@@ -12,7 +12,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
-import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import { useLang, useT, type Later, type Translate } from "./i18n.js";
 import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
@@ -100,10 +100,11 @@ type Save = (method: "PATCH" | "PUT" | "POST", path: string, body: unknown) => P
 function CafeNameForm({ name, save }: { name: string; save: Save }) {
   const t = useT(AR);
   const [value, setValue] = useState(name);
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="cafe-name-title"
+      onChange={clearDone}
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
@@ -113,10 +114,11 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
       <h4 id="cafe-name-title">{t("Café name")}</h4>
       <FormError message={error} />
       <Field label={t("Name")} name="name" type="text" value={value} onChange={setValue} maxLength={120} error={fieldErrors.name} />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save name")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved.") : null}</Notice>
+    </Form>
   );
 }
 
@@ -124,10 +126,11 @@ function CafeNameForm({ name, save }: { name: string; save: Save }) {
 function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | null; save: Save }) {
   const t = useT(AR);
   const [value, setValue] = useState(googleReviewUrl ?? "");
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="review-link-title"
+      onChange={clearDone}
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
@@ -152,28 +155,32 @@ function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | n
         hint={t("Leave it empty to show no review link.")}
         error={fieldErrors.googleReviewUrl}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save review link")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved.") : null}</Notice>
+    </Form>
   );
 }
 
 function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: Save }) {
   const t = useT(AR);
+  const lang = useLang();
   const [stamps, setStamps] = useState(program === null ? "" : String(program.stampsRequired));
   const [rewardEn, setRewardEn] = useState(program?.rewardNameEn ?? "");
   const [rewardAr, setRewardAr] = useState(program?.rewardNameAr ?? "");
-  const [stampsError, setStampsError] = useState<string | undefined>(undefined);
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const [stampsError, setStampsError] = useState<Later<typeof AR> | undefined>(undefined);
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="program-title"
+      onChange={clearDone}
       className="card form-grid"
       onSubmit={(event) => {
         event.preventDefault();
         const stampsRequired = parseWholeNumberInput(stamps);
-        setStampsError(stampsRequired === null ? t("Enter a whole number, such as 9.") : undefined);
+        // Wrapped: a function given to a state setter is taken as an updater, not stored.
+        setStampsError(() => (stampsRequired === null ? (say: Translate<typeof AR>) => say("Enter a whole number, such as 9.") : undefined));
         if (stampsRequired === null) {
           return;
         }
@@ -191,7 +198,7 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
         value={stamps}
         onChange={setStamps}
         hint={t("1 to 50.")}
-        error={stampsError ?? fieldErrors.stampsRequired}
+        error={stampsError?.(t, lang) ?? fieldErrors.stampsRequired}
       />
       <Field label={t("Reward (English)")} name="rewardNameEn" type="text" lang="en" value={rewardEn} onChange={setRewardEn} maxLength={80} error={fieldErrors.rewardNameEn} />
       <Field
@@ -204,27 +211,30 @@ function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: S
         maxLength={80}
         error={fieldErrors.rewardNameAr}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save program")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved.") : null}</Notice>
+    </Form>
   );
 }
 
 /** The café's minimum margin over cost, below which no campaign may discount (AC 35). */
 function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save: Save }) {
   const t = useT(AR);
+  const lang = useLang();
   const [value, setValue] = useState(String(minMarginPercent));
-  const [invalid, setInvalid] = useState<string | undefined>(undefined);
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const [invalid, setInvalid] = useState<Later<typeof AR> | undefined>(undefined);
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="margin-title"
+      onChange={clearDone}
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
         const percent = parseWholeNumberInput(value);
-        setInvalid(percent === null || percent > 1000 ? t("Enter a whole percentage from 0 to 1000, such as 30.") : undefined);
+        setInvalid(() => (percent === null || percent > 1000 ? (say: Translate<typeof AR>) => say("Enter a whole percentage from 0 to 1000, such as 30.") : undefined));
         if (percent !== null && percent <= 1000) {
           void submit(() => save("PATCH", "/api/cafe", { minMarginPercent: percent }));
         }
@@ -242,12 +252,13 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
         hint={t(
           "Campaigns never sell an item for less than its cost plus this much: 30% keeps a drink that costs $1.00 at $1.30 or more. Running campaigns keep the margin they started with.",
         )}
-        error={invalid ?? fieldErrors.minMarginPercent}
+        error={invalid?.(t, lang) ?? fieldErrors.minMarginPercent}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save margin")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved.") : null}</Notice>
+    </Form>
   );
 }
 
@@ -257,25 +268,27 @@ function MarginForm({ minMarginPercent, save }: { minMarginPercent: number; save
  */
 function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }) {
   const t = useT(AR);
+  const lang = useLang();
   const [kind, setKind] = useState<"none" | "percent" | "amount">(winBack.discount?.kind ?? "none");
   const [value, setValue] = useState(winBack.discount === null ? "" : winBack.discount.kind === "percent" ? String(winBack.discount.value) : centsToInput(winBack.discount.value));
   const [cooldown, setCooldown] = useState(String(winBack.cooldownDays));
-  const [problems, setProblems] = useState<Record<string, string>>({});
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="win-back-title"
+      onChange={clearDone}
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
         const amount = kind === "percent" ? parseWholeNumberInput(value) : kind === "amount" ? parseUsdInput(value) : null;
         const days = parseWholeNumberInput(cooldown);
-        const invalid: Record<string, string> = {
+        const invalid: Record<string, Later<typeof AR>> = {
           ...(kind !== "none" && (amount === null || amount < 1 || (kind === "percent" && amount > 100))
-            ? { discount: kind === "percent" ? t("Enter a whole percentage from 1 to 100.") : t("Enter an amount in dollars, such as 0.50.") }
+            ? { discount: kind === "percent" ? (say: Translate<typeof AR>) => say("Enter a whole percentage from 1 to 100.") : (say: Translate<typeof AR>) => say("Enter an amount in dollars, such as 0.50.") }
             : {}),
           ...(days === null || days < WIN_BACK_OFFER_DAYS || days > WIN_BACK_MAX_COOLDOWN_DAYS
-            ? { cooldownDays: t("Enter a whole number of days from {min} to {max}.", { min: WIN_BACK_OFFER_DAYS, max: WIN_BACK_MAX_COOLDOWN_DAYS }) }
+            ? { cooldownDays: (say: Translate<typeof AR>) => say("Enter a whole number of days from {min} to {max}.", { min: WIN_BACK_OFFER_DAYS, max: WIN_BACK_MAX_COOLDOWN_DAYS }) }
             : {}),
         };
         setProblems(invalid);
@@ -326,7 +339,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
             value={value}
             onChange={setValue}
             hint={kind === "percent" ? t("A whole number, such as 15.") : t("Such as 0.50.")}
-            error={problems.discount ?? fieldErrors["discount.value"]}
+            error={problems.discount?.(t, lang) ?? fieldErrors["discount.value"]}
           />
         )}
       </fieldset>
@@ -338,17 +351,18 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         value={cooldown}
         onChange={setCooldown}
         hint={t("At least {days}, how long an offer lasts. Offers already given keep their terms.", { days: WIN_BACK_OFFER_DAYS })}
-        error={problems.cooldownDays ?? fieldErrors.cooldownDays}
+        error={problems.cooldownDays?.(t, lang) ?? fieldErrors.cooldownDays}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save win-back offer")}
       </button>
-    </form>
+      <Notice>{done ? t("Saved.") : null}</Notice>
+    </Form>
   );
 }
 
-/** Adds an order type, or edits one when `orderType` is given. */
-function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: () => void }) {
+/** Adds an order type, or edits one when `orderType` is given; `onDone` closes the edit, saying whether it was saved. */
+function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: (saved: boolean) => void }) {
   const t = useT(AR);
   const lang = useLang();
   const [nameEn, setNameEn] = useState(orderType?.nameEn ?? "");
@@ -357,13 +371,14 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
   const [cost, setCost] = useState(orderType === undefined ? "" : centsToInput(orderType.costCents));
   const [stamps, setStamps] = useState(String(orderType?.stampsEarned ?? 1));
   const [active, setActive] = useState(orderType?.active ?? true);
-  const [amountErrors, setAmountErrors] = useState<Record<string, string>>({});
-  const { pending, error, fieldErrors, submit } = useSubmit();
+  const [amountErrors, setAmountErrors] = useState<Record<string, Later<typeof AR>>>({});
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
   const titleId = orderType === undefined ? "new-order-type-title" : `order-type-${orderType.id}-title`;
 
   return (
-    <form
+    <Form
       aria-labelledby={titleId}
+      onChange={clearDone}
       className={orderType === undefined ? "form-grid add-form" : "form-grid"}
       onSubmit={(event) => {
         event.preventDefault();
@@ -371,9 +386,9 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         const costCents = parseUsdInput(cost);
         const stampsEarned = parseWholeNumberInput(stamps);
         const invalid = {
-          ...(priceCents === null ? { priceCents: t("Enter a price in dollars up to 1,000,000, such as 2.50.") } : {}),
-          ...(costCents === null ? { costCents: t("Enter a cost in dollars up to 1,000,000, such as 0.70.") } : {}),
-          ...(stampsEarned === null ? { stampsEarned: t("Enter a whole number, such as 1.") } : {}),
+          ...(priceCents === null ? { priceCents: (say: Translate<typeof AR>) => say("Enter a price in dollars up to 1,000,000, such as 2.50.") } : {}),
+          ...(costCents === null ? { costCents: (say: Translate<typeof AR>) => say("Enter a cost in dollars up to 1,000,000, such as 0.70.") } : {}),
+          ...(stampsEarned === null ? { stampsEarned: (say: Translate<typeof AR>) => say("Enter a whole number, such as 1.") } : {}),
         };
         setAmountErrors(invalid);
         if (priceCents === null || costCents === null || stampsEarned === null) {
@@ -384,7 +399,7 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
           orderType === undefined ? save("POST", "/api/cafe/order-types", body) : save("PATCH", `/api/cafe/order-types/${orderType.id}`, body),
         ).then((result) => {
           if (result.ok && result.value) {
-            onDone?.();
+            onDone?.(true);
             if (orderType === undefined) {
               setNameEn("");
               setNameAr("");
@@ -409,7 +424,7 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         inputMode="decimal"
         value={price}
         onChange={setPrice}
-        error={amountErrors.priceCents ?? fieldErrors.priceCents}
+        error={amountErrors.priceCents?.(t, lang) ?? fieldErrors.priceCents}
       />
       <Field
         label={t("Cost to make (USD)")}
@@ -419,7 +434,7 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         value={cost}
         onChange={setCost}
         hint={t("What one costs you in ingredients and cup. Offers never go below cost.")}
-        error={amountErrors.costCents ?? fieldErrors.costCents}
+        error={amountErrors.costCents?.(t, lang) ?? fieldErrors.costCents}
       />
       <Field
         label={t("Stamps earned")}
@@ -429,7 +444,7 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         value={stamps}
         onChange={setStamps}
         hint={t("0 to 10.")}
-        error={amountErrors.stampsEarned ?? fieldErrors.stampsEarned}
+        error={amountErrors.stampsEarned?.(t, lang) ?? fieldErrors.stampsEarned}
       />
       <div className="field">
         <label className="check">
@@ -444,16 +459,23 @@ function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; sav
         </label>
       </div>
       <div className="actions">
-        <button type="submit" disabled={pending}>
+        <button type="submit" aria-disabled={pending || undefined}>
           {pending ? t("Saving…") : orderType === undefined ? t("Add order type") : t("Save changes")}
         </button>
         {onDone === undefined || orderType === undefined ? null : (
-          <button type="button" onClick={onDone}>
+          <button
+            type="button"
+            onClick={() => {
+              onDone(false);
+            }}
+          >
             {t("Cancel")}
           </button>
         )}
       </div>
-    </form>
+      {/* An edit closes when saved, so its row says so instead (OrderTypeItem). */}
+      {orderType === undefined ? <Notice>{done ? t("Saved.") : null}</Notice> : null}
+    </Form>
   );
 }
 
@@ -461,17 +483,24 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
   const t = useT(AR);
   const lang = useLang();
   const [editing, setEditing] = useState(false);
+  /** The edit just closed was saved: the row says so, next to where focus lands. */
+  const [saved, setSaved] = useState(false);
   const item = useFocusOnChange<HTMLLIElement>(editing);
+  // The same keyed Notice in both views of the row, so it stays in the page while the edit is open and its "Saved."
+  // is announced when the edit closes (a region added together with its text often is not).
+  const notice = <Notice key="saved">{saved ? t("Saved.") : null}</Notice>;
   if (editing) {
     return (
       <li ref={item}>
         <OrderTypeForm
           orderType={orderType}
           save={save}
-          onDone={() => {
+          onDone={(wasSaved) => {
+            setSaved(wasSaved);
             setEditing(false);
           }}
         />
+        {notice}
       </li>
     );
   }
@@ -515,11 +544,13 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
         type="button"
         aria-label={t("Edit {name}", { name: lang === "ar" ? orderType.nameAr : orderType.nameEn })}
         onClick={() => {
+          setSaved(false);
           setEditing(true);
         }}
       >
         {t("Edit")}
       </button>
+      {notice}
     </li>
   );
 }
@@ -527,10 +558,10 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
 /** The QR customers scan at the counter to get a card (AC 4), for printing; replacing it retires the old one. */
 function SignupQr() {
   const t = useT(AR);
-  const [state, setLink] = useApiData("/api/cafe/join", joinLinkSchema);
+  const [state, setLink, retry] = useApiData("/api/cafe/join", joinLinkSchema);
   const { pending, error, submit } = useSubmit();
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(state.data.joinUrl, { border: 4 }))}`;
   return (
@@ -586,18 +617,15 @@ function SettingsSection({ id, title, children }: { id: (typeof SECTIONS)[number
 /** `/cafe`: the café's name, loyalty program, menu, offers and signup, in sections (AC 1). */
 export function CafePage() {
   const t = useT(AR);
-  const [state, setSetup] = useApiData("/api/cafe", cafeSetupSchema);
-  const lang = useLang();
-  const [saved, setSaved] = useState<Later<typeof AR> | null>(null);
+  const [state, setSetup, retry] = useApiData("/api/cafe", cafeSetupSchema);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const setup = state.data;
 
+  // Each form says "Saved." next to its own button (useSubmit's `done`), where the owner is looking.
   const save: Save = async (method, path, body) => {
-    setSaved(null);
     setSetup(await apiRequest(method, path, cafeSetupSchema, body));
-    setSaved(() => (say: Translate<typeof AR>) => say("Saved."));
     return true;
   };
 
@@ -605,7 +633,6 @@ export function CafePage() {
     <section aria-labelledby="cafe-page-title" className="cafe-settings">
       <h2 id="cafe-page-title">{t("Café")}</h2>
       <p className="page-intro">{t("Your program, menu and offers. Each part saves on its own.")}</p>
-      {saved === null ? null : <Notice>{saved(t, lang)}</Notice>}
       <nav aria-label={t("Sections of this page")}>
         <ul className="section-list">
           {SECTIONS.map(([id, title]) => (

@@ -2,7 +2,7 @@ import { devicesSchema, pairingCodeSchema, type Devices, type PairingCode } from
 import { useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest, isStale, noContent } from "./api.js";
-import { ConfirmButton, Field, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -65,7 +65,7 @@ function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void }) {
   const [deviceName, setDeviceName] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
-    <form
+    <Form
       aria-labelledby="pair-title"
       className="card"
       onSubmit={(event) => {
@@ -91,10 +91,10 @@ function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void }) {
         hint={t("So you can tell the phones apart, such as Front counter.")}
         error={fieldErrors.deviceName}
       />
-      <button type="submit" disabled={pending}>
+      <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Creating…") : t("Create pairing code")}
       </button>
-    </form>
+    </Form>
   );
 }
 
@@ -103,13 +103,13 @@ export function DevicesPage() {
   const t = useT(AR);
   const lang = useLang();
   const [reload, setReload] = useState(0);
-  const [state, setDevices] = useApiData("/api/devices", devicesSchema, reload);
+  const [state, setDevices, retry] = useApiData("/api/devices", devicesSchema, reload);
   const [newCode, setNewCode] = useState<PairingCode | null>(null);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const { pending, error, submit } = useSubmit();
   const pairing = useFocusOnChange<HTMLDivElement>(newCode === null);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const devices: Devices = state.data;
   const timeFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
@@ -121,7 +121,7 @@ export function DevicesPage() {
         {t("Devices")}
       </h2>
       <p className="page-intro">{t("The phones and tablets your baristas record visits on. Pair a new one with a one-time code; remove one that is lost.")}</p>
-      {notice === null ? null : <Notice>{notice(t, lang)}</Notice>}
+      <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <FormError message={error} />
       <div ref={pairing}>
         {newCode === null ? (
@@ -194,7 +194,7 @@ export function DevicesPage() {
                 </span>
                 <button
                   type="button"
-                  disabled={pending}
+                  aria-disabled={pending || undefined}
                   aria-label={t("Cancel code for {name}", { name: code.deviceName })}
                   onClick={() => {
                     void submit(() => apiRequest("DELETE", `/api/devices/pairing-codes/${code.id}`, noContent)).then((result) => {

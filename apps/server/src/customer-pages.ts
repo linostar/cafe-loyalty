@@ -11,7 +11,7 @@ import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
-import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView } from "./customer-views.js";
+import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView, type NextStep, type SettingsSection } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
@@ -93,15 +93,33 @@ const onAppleDevice = (request: FastifyRequest): boolean => /\b(iPhone|iPad|iPod
 
 const langOf = (request: FastifyRequest): Lang => pickLang(queryLang(request) ?? formOf(request).lang, request.headers["accept-language"]);
 
-/** The current path with the other language, for the language switch; `saved` keeps a "Saved." notice. */
-const otherLang = (path: string, lang: Lang, saved = false): string => `${path}?lang=${lang === "ar" ? "en" : "ar"}${saved ? "&saved=1" : ""}`;
+/** The current path with the other language, for the language switch; `saved` keeps the "Saved." notice of that settings section. */
+const otherLang = (path: string, lang: Lang, saved?: SettingsSection): string => `${path}?lang=${lang === "ar" ? "en" : "ar"}${saved === undefined ? "" : `&saved=${saved}`}`;
 
 const sendPage = (reply: FastifyReply, status: number, document: string) =>
   reply.code(status).header("content-type", "text/html; charset=utf-8").send(document);
 
-/** An error page: the message as its heading, and a language switch back to the same path. */
-function errorPage(lang: Lang, message: string, url: string): string {
-  return errorView(lang, message, otherLang(url.split("?", 1)[0] ?? "/", lang));
+/**
+ * The way on from an error: a new recovery link for a link or card that no longer works, and the same page again
+ * after our own failure on a page load (a form's path answers only its post, so a failed post gets no link).
+ */
+export function nextStep(lang: Lang, key: MessageKey, method: string, path: string): NextStep | undefined {
+  if (key === "linkExpired") {
+    return { href: `/recover?lang=${lang}`, label: t(lang, "askNewLink") };
+  }
+  if (key === "cardGone") {
+    return { href: `/recover?lang=${lang}`, label: t(lang, "restoreCard") };
+  }
+  if (key === "failed" && method === "GET") {
+    return { href: `${path}?lang=${lang}`, label: t(lang, "tryAgain") };
+  }
+  return undefined;
+}
+
+/** An error page: the message as its heading, the way on from it, and a language switch back to the same path. */
+function errorPage(lang: Lang, key: MessageKey, message: string, request: FastifyRequest): string {
+  const path = request.url.split("?", 1)[0] ?? "/";
+  return errorView(lang, message, otherLang(path, lang), nextStep(lang, key, request.method, path));
 }
 
 /** Fonts and the logo change only with a release, and hold no secret: browsers keep them for a week. */
@@ -220,7 +238,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       trx.selectFrom("cafes").select(["id", "name", "plan"]).where("join_code_hash", "=", codeHash).executeTakeFirst(),
     );
     if (cafe?.plan === "suspended") {
-      throw new PageError(403, "joinPaused");
+      throw new PageError(403, "joinPaused", { cafe: cafe.name });
     }
     return cafe === undefined ? undefined : { id: cafe.id, name: cafe.name };
   }
@@ -303,7 +321,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         void reply.header("retry-after", String((Number(error.values.minutes) || 1) * 60));
       }
       const values = error.key === "tooMany" ? { minutes: count(lang, "minutes", Number(error.values.minutes) || 1) } : error.values;
-      return sendPage(reply, error.status, errorPage(lang, t(lang, error.key, values), request.url));
+      return sendPage(reply, error.status, errorPage(lang, error.key, t(lang, error.key, values), request));
     }
     const status = typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
     if (status >= 500) {
@@ -312,7 +330,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       request.log.info({ status }, "customer page request rejected");
     }
     const key: MessageKey = status >= 500 ? "failed" : status === 404 ? "notFound" : "badRequest";
-    return sendPage(reply, status, errorPage(lang, t(lang, key), request.url));
+    return sendPage(reply, status, errorPage(lang, key, t(lang, key), request));
   });
 
   /** The customer pages' fonts (named in their stylesheet) and logo (their favicon and footer): public, no secrets. */
@@ -446,14 +464,15 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     const { saved } = request.query as { saved?: string };
-    return sendPage(reply, 200, await settingsPage(lang, secret, card, saved === "1" ? t(lang, "saved") : undefined, {}));
+    return sendPage(reply, 200, await settingsPage(lang, secret, card, saved === "email" || saved === "offers" ? saved : undefined, {}, {}));
   });
 
   async function settingsPage(
     lang: Lang,
     secret: string,
     card: NonNullable<Awaited<ReturnType<typeof findCard>>>,
-    notice: string | undefined,
+    saved: SettingsSection | undefined,
+    values: { email?: string },
     errors: { email?: string; delete?: string },
   ): Promise<string> {
     const cafe = await withCafe(db, card.cafe_id, (trx) => trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow());
@@ -463,9 +482,10 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       cafeName: cafe.name,
       maskedEmail: card.email === null ? null : maskEmail(card.email),
       offersOptedIn: card.offers_opt_in_at !== null,
-      notice,
+      saved,
+      values,
       errors,
-      otherLangHref: otherLang(`${path}/settings`, lang, notice !== undefined),
+      otherLangHref: otherLang(`${path}/settings`, lang, saved),
     });
   }
 
@@ -476,7 +496,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       offers: await loadCardOffer(trx, card.id),
       feedback: await loadFeedbackRequest(trx, card.id),
     }));
-    const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4 }))}`;
+    // Medium error correction, so a cracked or smudged phone screen still scans at the counter.
+    const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4, ecc: "M" }))}`;
     const path = `/c/${secret}`;
     const apple = onAppleDevice(request);
     return cardView(lang, {
@@ -610,7 +631,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const form = formOf(request);
     const parsed = form.remove === "yes" ? null : ownerEmailSchema.safeParse(form.email?.trim() ?? "");
     if (parsed !== null && !parsed.success) {
-      return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, { email: t(lang, "emailInvalid") }));
+      return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, { email: form.email ?? "" }, { email: t(lang, "emailInvalid") }));
     }
     const email = parsed === null ? null : parsed.data;
     const replaced = await withCafe(db, card.cafe_id, async (trx) => {
@@ -660,7 +681,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         log.info({ cafeId: card.cafe_id }, "card email change notice sent");
       });
     }
-    return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=1`).send();
+    return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=email#email-title`).send();
   });
 
   /** Opts in to or out of offers, recording when (AC 4), and updates the card's passes. */
@@ -681,7 +702,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       // Opting in or out shows or removes the passes' offer field (cards_touch_offer_passes, migration 0013).
       await queuePassUpdate(trx, options.jobs, card.cafe_id, card.id);
     });
-    return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=1`).send();
+    return reply.code(303).header("location", `/c/${secret}/settings?lang=${lang}&saved=offers#offers-title`).send();
   });
 
   /**
@@ -779,7 +800,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const lang = langOf(request);
     const card = await cardOrGone(secret);
     if (formOf(request).confirm !== "yes") {
-      return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, { delete: t(lang, "deleteConfirmRequired") }));
+      return sendPage(reply, 400, await settingsPage(lang, secret, card, undefined, {}, { delete: t(lang, "deleteConfirmRequired") }));
     }
     await withCafe(db, card.cafe_id, (trx) => deleteCard(trx, card));
     request.log.info({ cafeId: card.cafe_id }, "customer card deleted");
@@ -787,8 +808,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     return sendPage(reply, 200, deletedView(lang, otherLang("/recover", lang)));
   });
 
-  function recoverPage(lang: Lang, sent: boolean, error?: string): string {
-    return recoverView(lang, sent, error, otherLang("/recover", lang));
+  function recoverPage(lang: Lang, sent: boolean, error?: string, email?: string): string {
+    return recoverView(lang, sent, error, otherLang("/recover", lang), email);
   }
 
   app.get("/recover", async (request, reply) => sendPage(reply, 200, recoverPage(langOf(request), false)));
@@ -831,9 +852,10 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   app.post("/recover", async (request, reply) => {
     const lang = langOf(request);
     enforce(limits.recoverPerIp, clientKey(request.ip));
-    const parsed = ownerEmailSchema.safeParse(formOf(request).email ?? "");
+    const typed = formOf(request).email ?? "";
+    const parsed = ownerEmailSchema.safeParse(typed);
     if (!parsed.success) {
-      return sendPage(reply, 400, recoverPage(lang, false, t(lang, "emailInvalid")));
+      return sendPage(reply, 400, recoverPage(lang, false, t(lang, "emailInvalid"), typed));
     }
     const log = request.log;
     // Over the per-email limit the reply stays the same and nothing is sent, so nobody can lock a victim out of
@@ -879,9 +901,18 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const { token } = request.params as { token: string };
     const lang = langOf(request);
     enforce(limits.restorePerIp, clientKey(request.ip));
-    const action = formOf(request).action === "delete" ? "delete" : "restore";
+    const form = formOf(request);
+    const action = form.action === "delete" ? "delete" : "restore";
     if (!isToken(token)) {
       throw new PageError(410, "linkExpired");
+    }
+    // Deleting every card cannot be undone: without the ticked box, the page asks again and the link stays unused.
+    if (action === "delete" && form.confirm !== "yes") {
+      if (!(await liveRecovery(token))) {
+        throw new PageError(410, "linkExpired");
+      }
+      const path = `/r/${token}`;
+      return sendPage(reply, 400, restoreView(lang, path, otherLang(path, lang), t(lang, "deleteConfirmRequired")));
     }
     const tokenHash = hashToken(token);
     const restored = await withLookup(
@@ -999,10 +1030,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     enforce(limits.emailUndoPerIp, clientKey(request.ip));
     const ids = await undoToken(token);
     const path = `${EMAIL_UNDO_PATH}${token}`;
-    const parsed = ownerEmailSchema.safeParse(formOf(request).email ?? "");
+    const typed = formOf(request).email ?? "";
+    const parsed = ownerEmailSchema.safeParse(typed);
     const lookup = parsed.success ? emailLookup(secrets, parsed.data) : undefined;
     if (!parsed.success || lookup === undefined || !ids.isFor(lookup)) {
-      return sendPage(reply, 400, undoEmailView(lang, path, t(lang, parsed.success ? "undoWrongEmail" : "emailInvalid"), otherLang(path, lang)));
+      return sendPage(reply, 400, undoEmailView(lang, path, t(lang, parsed.success ? "undoWrongEmail" : "emailInvalid"), otherLang(path, lang), typed));
     }
     const secret = newToken();
     await withCafe(db, ids.cafeId, async (trx) => {

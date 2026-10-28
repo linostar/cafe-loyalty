@@ -53,6 +53,22 @@
   background: currentcolor;
 }
 
+/*
+ * Forced colours (Windows contrast themes) drop backgrounds, which is all that sets a badge or a pill apart from the
+ * text around it, and the pill's dot: each gets an outline in the theme's text colour instead, and the dot is drawn in it.
+ */
+@media (forced-colors: active) {
+  .badge,
+  .pill {
+    border: 1px solid CanvasText;
+  }
+
+  .pill::before {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}
+
 /* A list read as rows, such as baristas or phones: dividers between items, actions at the row's end. */
 .items {
   margin: 0 0 var(--space-4);
@@ -176,6 +192,35 @@
   white-space: nowrap;
 }
 
+/*
+ * The first thing Tab reaches: a way past the top bar and the navigation to the page. Hidden like .visually-hidden
+ * until focused, then drawn at the page's top corner over the top bar's start (the brand, which takes no focus). It
+ * is placed in the page, not stuck to the screen, so it scrolls away like the bar and never covers a focused control.
+ */
+.skip-link {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip-link:focus {
+  z-index: 10;
+  inline-size: auto;
+  block-size: auto;
+  overflow: visible;
+  clip-path: none;
+  margin: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-accent-strong);
+}
+
 /* The top bar's profile menu: the email as a button opening a panel with the account link and signing out. */
 .profile-menu {
   position: relative;
@@ -184,7 +229,10 @@
 
 .profile-button {
   max-inline-size: 16rem;
-  min-block-size: auto;
+  /* As large a target as the other controls, the letter's circle centred in it (WCAG 2.5.8 and research finding 13). */
+  min-block-size: var(--control-height);
+  min-inline-size: var(--control-height);
+  justify-content: center;
   padding: var(--space-1);
   border-color: var(--color-on-espresso-muted);
   border-radius: var(--radius-pill);

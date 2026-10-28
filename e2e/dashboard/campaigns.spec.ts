@@ -20,6 +20,42 @@ const QUIET = {
   endedAt: null,
 };
 
+test("focuses the first part of a new campaign with a problem, the days and the times included", async ({ page }) => {
+  let posts = 0;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [] }),
+    "POST /api/campaigns": async (route: Route) => {
+      posts += 1;
+      await route.fulfill({ status: 201, json: { running: [], ended: [] } });
+    },
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  const start = form.getByRole("button", { name: "Start campaign" });
+  await form.getByLabel("Name (English)").fill("Quiet afternoons");
+  await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+  // No day picked: the first day takes focus, described by the problem.
+  await start.click();
+  await expect(form.getByLabel("Monday")).toBeFocused();
+  await expect(form.getByLabel("Monday")).toHaveAccessibleDescription("Pick at least one day.");
+  // Only the times wrong: the end, which must come after the start, takes focus.
+  await form.getByLabel("Monday").check();
+  await form.getByLabel("Starts at").fill("17:00");
+  await form.getByLabel("Ends at").fill("15:00");
+  await form.getByRole("textbox", { name: "Percent off" }).fill("20");
+  await form.getByRole("checkbox", { name: /^Espresso/ }).check();
+  await start.click();
+  await expect(form.getByLabel("Ends at")).toBeFocused();
+  // No order type: the first one takes focus.
+  await form.getByLabel("Ends at").fill("18:00");
+  await form.getByRole("checkbox", { name: /^Espresso/ }).uncheck();
+  await start.click();
+  await expect(form.getByRole("checkbox", { name: /^Espresso/ })).toBeFocused();
+  expect(posts).toBe(0);
+});
+
 test("starts a campaign, warning about an order type it takes below the margin floor, then ends it (AC 35)", async ({ page }) => {
   let campaigns: { running: (typeof QUIET)[]; ended: (typeof QUIET | (Omit<typeof QUIET, "endedAt"> & { endedAt: string }))[] } = { running: [], ended: [] };
   await mockApi(page, {
@@ -130,10 +166,116 @@ test("starts a fixed-amount campaign running until midnight, and announces each 
   // Refused on the page, before the server is asked.
   await form.getByRole("button", { name: "Start campaign" }).click();
   await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/would sell below their floor\. Lower the discount, or leave them out\./);
+  // Focus goes to the order type below its floor.
+  await expect(form.getByRole("checkbox", { name: /^Latte/ })).toBeFocused();
   expect(attempts).toBe(0);
   await form.getByRole("checkbox", { name: /^Latte/ }).uncheck();
   await form.getByRole("button", { name: "Start campaign" }).click();
   await expect(page.getByRole("alert")).toContainText("below your minimum margin");
   await expect(form.getByRole("group", { name: "Order types" })).toHaveAccessibleDescription(/Espresso would sell for \$2\.00.*Latte would sell for \$2\.50/);
+  // Refused by the server while the page's own check passed: the first picked order type is marked and takes focus.
+  const espresso = form.getByRole("checkbox", { name: /^Espresso/ });
+  await expect(espresso).toHaveAttribute("aria-invalid", "true");
+  await expect(espresso).toBeFocused();
   expect(attempts).toBe(1);
 });
+
+test("leaves focus in the discount while an order type falls below its floor as it is typed", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [] }),
+    // A send that fails with no field named, so nothing above the order types stays marked.
+    "POST /api/campaigns": reply(500, { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true }),
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await form.getByLabel("Name (English)").fill("Quiet afternoons");
+  await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+  await form.getByLabel("Monday").check();
+  await form.getByLabel("Starts at").fill("15:00");
+  await form.getByLabel("Ends at").fill("17:00");
+  await form.getByRole("checkbox", { name: /^Latte/ }).check();
+  const discount = form.getByRole("textbox", { name: "Percent off" });
+  // 10% keeps the latte above its $2.60 floor, so the page sends it, and the server fails.
+  await discount.fill("10");
+  await form.getByRole("button", { name: "Start campaign" }).click();
+  await expect(page.getByRole("alert")).toContainText("Something went wrong");
+  // 20% takes the latte below its floor as it is typed: marked at once, but the keyboard stays where the owner types.
+  await discount.clear();
+  await discount.pressSequentially("20");
+  await expect(form.getByRole("checkbox", { name: /^Latte/ })).toHaveAttribute("aria-invalid", "true");
+  await expect(discount).toBeFocused();
+  await expect(discount).toHaveValue("20");
+});
+
+test("keeps a new campaign being typed when reloading the list fails, and loads only the list again", async ({ page }) => {
+  let listLoads = 0;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": async (route: Route) => {
+      listLoads += 1;
+      // The second load, after the stale end below, fails; the third (Try again) works.
+      await (listLoads === 2
+        ? route.fulfill({ status: 500, json: { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true } })
+        : route.fulfill({ json: { running: listLoads === 1 ? [QUIET] : [], ended: [] } }));
+    },
+    // Ended meanwhile on another device: the page reloads its list.
+    [`POST /api/campaigns/${QUIET.id}/end`]: reply(409, { code: "CONFLICT", message: "This campaign has already ended. Reload the page to see it.", retryable: false }),
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await form.getByLabel("Name (English)").fill("Late evenings");
+  await page.getByRole("button", { name: "End Quiet afternoons" }).click();
+  await page.getByRole("button", { name: "Yes, end Quiet afternoons" }).click();
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+  // The form stays, with what was typed.
+  await expect(form.getByLabel("Name (English)")).toHaveValue("Late evenings");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("No campaigns running.")).toBeVisible();
+  await expect(form.getByLabel("Name (English)")).toHaveValue("Late evenings");
+  expect(listLoads).toBe(3);
+});
+
+for (const answer of ["the list as it was", "a failure"] as const) {
+  test(`keeps a campaign started while the list loads when the load then answers with ${answer}`, async ({ page }) => {
+    let releaseList: () => void = () => undefined;
+    const listHeld = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    await mockApi(page, {
+      "GET /api/auth/session": reply(200, SESSION),
+      "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+      // Answers only after the campaign below is started, from before it was.
+      "GET /api/campaigns": async (route: Route) => {
+        await listHeld;
+        await (answer === "a failure"
+          ? route.fulfill({ status: 500, json: { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true } })
+          : route.fulfill({ json: { running: [], ended: [] } }));
+      },
+      "POST /api/campaigns": reply(201, { running: [QUIET], ended: [] }),
+    });
+    await page.goto("/campaigns");
+    const form = page.getByRole("form", { name: "New campaign" });
+    await form.getByLabel("Name (English)").fill("Quiet afternoons");
+    await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+    await form.getByLabel("Monday").check();
+    await form.getByLabel("Starts at").fill("15:00");
+    await form.getByLabel("Ends at").fill("17:00");
+    await form.getByRole("textbox", { name: "Percent off" }).fill("20");
+    await form.getByRole("checkbox", { name: /^Espresso/ }).check();
+    const started = page.waitForResponse((response) => response.url().endsWith("/api/campaigns") && response.request().method() === "POST");
+    await form.getByRole("button", { name: "Start campaign" }).click();
+    await started;
+    await expect(page.getByRole("button", { name: "End Quiet afternoons" })).toBeVisible();
+    const listed = page.waitForResponse((response) => response.url().endsWith("/api/campaigns") && response.request().method() === "GET");
+    releaseList();
+    await listed;
+    // Nothing changes when the old answer is dropped, so there is nothing to wait for but time for it to have rendered.
+    await page.waitForTimeout(300);
+    await expect(page.getByRole("button", { name: "End Quiet afternoons" })).toBeVisible();
+    await expect(page.getByText("No campaigns running.")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  });
+}

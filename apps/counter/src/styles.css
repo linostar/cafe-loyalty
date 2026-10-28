@@ -82,6 +82,22 @@ button {
   content: "· ";
 }
 
+/*
+ * Forced colours drop backgrounds: the chip keeps an outline, and the online dot is filled in the theme's text colour,
+ * so online (filled) and offline (a ring) still differ by shape.
+ */
+@media (forced-colors: active) {
+  .connection {
+    border: 1px solid CanvasText;
+  }
+
+  .connection.is-online::before {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+    background: CanvasText;
+  }
+}
+
 @media (max-width: 39.99rem) {
   /* Left to right even in Arabic, where only the Latin product name shows: cut short, it keeps its start. */
   .topbar .brand h1 {

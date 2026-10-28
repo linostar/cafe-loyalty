@@ -1,5 +1,5 @@
 import { apiText, type FeedbackInbox, type ReviewQueue } from "@cafe-loyalty/shared";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import { ApiRequestError, apiRequest } from "./api.js";
 import { useApiText, useCommonT } from "./i18n.js";
@@ -28,26 +28,32 @@ export const AttentionContext = createContext<Attention>({ review: { status: "lo
 /**
  * Loads `path` for a page (a failure's message in English as the API sent it; PageStatus translates it), again whenever
  * `reloadKey` changes; an ended session goes back to sign-in. The setter takes new data, or a function of the latest
- * loaded data, for responses that may land while another is in flight.
+ * loaded data, for responses that may land while another is in flight. `retry` loads it again in place (PageStatus's
+ * Try again), leaving the rest of the page, and anything typed into it, as it is.
  */
 export function useApiData<T extends z.ZodType>(
   path: string,
   schema: T,
   reloadKey = 0,
-): [ApiData<z.output<T>>, (data: z.output<T> | ((current: z.output<T>) => z.output<T>)) => void] {
+): [ApiData<z.output<T>>, (data: z.output<T> | ((current: z.output<T>) => z.output<T>)) => void, () => void] {
   const onSessionEnded = useContext(SessionEndedContext);
   const [state, setState] = useState<ApiData<z.output<T>>>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  // New data the page set (a write's answer): a load that started before it answers for an older state, so its result,
+  // or its failure, is dropped.
+  const writes = useRef(0);
 
   useEffect(() => {
     let current = true;
+    const writesAtStart = writes.current;
     apiRequest("GET", path, schema).then(
       (data) => {
-        if (current) {
+        if (current && writes.current === writesAtStart) {
           setState({ status: "loaded", data });
         }
       },
       (error: unknown) => {
-        if (!current) {
+        if (!current || writes.current !== writesAtStart) {
           return;
         }
         if (error instanceof ApiRequestError && error.failure.code === "UNAUTHENTICATED" && onSessionEnded !== null) {
@@ -60,11 +66,14 @@ export function useApiData<T extends z.ZodType>(
     return () => {
       current = false;
     };
-  }, [path, schema, reloadKey, onSessionEnded]);
+  }, [path, schema, reloadKey, attempt, onSessionEnded]);
 
   return [
     state,
     (data) => {
+      if (!(data instanceof Function)) {
+        writes.current += 1;
+      }
       setState((current) => {
         if (!(data instanceof Function)) {
           return { status: "loaded", data };
@@ -72,17 +81,30 @@ export function useApiData<T extends z.ZodType>(
         return current.status === "loaded" ? { status: "loaded", data: data(current.data) } : current;
       });
     },
+    () => {
+      setState({ status: "loading" });
+      setAttempt((count) => count + 1);
+    },
   ];
 }
 
-/** The loading and failure states every page shows before its content. */
-export function PageStatus({ state }: { state: ApiData<unknown> }) {
+/**
+ * The loading and failure states every page, or a section of one, shows before its content; a failed load offers to
+ * load it again with `onRetry` (useApiData's retry), never by reloading the document, which would lose what was typed
+ * elsewhere on the page and, offline, leave the dashboard for the browser's error page.
+ */
+export function PageStatus({ state, onRetry }: { state: ApiData<unknown>; onRetry: () => void }) {
   const t = useCommonT();
   const api = useApiText();
   return state.status === "failed" ? (
-    <p role="alert" className="form-error">
-      {api(state.message)}
-    </p>
+    <>
+      <p role="alert" className="form-error">
+        {api(state.message)}
+      </p>
+      <button type="button" className="primary" onClick={onRetry}>
+        {t("Try again")}
+      </button>
+    </>
   ) : (
     <p role="status">{t("Loading…")}</p>
   );

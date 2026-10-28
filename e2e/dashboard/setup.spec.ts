@@ -57,7 +57,7 @@ test("saves the program, then adds and edits an order type", async ({ page }) =>
   await page.getByLabel("Reward (Arabic)").fill("قهوة مجانية");
   await expect(page.getByLabel("Reward (Arabic)")).toHaveAttribute("dir", "rtl");
   await page.getByRole("button", { name: "Save program" }).click();
-  await expect(page.getByRole("status")).toHaveText("Saved.");
+  await expect(page.getByRole("form", { name: "Loyalty program" }).getByRole("status")).toHaveText("Saved.");
 
   const add = page.getByRole("form", { name: "Add an order type" });
   await add.getByLabel("Name (English)").fill("Espresso");
@@ -111,7 +111,7 @@ test("adds a barista with a PIN and removes one after confirming", async ({ page
   await expect(page.getByLabel("PIN")).toHaveAttribute("inputmode", "numeric");
   await page.getByLabel("PIN").fill("482913");
   await page.getByRole("button", { name: "Add barista" }).click();
-  await expect(page.getByRole("status")).toContainText("Saved.");
+  await expect(page.getByRole("form", { name: "Add a barista" }).getByRole("status")).toContainText("Saved.");
 
   await page.getByRole("button", { name: "Remove Rami" }).click();
   // Focus goes to the safe choice, Escape backs out, and after confirming it lands on the section heading.
@@ -235,9 +235,116 @@ test("saves the minimum margin campaigns must keep", async ({ page }) => {
   const margin = page.getByRole("form", { name: "Minimum margin" });
   await expect(margin.getByLabel("Minimum margin over cost (%)")).toHaveValue("30");
   await margin.getByLabel("Minimum margin over cost (%)").fill("thirty");
-  await margin.getByRole("button", { name: "Save margin" }).click();
+  await margin.getByRole("button", { name: "Save margin" }).press("Enter");
   await expect(margin.getByText("Enter a whole percentage from 0 to 1000, such as 30.")).toBeVisible();
+  // The field with the problem takes focus, so its message is read with it (WCAG 3.3.1).
+  await expect(margin.getByLabel("Minimum margin over cost (%)")).toBeFocused();
   await margin.getByLabel("Minimum margin over cost (%)").fill("35");
+  await margin.getByRole("button", { name: "Save margin" }).press("Enter");
+  // Next to the form that saved, and the keyboard is still on its button (WCAG 2.4.3).
+  await expect(margin.getByRole("status")).toHaveText("Saved.");
+  await expect(margin.getByRole("button", { name: "Save margin" })).toBeFocused();
+  // Typing again clears the old confirmation.
+  await margin.getByLabel("Minimum margin over cost (%)").fill("36");
+  await expect(margin.getByRole("status")).toHaveText("");
+});
+
+test("says nothing is saved when the field changed while its save was on its way", async ({ page }) => {
+  let setup = { cafe: CAFE, program: PROGRAM, orderTypes: [ESPRESSO] };
+  let held = false;
+  let answer: () => void = () => undefined;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "PATCH /api/cafe": async (route) => {
+      // Held until the test lets it go, so the edit below lands while it is pending.
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+        held = true;
+      });
+      setup = { ...setup, cafe: { ...CAFE, minMarginPercent: 35 } };
+      await route.fulfill({ json: setup });
+    },
+  });
+  await page.goto("/cafe");
+  const margin = page.getByRole("form", { name: "Minimum margin" });
+  const field = margin.getByLabel("Minimum margin over cost (%)");
+  await field.fill("35");
   await margin.getByRole("button", { name: "Save margin" }).click();
-  await expect(page.getByRole("status")).toHaveText("Saved.");
+  await expect(margin.getByRole("button", { name: "Saving…" })).toHaveAttribute("aria-disabled", "true");
+  await field.fill("36");
+  await expect.poll(() => held).toBe(true);
+  answer();
+  await expect(margin.getByRole("button", { name: "Save margin" })).not.toHaveAttribute("aria-disabled");
+  // 36 was never sent: "Saved." would claim it was.
+  await expect(margin.getByRole("status")).toHaveText("");
+  await expect(field).toHaveValue("36");
+});
+
+test("checks the café's own fields itself, in the page's language, and focuses the first with a problem", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [] }),
+    "GET /api/cafe/join": reply(200, JOIN),
+  });
+  await page.goto("/cafe");
+  const add = page.getByRole("form", { name: "Add an order type" });
+  // No browser validation bubbles: the form is sent to the page's own checks.
+  await expect(add).toHaveAttribute("novalidate", "");
+  await add.getByLabel("Price (USD)").fill("abc");
+  await add.getByRole("button", { name: "Add order type" }).click();
+  await expect(add.getByText("Enter a price in dollars up to 1,000,000, such as 2.50.")).toBeVisible();
+  await expect(add.getByLabel("Price (USD)")).toBeFocused();
+});
+
+test("sends a form once however often it is pressed while its request is on its way", async ({ page }) => {
+  const rami = { id: "5d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f42", name: "Rami", revoked: false, createdAt: "2026-10-08T12:00:00.000Z" };
+  let posts = 0;
+  let answer: () => void = () => undefined;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/staff": reply(200, { staff: [] }),
+    "POST /api/staff": async (route) => {
+      posts += 1;
+      // Held until the test lets it go, so the presses below land while it is pending.
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      await route.fulfill({ status: 201, json: { staff: [rami] } });
+    },
+  });
+  await page.goto("/staff");
+  const form = page.getByRole("form", { name: "Add a barista" });
+  await form.getByLabel("Name").fill("Rami");
+  await form.getByLabel("PIN").fill("482913");
+  const add = form.getByRole("button", { name: /^Add/ });
+  await add.click();
+  // Pending: marked unavailable but still focusable, so the keyboard stays on it.
+  await expect(add).toHaveAttribute("aria-disabled", "true");
+  // Forced: Playwright would otherwise wait for an aria-disabled button to become available, as a person would not.
+  await add.click({ force: true });
+  await page.keyboard.press("Enter");
+  await expect(add).toBeFocused();
+  expect(posts).toBe(1);
+  answer();
+  await expect(form.getByRole("status")).toContainText("Saved.");
+  expect(posts).toBe(1);
+});
+
+test("leaves focus on the language switch when a shown problem changes language", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: PROGRAM, orderTypes: [] }),
+    "GET /api/cafe/join": reply(200, JOIN),
+  });
+  await page.goto("/cafe");
+  const margin = page.getByRole("form", { name: "Minimum margin" });
+  await margin.getByLabel("Minimum margin over cost (%)").fill("thirty");
+  await margin.getByRole("button", { name: "Save margin" }).click();
+  await expect(margin.getByLabel("Minimum margin over cost (%)")).toBeFocused();
+  await page.getByRole("button", { name: "العربية" }).click();
+  // The problem follows the language (it is not kept translated), and focus stays where the owner put it.
+  await expect(page.getByText("أدخل نسبة مئوية صحيحة من 0 إلى 1000، مثل 30.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "English" })).toBeFocused();
 });

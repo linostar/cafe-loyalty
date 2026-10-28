@@ -17,6 +17,23 @@ test("shows the build and tracks connectivity", async ({ page, context }) => {
   await expect(status).toHaveText("Online");
 });
 
+test("keeps online and offline apart by shape under forced colours", async ({ page, context }) => {
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.goto("/");
+  await expect(page.getByRole("status")).toHaveText("Online");
+  // The dot is filled in the theme's text colour online, a ring offline; the chip keeps an outline.
+  const dot = () =>
+    page.locator(".connection").evaluate((chip) => ({ fill: getComputedStyle(chip, "::before").backgroundColor, outline: getComputedStyle(chip).borderTopStyle }));
+  // A fill with no alpha (whatever colour the theme reports for it) is no fill.
+  const transparent = /^rgba\(.*, 0\)$/;
+  const online = await dot();
+  expect(online.outline).toBe("solid");
+  expect(online.fill).not.toMatch(transparent);
+  await context.setOffline(true);
+  await expect(page.getByRole("status")).toHaveText(/^Offline/);
+  expect((await dot()).fill).toMatch(transparent);
+});
+
 test("fits a 360 px phone screen without horizontal scrolling", async ({ page }) => {
   await page.goto("/");
   // Against the screen's width, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
