@@ -237,3 +237,45 @@ test("keeps a new campaign being typed when reloading the list fails, and loads 
   await expect(form.getByLabel("Name (English)")).toHaveValue("Late evenings");
   expect(listLoads).toBe(3);
 });
+
+for (const answer of ["the list as it was", "a failure"] as const) {
+  test(`keeps a campaign started while the list loads when the load then answers with ${answer}`, async ({ page }) => {
+    let releaseList: () => void = () => undefined;
+    const listHeld = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    await mockApi(page, {
+      "GET /api/auth/session": reply(200, SESSION),
+      "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+      // Answers only after the campaign below is started, from before it was.
+      "GET /api/campaigns": async (route: Route) => {
+        await listHeld;
+        await (answer === "a failure"
+          ? route.fulfill({ status: 500, json: { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true } })
+          : route.fulfill({ json: { running: [], ended: [] } }));
+      },
+      "POST /api/campaigns": reply(201, { running: [QUIET], ended: [] }),
+    });
+    await page.goto("/campaigns");
+    const form = page.getByRole("form", { name: "New campaign" });
+    await form.getByLabel("Name (English)").fill("Quiet afternoons");
+    await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+    await form.getByLabel("Monday").check();
+    await form.getByLabel("Starts at").fill("15:00");
+    await form.getByLabel("Ends at").fill("17:00");
+    await form.getByRole("textbox", { name: "Percent off" }).fill("20");
+    await form.getByRole("checkbox", { name: /^Espresso/ }).check();
+    const started = page.waitForResponse((response) => response.url().endsWith("/api/campaigns") && response.request().method() === "POST");
+    await form.getByRole("button", { name: "Start campaign" }).click();
+    await started;
+    await expect(page.getByRole("button", { name: "End Quiet afternoons" })).toBeVisible();
+    const listed = page.waitForResponse((response) => response.url().endsWith("/api/campaigns") && response.request().method() === "GET");
+    releaseList();
+    await listed;
+    // Nothing changes when the old answer is dropped, so there is nothing to wait for but time for it to have rendered.
+    await page.waitForTimeout(300);
+    await expect(page.getByRole("button", { name: "End Quiet afternoons" })).toBeVisible();
+    await expect(page.getByText("No campaigns running.")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  });
+}

@@ -1,5 +1,5 @@
 import { apiText, type FeedbackInbox, type ReviewQueue } from "@cafe-loyalty/shared";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import { ApiRequestError, apiRequest } from "./api.js";
 import { useApiText, useCommonT } from "./i18n.js";
@@ -39,17 +39,21 @@ export function useApiData<T extends z.ZodType>(
   const onSessionEnded = useContext(SessionEndedContext);
   const [state, setState] = useState<ApiData<z.output<T>>>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  // New data the page set (a write's answer): a load that started before it answers for an older state, so its result,
+  // or its failure, is dropped.
+  const writes = useRef(0);
 
   useEffect(() => {
     let current = true;
+    const writesAtStart = writes.current;
     apiRequest("GET", path, schema).then(
       (data) => {
-        if (current) {
+        if (current && writes.current === writesAtStart) {
           setState({ status: "loaded", data });
         }
       },
       (error: unknown) => {
-        if (!current) {
+        if (!current || writes.current !== writesAtStart) {
           return;
         }
         if (error instanceof ApiRequestError && error.failure.code === "UNAUTHENTICATED" && onSessionEnded !== null) {
@@ -67,6 +71,9 @@ export function useApiData<T extends z.ZodType>(
   return [
     state,
     (data) => {
+      if (!(data instanceof Function)) {
+        writes.current += 1;
+      }
       setState((current) => {
         if (!(data instanceof Function)) {
           return { status: "loaded", data };
