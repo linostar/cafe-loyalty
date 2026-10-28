@@ -1,5 +1,5 @@
 import { MAX_SYNC_BATCH, syncEventSigningPayload } from "@cafe-loyalty/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { countQueued, getMeta, listQueued, listRejected, unqueue } from "./storage.js";
 import { recordEvent, syncQueue } from "./sync.js";
 import { fakeApi, storePairedDevice, verifies } from "./test-helpers.js";
@@ -85,11 +85,47 @@ describe("syncQueue", () => {
     expect(await syncQueue()).toEqual({ settled: 0, remaining: 2, heldUntil: held.holdUntil });
     expect(calls).toHaveLength(1);
     // Taken back while held; not once its time has come (then it may be on its way).
-    expect(await unqueue(held.sequence, held.holdUntil)).toBe(false);
-    expect(await unqueue(held.sequence, held.holdUntil - 1)).toBe(true);
-    expect(await unqueue(held.sequence, held.holdUntil - 1)).toBe(false);
+    const now = vi.spyOn(Date, "now").mockReturnValue(held.holdUntil);
+    expect(await unqueue(held.sequence)).toBe(false);
+    now.mockReturnValue(held.holdUntil - 1);
+    expect(await unqueue(held.sequence)).toBe(true);
+    expect(await unqueue(held.sequence)).toBe(false);
+    now.mockRestore();
     expect(await syncQueue()).toEqual({ settled: 1, remaining: 0 });
     expect(calls[1]?.body).toMatchObject({ events: [{ sequence: 3 }] });
+  });
+
+  it("never sends a visit that an Undo racing the sync takes back, even as its hold ends between them (K2)", async () => {
+    await storePairedDevice();
+    const held = await recordEvent("visit.recorded", 3, STAFF_ID, { card: { kind: "phone", phone: "+96170123456" } }, new Date(), 10_000);
+    const calls = fakeApi((call) => {
+      const events = (call.body as { events: unknown[] }).events;
+      return { status: 200, body: { results: events.map((_, index) => ({ index, eventId: null, status: "applied", code: "OK" })) } };
+    });
+    // The sync starts a moment before the hold ends, and the tap comes as it ends, while the sync lists the queue.
+    const now = vi.spyOn(Date, "now").mockReturnValue(held.holdUntil - 1);
+    const syncing = syncQueue();
+    now.mockReturnValue(held.holdUntil);
+    const taken = await unqueue(held.sequence);
+    const summary = await syncing;
+    const sent = calls.some((call) => (call.body as { events: { sequence: number }[] }).events.some((event) => event.sequence === held.sequence));
+    expect({ taken, sent }).toEqual({ taken: false, sent: false });
+    expect(summary).toEqual({ settled: 0, remaining: 1, heldUntil: held.holdUntil });
+  });
+
+  it("ends a hold the clock was set back past, so the queue never waits on it (K2)", async () => {
+    await storePairedDevice();
+    const held = await recordEvent("visit.recorded", 3, STAFF_ID, { card: { kind: "phone", phone: "+96170123456" } }, new Date(), 10_000);
+    await record(1);
+    const calls = fakeApi((call) => {
+      const events = (call.body as { events: unknown[] }).events;
+      return { status: 200, body: { results: events.map((_, index) => ({ index, eventId: null, status: "applied", code: "OK" })) } };
+    });
+    // Corrected back by an hour: the hold now looks an hour away.
+    vi.spyOn(Date, "now").mockReturnValue(held.holdUntil - 10_000 - 60 * 60 * 1000);
+    expect(await unqueue(held.sequence)).toBe(false);
+    expect(await syncQueue()).toEqual({ settled: 2, remaining: 0 });
+    expect(calls).toHaveLength(1);
   });
 
   it("keeps the server's answer to the last visit it settled, to say why it got no stamps (K1)", async () => {

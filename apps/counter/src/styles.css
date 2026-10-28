@@ -404,8 +404,11 @@ main {
   margin-block-start: var(--space-2);
 }
 
-/* Nothing said: no gap for it in the action bar either (the regions stay, empty, so what comes is announced). */
-.action-bar > .statuses:not(:has(> :not(:empty))) {
+/*
+ * Nothing said: no gap for it in the action bar either (the regions stay, empty, so what comes is announced). A line
+ * said to screen readers only takes no room.
+ */
+.action-bar > .statuses:not(:has(> :not(:empty, .visually-hidden))) {
   margin-block-start: calc(var(--space-3) * -1);
 }
 

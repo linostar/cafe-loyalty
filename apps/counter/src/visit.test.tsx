@@ -427,8 +427,11 @@ describe("the counter's speed and recovery (phase 2)", () => {
       expect(vibrate).toHaveBeenCalledWith(50);
       const [queued] = await listQueued(10);
       expect(queued?.holdUntil).toBeGreaterThan(Date.now());
+      // Said too, for those who do not see the button come.
+      expect(screen.getByText("It can be undone for 10 seconds.")).toHaveAttribute("role", "status");
       fireEvent.click(screen.getByRole("button", { name: "Undo the visit" }));
       expect(await screen.findByText("Visit undone. Change the order and record it again.")).not.toHaveClass("saved");
+      expect(screen.queryByText("It can be undone for 10 seconds.")).not.toBeInTheDocument();
       expect(await listQueued(10)).toEqual([]);
       // As it was recorded: one coffee, for that number.
       expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
@@ -507,14 +510,70 @@ describe("the counter's speed and recovery (phase 2)", () => {
     nextScan = card;
     fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
-    expect(await screen.findByText("Reward ready: Free coffee.")).toBeInTheDocument();
+    // Shown, and announced: focus is on Record visit, after it.
+    const [shown, said] = await screen.findAllByText("Reward ready: Free coffee.");
+    expect(shown?.closest(".reward-ready")).not.toBeNull();
+    expect(said).toHaveAttribute("role", "status");
     expect(calls[0]).toMatchObject({ method: "POST", path: "/api/device/cards/status", body: { cardQr: card } });
     fireEvent.click(screen.getByRole("button", { name: "Give Free coffee now" }));
+    // The button goes; the keyboard moves on to the next step instead of the page.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Record visit" })).toHaveFocus();
+    });
     expect(await screen.findByText("Reward given: Free coffee. 0 stamps left on the card.")).toHaveClass("saved");
     expect(calls[1]).toMatchObject({ path: "/api/device/redemptions", body: { cardQr: card } });
     expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
     // The visit is still to record, for the same card.
     expect(screen.getByText("Card scanned.")).toBeInTheDocument();
+  });
+
+  it("offers a reward only from this scan's check, not an earlier one's (K6)", async () => {
+    await counter();
+    let ready = true;
+    const calls = fakeApi(() => ({ status: 200, body: { stamps: ready ? 9 : 0, rewardReady: ready } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    expect(await screen.findAllByText("Reward ready: Free coffee.")).toHaveLength(2);
+    // Given meanwhile (on the reward panel, or another phone): the same card's next scan is told it is not ready.
+    ready = false;
+    fireEvent.click(screen.getByRole("button", { name: "Clear card" }));
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    expect(await screen.findByText("Card scanned.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls).toHaveLength(2);
+    });
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+  });
+
+  it("keeps Give now off while the reward panel scans, so one redemption runs at a time", async () => {
+    await counter();
+    fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    const give = await screen.findByRole("button", { name: "Give Free coffee now" });
+    fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
+    expect(give).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(give).toBeEnabled();
+  });
+
+  it("announces a refused reward asked for from the visit once, showing it beside Try again too", async () => {
+    await counter();
+    fakeApi((call) =>
+      call.path === "/api/device/cards/status"
+        ? { status: 200, body: { stamps: 9, rewardReady: true } }
+        : { status: 404, body: envelope("NOT_FOUND", "This is not a loyalty card of this café.") },
+    );
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Give Free coffee now" }));
+    expect(await screen.findAllByText("This is not a loyalty card of this café.")).toHaveLength(2);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
   it("offers no reward for a card short of it", async () => {
@@ -573,6 +632,32 @@ describe("the counter's speed and recovery (phase 2)", () => {
       });
       expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
       expect(screen.getByText("The open order was cleared after 5 minutes without use.")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps an open order someone is using: a tap or a key press restarts its 5 minutes (K3)", async () => {
+    await counter({ online: false });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      act(() => {
+        vi.advanceTimersByTime(4 * 60 * 1000);
+      });
+      fireEvent.pointerDown(document.body);
+      act(() => {
+        vi.advanceTimersByTime(4 * 60 * 1000);
+      });
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      act(() => {
+        vi.advanceTimersByTime(4 * 60 * 1000);
+      });
+      expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(60 * 1000 + 15_000);
+      });
+      expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

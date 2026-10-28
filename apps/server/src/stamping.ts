@@ -444,6 +444,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
    * only: it tells the café's own paired devices what the reward screen already would, and gives nothing.
    */
   app.post("/device/cards/status", { config: { access: "device" } }, async (request) => {
+    requireSupportedBuild(request, options.releaseBuiltAt);
     const device = deviceOf(request);
     const body = parseInput(cardStatusRequestSchema, request.body);
     return withCafe(db, device.cafeId, async (trx) => {

@@ -307,6 +307,20 @@ export function storeStaff(keyId: string, staff: StaffEntry[]): Promise<boolean>
   });
 }
 
+/**
+ * Stores the signed-in barista's last use (ms), in one step: only while `staffId` is still the one signed in, so a
+ * sign-out or a switch made meanwhile (in this tab or another) is never undone.
+ */
+export function touchBarista(staffId: string, lastActiveAt: number): Promise<void> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const barista = await promised(meta.get("barista") as IDBRequest<MetaValues["barista"] | undefined>);
+    if (barista?.staffId === staffId) {
+      await promised(meta.put({ ...barista, lastActiveAt }, "barista"));
+    }
+  });
+}
+
 /** Stores the catalog the server sent for the device of key `keyId`, unless the phone was paired again meanwhile. */
 export function storeCatalog(keyId: string, catalog: DeviceCatalog): Promise<boolean> {
   return transact([META], "readwrite", async (transaction) => {
@@ -372,15 +386,25 @@ export function listQueued(limit: number): Promise<QueuedEvent[]> {
   return transact([QUEUE], "readonly", (transaction) => promised(transaction.objectStore(QUEUE).getAll(null, limit) as IDBRequest<QueuedEvent[]>));
 }
 
+/** The longest an event is held (ms): a hold further off than this is the clock having been set back, and ends now. */
+export const MAX_HOLD_MS = 60_000;
+
+/** Whether `entry` is still held at `now` (ms), so it is not sent yet and can still be taken back. */
+export const isHeld = (entry: QueuedEvent, now: number): boolean => {
+  const until = entry.holdUntil ?? 0;
+  return until > now && until - now <= MAX_HOLD_MS;
+};
+
 /**
  * Takes a held event back out of the queue, in one step: only while it is still held, so it has never been sent
- * (sync skips a held event). Returns whether it was taken back.
+ * (sync skips a held event). Returns whether it was taken back. The clock is read inside the transaction, after any
+ * sync that listed the queue before it: that sync read its own clock earlier, so it saw the event held too.
  */
-export function unqueue(sequence: number, now: number): Promise<boolean> {
+export function unqueue(sequence: number): Promise<boolean> {
   return transact([QUEUE], "readwrite", async (transaction) => {
     const store = transaction.objectStore(QUEUE);
     const queued = await promised(store.get(sequence) as IDBRequest<QueuedEvent | undefined>);
-    if (queued === undefined || (queued.holdUntil ?? 0) <= now) {
+    if (queued === undefined || !isHeld(queued, Date.now())) {
       return false;
     }
     await promised(store.delete(sequence));

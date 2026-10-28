@@ -212,7 +212,7 @@ for (const { width, height } of WIDTHS) {
       }
       await check("saved");
       await page.getByRole("button", { name: "Scan card", exact: true }).click();
-      await expect(page.getByText("Reward ready: Free coffee.")).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator(".reward-ready").getByText("Reward ready: Free coffee.")).toBeVisible({ timeout: 15_000 });
       await check("reward-ready");
       await page.getByRole("button", { name: "Switch barista" }).click();
       await expect(page.getByRole("button", { name: "Keep the order" })).toBeFocused();

@@ -26,6 +26,7 @@ import {
   storeCatalog,
   storeStaff,
   STORAGE_BUSY,
+  touchBarista,
   type DeviceRecord,
   type MetaValues,
   type RejectedEvent,
@@ -200,6 +201,9 @@ const REJECTION_REASONS: Readonly<Record<string, AppText>> = {
   CLOCK_SKEW: "the phone's clock was wrong; set its date and time to automatic",
   IDEMPOTENCY_CONFLICT: "it clashed with something this phone sent before",
 };
+
+/** What a proxy answers, in a page of its own (no error code), when the server behind it is down or restarting. */
+const GATEWAY_DOWN = new Set([502, 503, 504]);
 
 /** How the last attempt to send went: whether the server answered, and when events were last sent (ms), if ever. */
 interface SyncHealth {
@@ -757,9 +761,11 @@ function Counter() {
           setHealth((current) => ({ failed: false, sentAt: summary.settled > 0 ? Date.now() : current.sentAt }));
           setHeld(summary.heldUntil === undefined ? null : { until: summary.heldUntil });
         } catch (caught) {
-          // No answer, or one saying to try later: the chip shows that the server cannot be reached.
-          if (caught instanceof RequestError && caught.failure.retryable) {
-            setHealth((current) => ({ ...current, failed: true }));
+          // The chip says the server cannot be reached only when nothing answered: no response, or a proxy's page while
+          // the server is down. An answer (an error, a refusal, one this build cannot read) is said by its own message.
+          if (caught instanceof RequestError || caught instanceof DeviceUnpairedError) {
+            const unreached = caught instanceof RequestError && caught.failure.code === null && (caught.failure.status === null || GATEWAY_DOWN.has(caught.failure.status));
+            setHealth((current) => ({ ...current, failed: unreached }));
           }
           throw caught;
         }
@@ -861,7 +867,7 @@ function Counter() {
       if (Date.now() - seen >= BARISTA_IDLE_MS) {
         signOut("The barista was signed out after 4 hours without use." satisfies AppText);
       } else if (lastActivity() - (lastActiveAt ?? 0) >= 60_000) {
-        setMeta("barista", { staffId: baristaId, lastActiveAt: lastActivity() }).catch((caught: unknown) => {
+        touchBarista(baristaId, lastActivity()).catch((caught: unknown) => {
           console.error("Keeping the barista's last use failed", caught);
         });
       }

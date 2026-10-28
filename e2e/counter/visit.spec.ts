@@ -170,7 +170,8 @@ test("offers a scanned card's ready reward, given with the same scan (K6)", asyn
     },
   });
   await page.getByRole("button", { name: "Scan card", exact: true }).click();
-  await expect(page.getByText("Reward ready: Free coffee.")).toBeVisible({ timeout: 15_000 });
+  // The box; its words are also said to screen readers, in a status line of their own.
+  await expect(page.locator(".reward-ready").getByText("Reward ready: Free coffee.")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Give Free coffee now" }).click();
   await expect(page.getByText("Reward given: Free coffee. 0 stamps left on the card.")).toBeVisible();
   expect(redeemed).toMatchObject([{ cardQr: CAMERA_CARD_QR, staffId: RAMI.id }]);

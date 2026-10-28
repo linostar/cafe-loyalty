@@ -1,7 +1,7 @@
 import { MAX_SYNC_BATCH, isDeviceRevokedResponse, isFinalSyncStatus, readSyncResponse, syncEventSigningPayload } from "@cafe-loyalty/shared";
 import { z } from "zod";
 import { deviceRequestFor, signText, unpairDevice } from "./device.js";
-import { addQueued, countQueued, getMeta, listQueued, nextSequence, setMeta, settleQueued, type MetaValues, type RejectedEvent } from "./storage.js";
+import { addQueued, countQueued, getMeta, isHeld, listQueued, nextSequence, setMeta, settleQueued, type MetaValues, type RejectedEvent } from "./storage.js";
 
 /**
  * Records an event in the queue, signed with the device key, so it is kept on the phone until the server has
@@ -58,9 +58,11 @@ export interface SyncSummary {
 async function drain(): Promise<SyncSummary> {
   let settled = 0;
   for (;;) {
-    const queued = await listQueued(MAX_SYNC_BATCH);
+    // Read before the queue is: an Undo whose transaction runs after this listing reads a later time, so it never takes
+    // back an event this batch sends.
     const now = Date.now();
-    const firstHeld = queued.findIndex((entry) => (entry.holdUntil ?? 0) > now);
+    const queued = await listQueued(MAX_SYNC_BATCH);
+    const firstHeld = queued.findIndex((entry) => isHeld(entry, now));
     const batch = firstHeld === -1 ? queued : queued.slice(0, firstHeld);
     const heldUntil = firstHeld === -1 ? undefined : queued[firstHeld]?.holdUntil;
     if (batch.length === 0) {

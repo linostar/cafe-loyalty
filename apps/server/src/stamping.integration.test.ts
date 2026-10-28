@@ -931,6 +931,14 @@ describe("redemption", () => {
     expect((await status(theirs.qr)).json()).toMatchObject({ code: "NOT_FOUND" });
     expect((await status(theirs.qr, elsewhere.device.accessToken)).json()).toEqual({ stamps: 5, rewardReady: true });
     expect((await app.app.inject({ method: "POST", url: "/api/device/cards/status", payload: { cardQr: ready.qr } })).statusCode).toBe(401);
+    // A build past its support window gets no new actions, this read among them.
+    const old = await app.app.inject({
+      method: "POST",
+      url: "/api/device/cards/status",
+      headers: { authorization: `Bearer ${app.device.accessToken}`, [COUNTER_BUILT_AT_HEADER]: "2020-01-01T00:00:00Z" },
+      payload: { cardQr: ready.qr },
+    });
+    expect(old.statusCode).toBe(426);
   });
 });
 

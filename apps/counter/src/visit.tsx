@@ -84,6 +84,7 @@ const AR = {
     "{answer} تعذّر على هذا الهاتف نسيان المكافأة، فقد يعرضها مجدداً بعد إعادة التحميل: لا تمنحها مرتين.",
   Undo: "تراجع",
   "Undo the visit": "التراجع عن الزيارة",
+  "It can be undone for 10 seconds.": "يمكن التراجع عنها خلال 10 ثوانٍ.",
   "Visit undone. Change the order and record it again.": "أُلغيت الزيارة. عدّل الطلب وسجّله مجدداً.",
   "Too late to undo: the visit was sent. Tell the owner, who can fix it in Review.": "فات وقت التراجع: أُرسلت الزيارة. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
   "The visit could not be undone on this phone. Tell the owner, who can fix it in Review.": "تعذّر التراجع عن الزيارة على هذا الهاتف. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
@@ -313,6 +314,7 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
     setScanned(null);
     setPhone("");
     setApplyWinBack(false);
+    setRewardReady(null);
   };
 
   // Undo lasts as long as the visit is held unsent; then the button goes, and the keyboard moves off it to Scan card.
@@ -339,7 +341,7 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
     if (undo === undefined) {
       return;
     }
-    unqueue(undo.sequence, Date.now()).then(
+    unqueue(undo.sequence).then(
       (taken) => {
         if (taken) {
           // Back on screen as it was recorded, to fix and record again.
@@ -426,6 +428,7 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
         setScanned(null);
         setPhone("");
         setApplyWinBack(false);
+        setRewardReady(null);
         setProblem(null);
         setNotice({ say: (say) => say("The open order was cleared after 5 minutes without use."), saved: false });
       }
@@ -503,6 +506,11 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   const typedPhone = phone === "" ? null : normalizePhoneInput(phone);
   /** The answer to a reward given from this form, for the card scanned now. */
   const shownNote = rewardNote !== null && rewardNote.cardQr === scanned ? rewardNote : null;
+  /** The reward offered for the card scanned now, by name, if its check said it is ready (K6). */
+  const rewardShown =
+    scanned !== null && rewardReady === scanned && catalog.program !== null
+      ? nameIn(lang, { nameAr: catalog.program.rewardNameAr, nameEn: catalog.program.rewardNameEn })
+      : null;
 
   if (scanner === "visit") {
     return (
@@ -530,6 +538,8 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
             } else {
               const token = read.token;
               setScanned(token);
+              // An offer belongs to the check of this scan, not an earlier one (the reward may have been given since).
+              setRewardReady(null);
               setApplyWinBack(false);
               setPhone("");
               setProblem(null);
@@ -647,18 +657,22 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
               ) : null}
             </>
           )}
-          {scanned !== null && rewardReady === scanned && catalog.program !== null ? (
+          {scanned !== null && rewardShown !== null ? (
             <div className="reward-ready">
-              <p>{t("Reward ready: {reward}.", { reward: nameIn(lang, { nameAr: catalog.program.rewardNameAr, nameEn: catalog.program.rewardNameEn }) })}</p>
+              <p>{t("Reward ready: {reward}.", { reward: rewardShown })}</p>
+              {/* Disabled while either scanner is open: the reward panel's scan would start a second redemption alongside. */}
               <button
                 type="button"
                 className="primary"
+                disabled={scanner !== null}
                 onClick={() => {
                   setRewardReady(null);
                   onRedeem(scanned);
+                  // This button goes; the answer is said in the action bar, by the next step.
+                  requestAnimationFrame(() => recordButton.current?.focus());
                 }}
               >
-                {t("Give {reward} now", { reward: nameIn(lang, { nameAr: catalog.program.rewardNameAr, nameEn: catalog.program.rewardNameEn }) })}
+                {t("Give {reward} now", { reward: rewardShown })}
               </button>
             </div>
           ) : null}
@@ -709,6 +723,14 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
                 {t("Undo")}
               </button>
             )}
+            {/* Said too, as the button comes and goes unannounced. */}
+            <p role="status" className="hint">
+              {undo === undefined ? "" : t("It can be undone for 10 seconds.")}
+            </p>
+            {/* The offer above, announced: focus is already on Record visit, after it. */}
+            <p role="status" className="visually-hidden">
+              {rewardShown === null ? "" : t("Reward ready: {reward}.", { reward: rewardShown })}
+            </p>
             {shownNote?.message.problem === true ? (
               <p role="alert" className="field-error">
                 {shownNote.message.say(t, lang)}
@@ -741,6 +763,7 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
                   onClick={() => {
                     setScanned(null);
                     setApplyWinBack(false);
+                    setRewardReady(null);
                     // The button that replaces this one keeps the keyboard where it was.
                     requestAnimationFrame(() => scanButton.current?.focus());
                   }}
@@ -799,7 +822,8 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
   const t = useT(AR);
   const lang = useLang();
   const [pending, setPending] = useState<PendingReward | null>(null);
-  const [message, setMessage] = useState<RewardMessage | null>(null);
+  /** `echo`: what the visit form says already, shown here but not announced a second time. */
+  const [message, setMessage] = useState<(RewardMessage & { echo?: boolean }) | null>(null);
   const [sending, setSending] = useState(false);
   /** Bumped whenever the scanner closes or an attempt ends: the keyboard goes back to the panel's button. */
   const [refocus, setRefocus] = useState(0);
@@ -857,8 +881,8 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
       return;
     }
     onRequestDone({ cardQr: asked, message: { say, problem } });
-    // A problem stays here too, beside the Try again it may need.
-    setMessage(problem ? { say, problem } : null);
+    // A problem stays here too, beside the Try again it may need; the visit form's alert has announced it.
+    setMessage(problem ? { say, problem, echo: true } : null);
   };
 
   /** The server's answer, so the redemption is done with either way. */
@@ -1001,7 +1025,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
         </>
       )}
       {message?.problem === true ? (
-        <p role="alert" className="field-error">
+        <p role={message.echo === true ? undefined : "alert"} className="field-error">
           {message.say(t, lang)}
         </p>
       ) : null}
