@@ -40,9 +40,9 @@ function OfferRow({ name, offer }: { name: string; offer: OfferResult }) {
 export function ResultsPage() {
   const t = useT(AR);
   const lang = useLang();
-  const [state] = useApiData("/api/results", resultsReportSchema);
+  const [state, , retry] = useApiData("/api/results", resultsReportSchema);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const report = state.data;
   const { window } = report;

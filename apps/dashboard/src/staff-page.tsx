@@ -173,14 +173,14 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
 export function StaffPage() {
   const t = useT(AR);
   const [reloadKey, setReloadKey] = useState(0);
-  const [state, setList] = useApiData("/api/staff", staffListSchema, reloadKey);
+  const [state, setList, retry] = useApiData("/api/staff", staffListSchema, reloadKey);
   const reload = () => {
     setReloadKey((value) => value + 1);
   };
   const lang = useLang();
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const staff = state.data.staff;
 

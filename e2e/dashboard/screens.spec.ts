@@ -183,6 +183,9 @@ for (const { lang, locale } of LANGS) {
           await mockApi(page, ADMIN);
           await page.goto(path);
           await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+          // Titled by the page's heading, as the owner's pages are (WCAG 2.4.2).
+          const heading = ((await page.getByRole("heading", { level: 2 }).textContent()) ?? "").trim();
+          await expect(page).toHaveTitle(`${heading} · ${PRODUCT_NAME} ${lang === "ar" ? "الإدارة" : "Admin"}`);
           await capture(page, testInfo, `dashboard-${name}${suffix}`);
           await check(page);
           await expectFocusNeverHidden(page);

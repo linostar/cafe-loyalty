@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import { getMeta, listQueued, setMeta } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice } from "./test-helpers.js";
+import { LangProvider } from "./i18n.js";
 import { CounterScreen, cafeClock } from "./visit.js";
 
 /** What the camera "sees" next; the real scanner needs a camera, which tests do not have. */
@@ -58,6 +59,25 @@ async function counter(options: { online?: boolean; catalog?: DeviceCatalog } = 
 }
 
 describe("visits", () => {
+  it("keeps the phone number left to right in Arabic, and its example in reading order", async () => {
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(["ar-LB"]);
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    render(
+      <LangProvider>
+        <CounterScreen device={device} barista={barista} catalog={CATALOG} online onBusy={vi.fn()} />
+      </LangProvider>,
+    );
+    const phone = screen.getByLabelText("لا بطاقة؟ رقم هاتف الزبون المحمول");
+    // Digits typed into a right-to-left page would otherwise show their groups right to left ("456 123 70").
+    expect(phone).toHaveAttribute("dir", "ltr");
+    fireEvent.click(screen.getByRole("button", { name: /^زيادة .*قهوة/ }));
+    fireEvent.change(phone, { target: { value: "70 12" } });
+    fireEvent.click(screen.getByRole("button", { name: "تسجيل الزيارة" }));
+    // The example number sits in left-to-right isolates.
+    expect(await screen.findByRole("alert")).toHaveTextContent("مثل ⁦70 123 456⁩.");
+  });
+
   it("says an offline visit is sent once the phone is online", async () => {
     await counter({ online: false });
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));

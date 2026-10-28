@@ -20,6 +20,42 @@ const QUIET = {
   endedAt: null,
 };
 
+test("focuses the first part of a new campaign with a problem, the days and the times included", async ({ page }) => {
+  let posts = 0;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [] }),
+    "POST /api/campaigns": async (route: Route) => {
+      posts += 1;
+      await route.fulfill({ status: 201, json: { running: [], ended: [] } });
+    },
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  const start = form.getByRole("button", { name: "Start campaign" });
+  await form.getByLabel("Name (English)").fill("Quiet afternoons");
+  await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+  // No day picked: the first day takes focus, described by the problem.
+  await start.click();
+  await expect(form.getByLabel("Monday")).toBeFocused();
+  await expect(form.getByLabel("Monday")).toHaveAccessibleDescription("Pick at least one day.");
+  // Only the times wrong: the end, which must come after the start, takes focus.
+  await form.getByLabel("Monday").check();
+  await form.getByLabel("Starts at").fill("17:00");
+  await form.getByLabel("Ends at").fill("15:00");
+  await form.getByRole("textbox", { name: "Percent off" }).fill("20");
+  await form.getByRole("checkbox", { name: /^Espresso/ }).check();
+  await start.click();
+  await expect(form.getByLabel("Ends at")).toBeFocused();
+  // No order type: the first one takes focus.
+  await form.getByLabel("Ends at").fill("18:00");
+  await form.getByRole("checkbox", { name: /^Espresso/ }).uncheck();
+  await start.click();
+  await expect(form.getByRole("checkbox", { name: /^Espresso/ })).toBeFocused();
+  expect(posts).toBe(0);
+});
+
 test("starts a campaign, warning about an order type it takes below the margin floor, then ends it (AC 35)", async ({ page }) => {
   let campaigns: { running: (typeof QUIET)[]; ended: (typeof QUIET | (Omit<typeof QUIET, "endedAt"> & { endedAt: string }))[] } = { running: [], ended: [] };
   await mockApi(page, {

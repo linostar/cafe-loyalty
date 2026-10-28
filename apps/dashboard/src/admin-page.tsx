@@ -637,9 +637,9 @@ function BackToList() {
 function CafeListPage() {
   const t = useT(AR);
   const dayFormat = dateFormat(useLang(), DAY);
-  const [state] = useApiData("/api/admin/cafes", adminCafesSchema);
+  const [state, , retry] = useApiData("/api/admin/cafes", adminCafesSchema);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const { cafes } = state.data;
   return (
@@ -701,11 +701,11 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
   const t = useT(AR);
   const lang = useLang();
   const dayFormat = dateFormat(lang, DAY);
-  const [state, setData] = useApiData("/api/admin/cafes", adminCafesSchema);
+  const [state, setData, retry] = useApiData("/api/admin/cafes", adminCafesSchema);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const [invite, setInvite] = useState<AdminInvite | null>(null);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const cafe = state.data.cafes.find((entry) => entry.id === cafeId);
   if (cafe === undefined) {

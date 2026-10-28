@@ -104,6 +104,85 @@ test("leads the keyboard past the top bar and navigation to the page", async ({ 
   await expect(page.getByRole("main")).toBeFocused();
 });
 
+test("leads the keyboard past the operator's top bar to the page too", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, { operator: { id: "c01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", email: "operator@example.com" } }),
+    "GET /api/admin/cafes": reply(200, { cafes: [] }),
+  });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { level: 2, name: "Cafés" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+});
+
+test("loads a failed page again in place, keeping what was typed elsewhere on it", async ({ page }) => {
+  await page.unrouteAll();
+  let joinLoads = 0;
+  await mockApi(page, {
+    ...SIGNED_IN,
+    "GET /api/cafe/join": async (route) => {
+      joinLoads += 1;
+      await (joinLoads === 1
+        ? route.fulfill({ status: 500, json: { code: "INTERNAL", message: "Something went wrong on this page. Reload it and try again.", retryable: true } })
+        : route.fulfill({ json: { joinUrl: "https://card.example.test/join/0123456789abcdef0123456789abcdef" } }));
+    },
+  });
+  await page.goto("/cafe");
+  const name = page.getByRole("form", { name: "Café name" }).getByLabel("Name");
+  await name.fill("Café Najjar Two");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("img", { name: "QR code customers scan to get a loyalty card" })).toBeVisible();
+  // Only the failed section loaded again: the page, and the unsaved name, stayed.
+  await expect(name).toHaveValue("Café Najjar Two");
+  expect(joinLoads).toBe(2);
+});
+
+test("gives the profile button a 44 px target, as the other controls have", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, SIGNED_IN);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/staff");
+  const profile = page.getByRole("button", { name: /^Profile: / });
+  await expect(profile).toBeVisible();
+  const box = await profile.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(44);
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+});
+
+test("frames each busy level differently under forced colours, as the legend does", async ({ page }) => {
+  await page.unrouteAll();
+  await mockApi(page, {
+    ...SIGNED_IN,
+    // One hour at each level, so every level is drawn.
+    "GET /api/cafe/visit-hours": reply(200, visitHours(Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (_, hour) => (day === 0 && hour < 5 ? hour * 25 : 0))))),
+  });
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.goto("/");
+  // The table loads after the page: read the frames once it is drawn.
+  await expect(page.getByRole("table", { name: "Member visits by hour and weekday" }).locator("td.level-4")).toHaveCount(1);
+  const frames = await page.evaluate(() =>
+    [1, 2, 3, 4].map((level) => {
+      const cell = document.querySelector(`.visit-hours td.level-${String(level)}`);
+      const swatch = document.querySelector(`.heat-swatch.level-${String(level)}`);
+      const cellStyle = cell === null ? null : getComputedStyle(cell);
+      const swatchStyle = swatch === null ? null : getComputedStyle(swatch);
+      return {
+        cell: cellStyle === null ? "missing" : `${cellStyle.outlineStyle} ${cellStyle.outlineWidth}`,
+        swatch: swatchStyle === null ? "missing" : `${swatchStyle.borderTopStyle} ${swatchStyle.borderTopWidth}`,
+      };
+    }),
+  );
+  expect(frames).toEqual([
+    { cell: "dotted 1px", swatch: "dotted 1px" },
+    { cell: "solid 1px", swatch: "solid 1px" },
+    { cell: "solid 2px", swatch: "solid 2px" },
+    { cell: "solid 4px", swatch: "solid 4px" },
+  ]);
+});
+
 test("says an unknown address is no page, with the way home, signed in", async ({ page }) => {
   await page.unrouteAll();
   await mockApi(page, SIGNED_IN);

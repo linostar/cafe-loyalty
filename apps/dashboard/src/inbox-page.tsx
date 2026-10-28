@@ -62,12 +62,12 @@ function Message({ item, pending, onRead }: { item: FeedbackItem; pending: boole
 export function InboxPage() {
   const t = useT(AR);
   const lang = useLang();
-  const [state, setData] = useApiData("/api/feedback", feedbackInboxSchema);
+  const [state, setData, retry] = useApiData("/api/feedback", feedbackInboxSchema);
   const attention = useContext(AttentionContext);
   const { pending, error, submit } = useSubmit();
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const { items, unread, more } = state.data;
   return (

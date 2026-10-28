@@ -40,9 +40,11 @@ describe("t", () => {
     }
   });
 
-  it("counts the program's stamps in each language's plural form", () => {
-    expect(t("ar", "programSummary", { stamps: count("ar", "stamps", 11), reward: "قهوة" })).toBe("اجمع ⁨11 ختمًا⁩ واحصل على: ⁨قهوة⁩.");
-    expect(t("en", "programSummary", { stamps: count("en", "stamps", 1), reward: "Coffee" })).toBe("Collect ⁨1 stamp⁩ and get: ⁨Coffee⁩.");
+  it("counts the program's stamps in each language's plural form, as the object of collect", () => {
+    // The object of "اجمع" takes the accusative in Arabic's one and two forms.
+    expect([1, 2, 3, 11].map((n) => count("ar", "stampsToCollect", n))).toEqual(["ختماً واحداً", "ختمين", "3 أختام", "11 ختمًا"]);
+    expect(t("ar", "programSummary", { stamps: count("ar", "stampsToCollect", 1), reward: "قهوة" })).toBe("اجمع ⁨ختماً واحداً⁩ واحصل على: ⁨قهوة⁩.");
+    expect(t("en", "programSummary", { stamps: count("en", "stampsToCollect", 1), reward: "Coffee" })).toBe("Collect ⁨1 stamp⁩ and get: ⁨Coffee⁩.");
   });
 });
 

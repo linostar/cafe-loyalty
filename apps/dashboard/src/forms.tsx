@@ -33,7 +33,7 @@ const SubmitAttemptContext = createContext(0);
 /**
  * A form that checks its own fields: the browser's validation bubbles are off (they come in the browser's language,
  * not the page's, and vanish), so every problem shows as the field's own message, and after each attempt the first
- * field with one gets focus (Field).
+ * control with one gets focus (useFocusWhenInvalid, which every input marked `aria-invalid` in a Form uses).
  */
 export function Form({ onSubmit, children, ...props }: Omit<ComponentProps<"form">, "noValidate">) {
   const [attempt, setAttempt] = useState(0);
@@ -52,26 +52,33 @@ export function Form({ onSubmit, children, ...props }: Omit<ComponentProps<"form
 }
 
 /**
- * A labelled input whose hint and error are announced with it. When a send of its form leaves it with an error (found
- * before sending, or in the answer) and it is the form's first field with one, it takes focus, so its message is read.
+ * For an input marked `aria-invalid` while `invalid`: when a send of its form leaves it with a problem (found before
+ * sending, or in the answer) and it is the form's first control with one, it takes focus, so its message is read. Keyed
+ * on whether there is a problem, not on its text, so switching language (which retranslates the text) moves nothing.
  */
+export function useFocusWhenInvalid<T extends HTMLInputElement>(invalid: boolean): RefObject<T | null> {
+  const input = useRef<T>(null);
+  const attempt = useContext(SubmitAttemptContext);
+  useEffect(() => {
+    const element = input.current;
+    if (!invalid || element === null || attempt === 0) {
+      return;
+    }
+    if (element.form?.querySelector('[aria-invalid="true"]') === element) {
+      element.focus();
+    }
+  }, [invalid, attempt]);
+  return input;
+}
+
+/** A labelled input whose hint and error are announced with it, and which takes focus after a failed send (useFocusWhenInvalid). */
 export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [hint === undefined ? null : hintId, error === undefined ? null : errorId].filter((part) => part !== null).join(" ");
   const api = useApiText();
-  const input = useRef<HTMLInputElement>(null);
-  const attempt = useContext(SubmitAttemptContext);
-  useEffect(() => {
-    const element = input.current;
-    if (error === undefined || element === null || attempt === 0) {
-      return;
-    }
-    if (element.form?.querySelector('[aria-invalid="true"]') === element) {
-      element.focus();
-    }
-  }, [error, attempt]);
+  const input = useFocusWhenInvalid(error !== undefined);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>

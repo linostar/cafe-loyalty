@@ -517,7 +517,18 @@ describe("web card", () => {
       const response = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
       expect(response.statusCode).toBe(404);
       expect(response.body).toContain("This card link no longer works.");
+      // The way on: restoring the card by its recovery email.
+      expect(response.body).toContain('<a class="link-button" href="/recover?lang=en">Restore your card</a>');
     }
+    // A page that has no way on gets no link.
+    expect((await app.inject({ method: "GET", url: "/c?lang=en" })).body).not.toContain('class="link-button"');
+  });
+
+  it("keeps a mistyped email in the recovery form", async () => {
+    const { app } = await harness();
+    const response = await app.inject({ method: "POST", url: "/recover", ...formBody({ email: "rana@example", lang: "en" }) });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('value="rana@example"');
   });
 });
 
@@ -740,6 +751,8 @@ describe("email change undo", () => {
     const wrong = await h.app.inject({ method: "POST", url: undoPath, ...formBody({ email: attackerEmail, lang: "en" }) });
     expect(wrong.statusCode).toBe(400);
     expect(wrong.body).toContain("This is not the address this link was sent to.");
+    // What was typed stays in the field, escaped, so the customer can correct it.
+    expect(wrong.body).toContain(`value="${attackerEmail}"`);
     const arabicWrong = await h.app.inject({ method: "POST", url: undoPath, ...formBody({ email: "other@example.com", lang: "ar" }) });
     expect(arabicWrong.body).toContain("هذا ليس العنوان الذي أُرسل إليه هذا الرابط.");
 

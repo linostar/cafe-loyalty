@@ -3,8 +3,11 @@ import { MAX_CENTS, toLatinDigits } from "@cafe-loyalty/shared";
 /** Input as typed on any keyboard: Arabic-Indic and Persian digits as ASCII, the Arabic decimal separator (٫) as ".". */
 const normalized = (input: string): string => toLatinDigits(input).replaceAll("٫", ".").trim();
 
-/** Thousands written with separators, as the page's own examples do ("1,000,000"), Latin or Arabic (٬): "1,500" is 1500. */
-const THOUSANDS = /^\$?\s*\d{1,3}(?:[,٬]\d{3})+(?:\.\d{1,2})?$/;
+/**
+ * Thousands written with separators, as the page's own examples do ("1,000,000"), Latin or Arabic (٬): "1,500" is
+ * 1500. A first group of 0 is a decimal comma ("0,500"), so it is refused.
+ */
+const THOUSANDS = /^\$?\s*[1-9]\d{0,2}(?:[,٬]\d{3})+(?:\.\d{1,2})?$/;
 
 /** Dollars as typed ("2", "2.5", "2.50", "$2.50", "1,500", "٢٫٥٠") to whole cents, or null when it is not an amount up to $1,000,000. */
 export function parseUsdInput(input: string): number | null {

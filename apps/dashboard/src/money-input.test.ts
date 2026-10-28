@@ -19,7 +19,7 @@ describe("parseUsdInput", () => {
     expect(parseUsdInput(input)).toBe(cents);
   });
 
-  it.each(["", "abc", "2.505", "-1", "2,50", "1,50", "1,5000", "15,00", "10000000", "1000000.01", "1,000,000.01"])("refuses %j", (input) => {
+  it.each(["", "abc", "2.505", "-1", "2,50", "1,50", "1,5000", "15,00", "10000000", "1000000.01", "1,000,000.01", "0,500", "00,500", "0٬500"])("refuses %j", (input) => {
     expect(parseUsdInput(input)).toBeNull();
   });
 });

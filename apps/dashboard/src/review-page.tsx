@@ -155,7 +155,7 @@ export function ReviewPage() {
   const t = useT(AR);
   const lang = useLang();
   const [reload, setReload] = useState(0);
-  const [state] = useApiData("/api/review-queue", reviewQueueSchema, reload);
+  const [state, , retry] = useApiData("/api/review-queue", reviewQueueSchema, reload);
   const attention = useContext(AttentionContext);
   /** Every item loaded so far (the first page, then each "Show more"), less the ones decided here. */
   const [items, setItems] = useState<ReviewItem[] | null>(null);
@@ -174,7 +174,7 @@ export function ReviewPage() {
   }, [focusId]);
 
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const shown = items ?? state.data.items;
   const cursor = items === null ? state.data.nextCursor : nextCursor;

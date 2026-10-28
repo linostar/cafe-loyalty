@@ -486,6 +486,9 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
   /** The edit just closed was saved: the row says so, next to where focus lands. */
   const [saved, setSaved] = useState(false);
   const item = useFocusOnChange<HTMLLIElement>(editing);
+  // The same keyed Notice in both views of the row, so it stays in the page while the edit is open and its "Saved."
+  // is announced when the edit closes (a region added together with its text often is not).
+  const notice = <Notice key="saved">{saved ? t("Saved.") : null}</Notice>;
   if (editing) {
     return (
       <li ref={item}>
@@ -497,6 +500,7 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
             setEditing(false);
           }}
         />
+        {notice}
       </li>
     );
   }
@@ -540,12 +544,13 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
         type="button"
         aria-label={t("Edit {name}", { name: lang === "ar" ? orderType.nameAr : orderType.nameEn })}
         onClick={() => {
+          setSaved(false);
           setEditing(true);
         }}
       >
         {t("Edit")}
       </button>
-      <Notice>{saved ? t("Saved.") : null}</Notice>
+      {notice}
     </li>
   );
 }
@@ -553,10 +558,10 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
 /** The QR customers scan at the counter to get a card (AC 4), for printing; replacing it retires the old one. */
 function SignupQr() {
   const t = useT(AR);
-  const [state, setLink] = useApiData("/api/cafe/join", joinLinkSchema);
+  const [state, setLink, retry] = useApiData("/api/cafe/join", joinLinkSchema);
   const { pending, error, submit } = useSubmit();
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(state.data.joinUrl, { border: 4 }))}`;
   return (
@@ -612,9 +617,9 @@ function SettingsSection({ id, title, children }: { id: (typeof SECTIONS)[number
 /** `/cafe`: the café's name, loyalty program, menu, offers and signup, in sections (AC 1). */
 export function CafePage() {
   const t = useT(AR);
-  const [state, setSetup] = useApiData("/api/cafe", cafeSetupSchema);
+  const [state, setSetup, retry] = useApiData("/api/cafe", cafeSetupSchema);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const setup = state.data;
 

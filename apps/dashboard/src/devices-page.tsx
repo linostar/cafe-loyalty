@@ -103,13 +103,13 @@ export function DevicesPage() {
   const t = useT(AR);
   const lang = useLang();
   const [reload, setReload] = useState(0);
-  const [state, setDevices] = useApiData("/api/devices", devicesSchema, reload);
+  const [state, setDevices, retry] = useApiData("/api/devices", devicesSchema, reload);
   const [newCode, setNewCode] = useState<PairingCode | null>(null);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const { pending, error, submit } = useSubmit();
   const pairing = useFocusOnChange<HTMLDivElement>(newCode === null);
   if (state.status !== "loaded") {
-    return <PageStatus state={state} />;
+    return <PageStatus state={state} onRetry={retry} />;
   }
   const devices: Devices = state.data;
   const timeFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });

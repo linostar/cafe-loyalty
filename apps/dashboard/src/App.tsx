@@ -236,7 +236,7 @@ function VisitHours() {
   const api = useApiText();
   const lang = useLang();
   const [reloadKey, setReloadKey] = useState(0);
-  const [state] = useApiData("/api/cafe/visit-hours", visitHoursSchema, reloadKey);
+  const [state, , retry] = useApiData("/api/cafe/visit-hours", visitHoursSchema, reloadKey);
   const failed = state.status === "failed";
   // Re-armed by every load and by every change between failing and not, so the next one waits the right time.
   useEffect(() => {
@@ -287,7 +287,7 @@ function VisitHours() {
       ) : null}
       {data === null ? (
         state.status === "loading" ? (
-          <PageStatus state={state} />
+          <PageStatus state={state} onRetry={retry} />
         ) : null
       ) : shown.length === 0 ? (
         <p className="empty">{t("No member visits in the last {weeks} weeks yet.", weeks)}</p>
@@ -400,14 +400,14 @@ function NeedsYou() {
 function FirstMonth() {
   const t = useT(AR);
   const api = useApiText();
-  const [state] = useApiData("/api/results", resultsReportSchema);
+  const [state, , retry] = useApiData("/api/results", resultsReportSchema);
   return (
     <section aria-labelledby="first-month-title" className="card">
       <h3 id="first-month-title">{t("First month so far")}</h3>
       {state.status === "failed" ? (
         <p className="form-error">{t("Could not load your first month: {message}", { message: api(state.message) })}</p>
       ) : state.status === "loading" ? (
-        <PageStatus state={state} />
+        <PageStatus state={state} onRetry={retry} />
       ) : state.data.window === null ? (
         <p className="hint">{t("Your first month starts with your first member visit.")}</p>
       ) : (

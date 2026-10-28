@@ -264,3 +264,54 @@ test("checks the café's own fields itself, in the page's language, and focuses 
   await expect(add.getByText("Enter a price in dollars up to 1,000,000, such as 2.50.")).toBeVisible();
   await expect(add.getByLabel("Price (USD)")).toBeFocused();
 });
+
+test("sends a form once however often it is pressed while its request is on its way", async ({ page }) => {
+  const rami = { id: "5d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f42", name: "Rami", revoked: false, createdAt: "2026-10-08T12:00:00.000Z" };
+  let posts = 0;
+  let answer: () => void = () => undefined;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/staff": reply(200, { staff: [] }),
+    "POST /api/staff": async (route) => {
+      posts += 1;
+      // Held until the test lets it go, so the presses below land while it is pending.
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      await route.fulfill({ status: 201, json: { staff: [rami] } });
+    },
+  });
+  await page.goto("/staff");
+  const form = page.getByRole("form", { name: "Add a barista" });
+  await form.getByLabel("Name").fill("Rami");
+  await form.getByLabel("PIN").fill("482913");
+  const add = form.getByRole("button", { name: /^Add/ });
+  await add.click();
+  // Pending: marked unavailable but still focusable, so the keyboard stays on it.
+  await expect(add).toHaveAttribute("aria-disabled", "true");
+  // Forced: Playwright would otherwise wait for an aria-disabled button to become available, as a person would not.
+  await add.click({ force: true });
+  await page.keyboard.press("Enter");
+  await expect(add).toBeFocused();
+  expect(posts).toBe(1);
+  answer();
+  await expect(form.getByRole("status")).toContainText("Saved.");
+  expect(posts).toBe(1);
+});
+
+test("leaves focus on the language switch when a shown problem changes language", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: PROGRAM, orderTypes: [] }),
+    "GET /api/cafe/join": reply(200, JOIN),
+  });
+  await page.goto("/cafe");
+  const margin = page.getByRole("form", { name: "Minimum margin" });
+  await margin.getByLabel("Minimum margin over cost (%)").fill("thirty");
+  await margin.getByRole("button", { name: "Save margin" }).click();
+  await expect(margin.getByLabel("Minimum margin over cost (%)")).toBeFocused();
+  await page.getByRole("button", { name: "العربية" }).click();
+  // The problem follows the language (it is not kept translated), and focus stays where the owner put it.
+  await expect(page.getByText("أدخل نسبة مئوية صحيحة من 0 إلى 1000، مثل 30.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "English" })).toBeFocused();
+});

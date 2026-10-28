@@ -103,7 +103,7 @@ const sendPage = (reply: FastifyReply, status: number, document: string) =>
  * The way on from an error: a new recovery link for a link or card that no longer works, and the same page again
  * after our own failure on a page load (a form's path answers only its post, so a failed post gets no link).
  */
-function nextStep(lang: Lang, key: MessageKey, method: string, path: string): NextStep | undefined {
+export function nextStep(lang: Lang, key: MessageKey, method: string, path: string): NextStep | undefined {
   if (key === "linkExpired") {
     return { href: `/recover?lang=${lang}`, label: t(lang, "askNewLink") };
   }

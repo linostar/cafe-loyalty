@@ -282,6 +282,11 @@ const COUNTED = {
     en: { one: "{n} stamp", other: "{n} stamps" },
     ar: { zero: "{n} ختم", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختمًا", other: "{n} ختم" },
   },
+  /** Stamps as a verb's object ("اجمع ختماً واحداً"): Arabic's one and two take the accusative there. */
+  stampsToCollect: {
+    en: { one: "{n} stamp", other: "{n} stamps" },
+    ar: { zero: "{n} ختم", one: "ختماً واحداً", two: "ختمين", few: "{n} أختام", many: "{n} ختمًا", other: "{n} ختم" },
+  },
   minutes: {
     en: { one: "{n} minute", other: "{n} minutes" },
     ar: { zero: "{n} دقيقة", one: "دقيقة واحدة", two: "دقيقتين", few: "{n} دقائق", many: "{n} دقيقة", other: "{n} دقيقة" },

@@ -11,9 +11,9 @@ import {
   type Lang,
   type OrderType,
 } from "@cafe-loyalty/shared";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { apiRequest, isStale } from "./api.js";
-import { ConfirmButton, Field, Form, FormError, Notice, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Translate, type Later, useSay } from "./i18n.js";
 import { parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
@@ -110,14 +110,39 @@ function describe(t: T, lang: Lang, campaign: Campaign, orderTypes: readonly Ord
   });
 }
 
-/** A labelled time of day; the hint says what an empty or midnight end means. */
+/**
+ * A checkbox and its label, marked invalid (and so focused after a failed send, useFocusWhenInvalid) when `invalid`:
+ * the first day when none is picked, an order type below its floor, the first order type when none is picked.
+ */
+function Choice({ invalid, describedBy, checked, onChange, className, children }: { invalid: boolean; describedBy: string | undefined; checked: boolean; onChange: (checked: boolean) => void; className?: string; children: ReactNode }) {
+  const input = useFocusWhenInvalid(invalid);
+  return (
+    <label className={className}>
+      <input
+        ref={input}
+        type="checkbox"
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={describedBy}
+        checked={checked}
+        onChange={(event) => {
+          onChange(event.target.checked);
+        }}
+      />{" "}
+      {children}
+    </label>
+  );
+}
+
+/** A labelled time of day; the hint says what an empty or midnight end means. Focused after a failed send, as a Field is. */
 function TimeField({ label, value, onChange, hint, error }: { label: string; value: string; onChange: (value: string) => void; hint?: string; error?: string | undefined }) {
   const id = useId();
   const describedBy = [hint === undefined ? null : `${id}-hint`, error === undefined ? null : `${id}-error`].filter((part) => part !== null).join(" ");
+  const input = useFocusWhenInvalid(error !== undefined);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
       <input
+        ref={input}
         id={id}
         type="time"
         step={60}
@@ -224,16 +249,17 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
         <legend>{t("Days")}</legend>
         <div className="choices">
           {WEEK.map((day, index) => (
-            <label key={day.getTime()}>
-              <input
-                type="checkbox"
-                checked={weekdays.includes(index + 1)}
-                onChange={(event) => {
-                  setWeekdays(event.target.checked ? [...weekdays, index + 1] : weekdays.filter((entry) => entry !== index + 1));
-                }}
-              />{" "}
+            <Choice
+              key={day.getTime()}
+              invalid={problems.weekdays !== undefined && index === 0}
+              describedBy={problems.weekdays !== undefined && index === 0 ? "campaign-days-error" : undefined}
+              checked={weekdays.includes(index + 1)}
+              onChange={(checked) => {
+                setWeekdays(checked ? [...weekdays, index + 1] : weekdays.filter((entry) => entry !== index + 1));
+              }}
+            >
               {longDay.format(day)}
-            </label>
+            </Choice>
           ))}
         </div>
         {problems.weekdays === undefined ? null : (
@@ -289,27 +315,28 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
         </p>
         {onSale.length === 0 ? <p>{t("No order types on sale. Add some on the Café page first.")}</p> : null}
         <ul className="choices-list">
-          {onSale.map((type) => {
+          {onSale.map((type, index) => {
             const floor = marginFloorCents(type.costCents, minMarginPercent);
             const kept = discount === null || keepsMargin(type.priceCents, type.costCents, discount, minMarginPercent);
             const after = discount === null ? null : type.priceCents - unitDiscountCents(type.priceCents, discount);
             const prices = { name: nameOf(lang, type), price: formatUsd(type.priceCents, "en"), floor: formatUsd(floor, "en") };
+            const belowFloor = !kept && chosen.includes(type.id);
+            const noneChosen = chosen.length === 0 && problems.orderTypeIds !== undefined && index === 0;
             return (
               <li key={type.id}>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    aria-invalid={kept || !chosen.includes(type.id) ? undefined : true}
-                    aria-describedby={kept || !chosen.includes(type.id) ? undefined : `campaign-type-${type.id}-error`}
-                    checked={chosen.includes(type.id)}
-                    onChange={(event) => {
-                      setChosen(event.target.checked ? [...chosen, type.id] : chosen.filter((id) => id !== type.id));
-                    }}
-                  />{" "}
+                <Choice
+                  className="check"
+                  invalid={belowFloor || noneChosen}
+                  describedBy={belowFloor ? `campaign-type-${type.id}-error` : noneChosen ? "campaign-types-error" : undefined}
+                  checked={chosen.includes(type.id)}
+                  onChange={(checked) => {
+                    setChosen(checked ? [...chosen, type.id] : chosen.filter((id) => id !== type.id));
+                  }}
+                >
                   {after === null
                     ? t("{name}: {price} (floor {floor})", prices)
                     : t("{name}: {price}, {after} with the discount (floor {floor})", { ...prices, after: formatUsd(after, "en") })}
-                </label>
+                </Choice>
                 {kept || !chosen.includes(type.id) ? null : (
                   <p id={`campaign-type-${type.id}-error`} className="field-error">
                     {t("Below its floor: lower the discount or leave it out.")}
@@ -338,12 +365,12 @@ export function CampaignsPage() {
   const t = useT(AR);
   const lang = useLang();
   const [reloadKey, setReloadKey] = useState(0);
-  const [state, setCampaigns] = useApiData("/api/campaigns", campaignsSchema, reloadKey);
-  const [setup] = useApiData("/api/cafe", cafeSetupSchema);
+  const [state, setCampaigns, retryCampaigns] = useApiData("/api/campaigns", campaignsSchema, reloadKey);
+  const [setup, , retrySetup] = useApiData("/api/cafe", cafeSetupSchema);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const ending = useSubmit();
   if (state.status !== "loaded" || setup.status !== "loaded") {
-    return <PageStatus state={state.status === "failed" ? state : setup} />;
+    return <PageStatus state={state.status === "failed" ? state : setup} onRetry={state.status === "failed" ? retryCampaigns : retrySetup} />;
   }
   const { orderTypes, cafe } = setup.data;
   const change: Change = async (method, path, body) => {
