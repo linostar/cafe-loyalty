@@ -263,4 +263,100 @@ describe("Counter App in Arabic", () => {
     fireEvent.click(screen.getByRole("button", { name: "تسجيل الدخول" }));
     expect(await screen.findByText("رمز سري خاطئ. بقيت ⁨4⁩ محاولات قبل الإيقاف المؤقت.")).toBeInTheDocument();
   });
+
+  it("says on the chip when the server does not answer though the phone is online, and links to refused events (K8)", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    await setMeta("staff", [await staffEntry(RAMI_ID, "Rami", "482913")]);
+    await addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} });
+    await settleQueued([], [{ eventId: "e0", type: "visit.recorded", occurredAt: "2026-10-01T07:00:00.000Z", code: "CLOCK_SKEW", rejectedAt: "2026-10-01T07:05:00.000Z" }]);
+    // Wi-Fi with no internet: every request fails, while the browser says it is online.
+    fakeApi(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    render(<App />);
+    const chip = await screen.findByRole("region", { name: "Counter status" });
+    await waitFor(() => {
+      expect(within(chip).getByRole("status")).toHaveTextContent(/^Can't reach server/);
+    });
+    expect(chip).toHaveClass("is-offline");
+    expect(within(chip).getByText("The phone is online but the server did not answer: stamps are saved on this phone and sent once it does.")).toHaveClass("visually-hidden");
+    expect(within(chip).getByRole("link", { name: "1 refused" })).toHaveAttribute("href", "#rejected-title");
+  });
+
+  it("says when events were last sent, once the server has taken some (K8)", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    await setMeta("staff", [await staffEntry(RAMI_ID, "Rami", "482913")]);
+    await addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} });
+    await workingApi();
+    render(<App />);
+    const chip = await screen.findByRole("region", { name: "Counter status" });
+    expect(await within(chip).findByText(/^Last sent /)).toBeInTheDocument();
+    expect(within(chip).getByRole("status")).toHaveTextContent("Online");
+  });
+
+  it("asks before Switch barista clears an open order, keeping it on Keep the order (K11)", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() });
+    const coffee = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
+    await setMeta("catalog", { catalogVersion: 1, timeZone: "Asia/Beirut", campaigns: [], winBackOffers: [], orderTypes: [coffee], program: null });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "One more Coffee" }));
+    const switchButton = screen.getByRole("button", { name: "Switch barista" });
+    fireEvent.click(switchButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent("An order is open. Switching barista clears it.");
+    // The safe choice takes the keyboard.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Keep the order" })).toHaveFocus();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Keep the order" }));
+    await waitFor(() => {
+      expect(switchButton).toHaveFocus();
+    });
+    expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+    expect(await getMeta("barista")).toMatchObject({ staffId: rami.id });
+    fireEvent.click(switchButton);
+    fireEvent.click(await screen.findByRole("button", { name: "Switch and clear the order" }));
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+    expect(await getMeta("barista")).toBeUndefined();
+  });
+
+  it("switches barista at once when no order is open", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Switch barista" }));
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+  });
+
+  it("signs the barista out after 4 hours nobody used the counter, even across a reload, and says why (K3)", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    // Last used just over 4 hours ago, before the page was loaded again.
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() - 4 * 60 * 60 * 1000 - 1000 });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+    expect(screen.getByText("The barista was signed out after 4 hours without use.")).toBeInTheDocument();
+    expect(await getMeta("barista")).toBeUndefined();
+    // Gone once the next barista signs in.
+    fireEvent.click(screen.getByRole("button", { name: "Rami" }));
+    await enterPin("482913");
+    expect(await screen.findByText("Signed in as Rami on Front counter.")).toBeInTheDocument();
+    expect(screen.queryByText("The barista was signed out after 4 hours without use.")).not.toBeInTheDocument();
+    expect(await getMeta("barista")).toMatchObject({ staffId: rami.id, lastActiveAt: expect.any(Number) as unknown });
+  });
 });

@@ -49,6 +49,11 @@ export interface QueuedEvent {
   occurredAt: string;
   /** The signed event exactly as it is sent. */
   event: Record<string, unknown>;
+  /**
+   * Not sent before this time (ms), so it can still be taken back (a visit's Undo). Older builds stored none, and a
+   * build that predates it ignores it: both send the event at once.
+   */
+  holdUntil?: number;
 }
 
 /** An event the server refused for good, kept in the error list until someone clears it (AC 23). */
@@ -73,8 +78,11 @@ export interface MetaValues {
   staff: StaffEntry[];
   /** The last sequence number given to an event. */
   sequence: number;
-  /** The barista signed in on this device, until someone switches. */
-  barista: { staffId: string };
+  /**
+   * The barista signed in on this device, until someone switches or it sits unused for 4 hours. `lastActiveAt` (ms) is
+   * the last use stored, at most a minute behind; builds before it stored none.
+   */
+  barista: { staffId: string; lastActiveAt?: number };
   /** The issuedAt (ms) of the last renewal sent, shared by every tab: the server refuses one that is not later. */
   lastIssuedAt: number;
   /** The order types on sale and the reward, for recording visits offline. */
@@ -86,6 +94,8 @@ export interface MetaValues {
    */
   /** A reward sent without a confirmed answer; startedAt (ISO) tells the barista which customer it was for. */
   pendingRedemption: { eventId: string; cardQr: string; startedAt: string };
+  /** The server's answer to the last visit it settled (OK, STAMP_COOLDOWN, …), so the counter can say why it got no stamps. */
+  lastVisit: { eventId: string; occurredAt: string; code: string };
 }
 
 type MetaKey = keyof MetaValues;
@@ -234,6 +244,7 @@ export async function storePairing(device: DeviceRecord, token: StoredToken, opt
       await promised(meta.delete("staff"));
       await promised(meta.delete("barista"));
       await promised(meta.delete("catalog"));
+      await promised(meta.delete("lastVisit"));
     }
     if (options.forgetQueue) {
       await promised(transaction.objectStore(QUEUE).clear());
@@ -359,6 +370,22 @@ export async function addQueued(event: QueuedEvent): Promise<void> {
 /** The oldest queued events, in sequence order. */
 export function listQueued(limit: number): Promise<QueuedEvent[]> {
   return transact([QUEUE], "readonly", (transaction) => promised(transaction.objectStore(QUEUE).getAll(null, limit) as IDBRequest<QueuedEvent[]>));
+}
+
+/**
+ * Takes a held event back out of the queue, in one step: only while it is still held, so it has never been sent
+ * (sync skips a held event). Returns whether it was taken back.
+ */
+export function unqueue(sequence: number, now: number): Promise<boolean> {
+  return transact([QUEUE], "readwrite", async (transaction) => {
+    const store = transaction.objectStore(QUEUE);
+    const queued = await promised(store.get(sequence) as IDBRequest<QueuedEvent | undefined>);
+    if (queued === undefined || (queued.holdUntil ?? 0) <= now) {
+      return false;
+    }
+    await promised(store.delete(sequence));
+    return true;
+  });
 }
 
 export function countQueued(): Promise<number> {

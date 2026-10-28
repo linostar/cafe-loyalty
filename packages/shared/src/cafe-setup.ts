@@ -341,6 +341,13 @@ export const deviceCatalogSchema = z.object({
 export const redemptionRequestSchema = z.object({ eventId: id, staffId: id, cardQr: z.string().min(1).max(512) });
 export const redemptionSchema = z.object({ stampsUsed: z.int().min(1), stampsLeft: z.int().min(0), rewardNameAr: z.string(), rewardNameEn: z.string() });
 
+/**
+ * A scanned card's stamps now, online only: the counter asks after a visit scan, to offer the reward when it is ready
+ * (in a POST body, so the card's QR stays out of addresses and logs). The visit being recorded is not counted yet.
+ */
+export const cardStatusRequestSchema = z.object({ cardQr: z.string().min(1).max(512) });
+export const cardStatusSchema = z.object({ stamps: z.int().min(0), rewardReady: z.boolean() });
+
 export const deviceInfoSchema = z.object({ deviceId: z.uuid(), deviceName: z.string(), cafe: z.object({ id: z.uuid(), name: z.string() }) });
 
 /** Active staff with what a device needs to check their PINs offline (AC 19). Salts and hashes are base64url. */

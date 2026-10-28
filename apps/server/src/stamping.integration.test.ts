@@ -4,6 +4,7 @@ import {
   COUNTER_BUILT_AT_HEADER,
   campaignsSchema,
   cafeSetupSchema,
+  cardStatusSchema,
   deviceCatalogSchema,
   redemptionSchema,
   syncResponseSchema,
@@ -911,6 +912,25 @@ describe("redemption", () => {
     await app.as("POST", `/api/staff/${app.staffId}/revoke`);
     expect((await redeem(app, other.qr)).statusCode).toBe(403);
     expect(await stampsOf(other.cardId)).toBe(3);
+  });
+
+  it("tells the café's own counters a scanned card's stamps and whether its reward is ready, taking none", async () => {
+    const app = await cafeApp();
+    const status = (cardQr: string, token = app.device.accessToken) =>
+      app.app.inject({ method: "POST", url: "/api/device/cards/status", headers: withBearer(token), payload: { cardQr } });
+    const short = await cardWithStamps(app, 2);
+    const ready = await cardWithStamps(app, 3);
+    expect(cardStatusSchema.parse((await status(short.qr)).json())).toEqual({ stamps: 2, rewardReady: false });
+    expect(cardStatusSchema.parse((await status(ready.qr)).json())).toEqual({ stamps: 3, rewardReady: true });
+    expect(await stampsOf(ready.cardId)).toBe(3);
+    const forged = signCardQr(TEST_SECRETS, { cardId: randomUUID(), cafeId: app.owner.cafeId, epoch: 1 });
+    expect((await status(forged)).json()).toMatchObject({ code: "NOT_FOUND" });
+    // Another café's card, asked by this café's counter, and by its own: only its own café's counter learns anything.
+    const elsewhere = await cafeApp();
+    const theirs = await cardWithStamps(elsewhere, 5);
+    expect((await status(theirs.qr)).json()).toMatchObject({ code: "NOT_FOUND" });
+    expect((await status(theirs.qr, elsewhere.device.accessToken)).json()).toEqual({ stamps: 5, rewardReady: true });
+    expect((await app.app.inject({ method: "POST", url: "/api/device/cards/status", payload: { cardQr: ready.qr } })).statusCode).toBe(401);
   });
 });
 

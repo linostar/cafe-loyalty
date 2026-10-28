@@ -12,6 +12,7 @@ import logoUrl from "@cafe-loyalty/ui/logo.svg";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { DeviceUnpairedError, PairedElsewhereError, RequestError, deviceRequestFor, pairDevice } from "./device.js";
 import { LangProvider, LanguageSwitch, dateFormat, useApiText, useLang, useT } from "./i18n.js";
+import { PAGE_LOADED_AT, lastActivity } from "./idle.js";
 import { attemptPin } from "./pin.js";
 import {
   clearRejected,
@@ -26,6 +27,7 @@ import {
   storeStaff,
   STORAGE_BUSY,
   type DeviceRecord,
+  type MetaValues,
   type RejectedEvent,
   type StaffEntry,
 } from "./storage.js";
@@ -47,6 +49,10 @@ const AR = {
   "Offline: stamps are saved on this phone and sync when the connection returns.": "غير متصل: تُحفظ الأختام على هذا الهاتف وتُزامَن حين يعود الاتصال.",
   "Nothing waiting to send.": "لا شيء بانتظار الإرسال.",
   Offline: "غير متصل",
+  "Can't reach server": "الخادم لا يجيب",
+  "The phone is online but the server did not answer: stamps are saved on this phone and sent once it does.":
+    "الهاتف متصل لكن الخادم لم يجب: تُحفظ الأختام على هذا الهاتف وتُرسل حين يجيب.",
+  "Last sent {time}": "آخر إرسال {time}",
   "An update is ready. It installs once everything is sent and nobody is typing.": "تحديث جاهز. يُثبَّت بعد إرسال كل شيء وحين لا يكتب أحد.",
   Visit: "زيارة",
   "PIN lockout report": "تقرير قفل الرمز السري",
@@ -103,7 +109,14 @@ const AR = {
   "Signed in as {name} on {device}.": "مسجّل الدخول باسم {name} على {device}.",
   "Switching barista failed on this phone. Reload the page and try again.": "فشل تبديل الباريستا على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
   "Switch barista": "تبديل الباريستا",
+  "The barista was signed out after 4 hours without use.": "سُجّل خروج الباريستا بعد 4 ساعات دون استخدام.",
+  "An order is open. Switching barista clears it.": "هناك طلب مفتوح. تبديل الباريستا يمسحه.",
+  "Switch and clear the order": "بدّل وامسح الطلب",
+  "Keep the order": "أبقِ الطلب",
 } as const;
+
+/** How long a barista stays signed in without anyone using the counter (owner's decision, K3). */
+export const BARISTA_IDLE_MS = 4 * 60 * 60 * 1000;
 
 type AppText = keyof typeof AR;
 
@@ -122,6 +135,11 @@ const WAITING = {
   en: { one: "{n} to send", other: "{n} to send" },
   ar: { one: "واحد للإرسال", two: "اثنان للإرسال", few: "{n} للإرسال", many: "{n} للإرسال", other: "{n} للإرسال" },
 };
+/** Events the server refused for good, in the header's chip: a link to their list. */
+const REFUSED = {
+  en: { one: "{n} refused", other: "{n} refused" },
+  ar: { one: "واحد مرفوض", two: "اثنان مرفوضان", few: "{n} مرفوضة", many: "{n} مرفوضاً", other: "{n} مرفوض" },
+};
 const ITEMS = { en: { one: "{n} item", other: "{n} items" }, ar: { one: "عنصر واحد", two: "عنصران", few: "{n} عناصر", many: "{n} عنصراً", other: "{n} عنصر" } };
 const TRIES = {
   en: { one: "Wrong PIN. {n} try left before a pause.", other: "Wrong PIN. {n} tries left before a pause." },
@@ -137,19 +155,22 @@ interface Stored {
   device: DeviceRecord | undefined;
   staff: StaffEntry[];
   baristaId: string | undefined;
+  baristaLastActiveAt: number | undefined;
   pending: number;
   rejected: RejectedEvent[];
   catalog: DeviceCatalog | undefined;
+  lastVisit: MetaValues["lastVisit"] | undefined;
 }
 
 async function readStored(): Promise<Stored> {
-  const [device, staff, barista, pending, rejected, catalog] = await Promise.all([
+  const [device, staff, barista, pending, rejected, catalog, lastVisit] = await Promise.all([
     getMeta("device"),
     getMeta("staff"),
     getMeta("barista"),
     countQueued(),
     listRejected(),
     getMeta("catalog"),
+    getMeta("lastVisit"),
   ]);
   // A catalog an older build stored has no campaigns (nor their time zone) or win-back offers: none apply until the next
   // refresh.
@@ -157,9 +178,11 @@ async function readStored(): Promise<Stored> {
     device,
     staff: staff ?? [],
     baristaId: barista?.staffId,
+    baristaLastActiveAt: barista?.lastActiveAt,
     pending,
     rejected,
     catalog: catalog && { ...catalog, timeZone: catalog.timeZone ?? "UTC", campaigns: catalog.campaigns ?? [], winBackOffers: catalog.winBackOffers ?? [] },
+    lastVisit,
   };
 }
 
@@ -178,19 +201,32 @@ const REJECTION_REASONS: Readonly<Record<string, AppText>> = {
   IDEMPOTENCY_CONFLICT: "it clashed with something this phone sent before",
 };
 
+/** How the last attempt to send went: whether the server answered, and when events were last sent (ms), if ever. */
+interface SyncHealth {
+  failed: boolean;
+  sentAt: number | null;
+}
+
 /**
  * Always visible in the header, in one short chip: connectivity and what waits to be sent, nothing included (AC 29).
- * Offline, the chip says so in a word and screen readers hear the whole sentence; an empty queue shows "0 to send" and
- * is read as "Nothing waiting to send.".
+ * Offline, or online while the server does not answer (Wi-Fi with no internet), the chip says so in a word and screen
+ * readers hear the whole sentence; an empty queue shows "0 to send" and is read as "Nothing waiting to send.". It
+ * shows when events were last sent (on a wide screen; screen readers always), and links to any the server refused.
  */
-function ConnectionStatus({ online, pending }: { online: boolean; pending: number }) {
+function ConnectionStatus({ online, pending, health, refused }: { online: boolean; pending: number; health: SyncHealth; refused: number }) {
   const t = useT(AR);
   const lang = useLang();
+  const reached = online && !health.failed;
   return (
-    <section aria-label={t("Counter status")} className={`connection ${online ? "is-online" : "is-offline"}`}>
+    <section aria-label={t("Counter status")} className={`connection ${reached ? "is-online" : "is-offline"}`}>
       <p role="status" aria-live="polite">
-        {online ? (
+        {reached ? (
           t("Online")
+        ) : online ? (
+          <>
+            <span aria-hidden="true">{t("Can't reach server")}</span>
+            <span className="visually-hidden">{t("The phone is online but the server did not answer: stamps are saved on this phone and sent once it does.")}</span>
+          </>
         ) : (
           <>
             <span aria-hidden="true">{t("Offline")}</span>
@@ -209,12 +245,20 @@ function ConnectionStatus({ online, pending }: { online: boolean; pending: numbe
           plural(lang, WAITING, pending)
         )}
       </p>
+      {health.sentAt === null ? null : (
+        <p className="sent">{t("Last sent {time}", { time: dateFormat(lang, { timeStyle: "short" }).format(new Date(health.sentAt)) })}</p>
+      )}
+      {refused === 0 ? null : (
+        <a className="refused" href="#rejected-title">
+          {plural(lang, REFUSED, refused)}
+        </a>
+      )}
     </section>
   );
 }
 
 /** Problems, notices and updates, under the header so they are seen (AC 29). */
-function StatusMessages({ problem, notice, update }: { problem: string | null; notice: string | null; update: UpdateState }) {
+function StatusMessages({ problem, notice, info, update }: { problem: string | null; notice: string | null; info: string | null; update: UpdateState }) {
   const t = useT(AR);
   const say = useSay();
   // Always in the page, so screen readers announce what appears in it.
@@ -222,6 +266,7 @@ function StatusMessages({ problem, notice, update }: { problem: string | null; n
     <div aria-live="polite" className="messages">
       {problem === null ? null : <p className="warning-box">{say(problem)}</p>}
       {notice === null ? null : <p className="warning-box">{say(notice)}</p>}
+      {info === null ? null : <p className="notice">{say(info)}</p>}
       {update.waiting ? <p className="notice">{t("An update is ready. It installs once everything is sent and nobody is typing.")}</p> : null}
       {update.error === null ? null : <p className="warning-box">{say(update.error)}</p>}
     </div>
@@ -239,7 +284,10 @@ function RejectedList({ rejected }: { rejected: RejectedEvent[] }) {
   }
   return (
     <section aria-labelledby="rejected-title" className="rejected form-error">
-      <h2 id="rejected-title">{t("Not accepted by the server")}</h2>
+      {/* Focusable, so the header's link moves the keyboard here too. */}
+      <h2 id="rejected-title" tabIndex={-1}>
+        {t("Not accepted by the server")}
+      </h2>
       <p>{t("These were not recorded. Show this list to the owner.")}</p>
       <ul>
         {rejected.map((entry) => {
@@ -698,7 +746,26 @@ function Counter() {
     [handled],
   );
 
-  const sync = useCallback(() => handled(syncQueue), [handled]);
+  const [health, setHealth] = useState<SyncHealth>({ failed: false, sentAt: null });
+  /** The first held event's time to be sent (a visit kept back for its Undo), as a new object each sync, so it is waited for again. */
+  const [held, setHeld] = useState<{ until: number } | null>(null);
+  const sync = useCallback(
+    () =>
+      handled(async () => {
+        try {
+          const summary = await syncQueue();
+          setHealth((current) => ({ failed: false, sentAt: summary.settled > 0 ? Date.now() : current.sentAt }));
+          setHeld(summary.heldUntil === undefined ? null : { until: summary.heldUntil });
+        } catch (caught) {
+          // No answer, or one saying to try later: the chip shows that the server cannot be reached.
+          if (caught instanceof RequestError && caught.failure.retryable) {
+            setHealth((current) => ({ ...current, failed: true }));
+          }
+          throw caught;
+        }
+      }),
+    [handled],
+  );
   const device = stored?.device;
   const paired = device?.paired === true;
   /** The paired device's key: pairing again (even while paired) restarts syncing and loads its café's baristas. */
@@ -731,6 +798,17 @@ function Counter() {
     };
   }, [paired, online, pending, sync]);
 
+  // A held visit goes out as soon as its Undo ends (a little after, so it is no longer held when sync looks).
+  useEffect(() => {
+    if (!paired || !online || held === null) {
+      return;
+    }
+    const timer = setTimeout(() => void sync(), Math.max(held.until - Date.now(), 0) + 50);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [paired, online, held, sync]);
+
   const barista = stored?.staff.find((member) => member.id === stored.baristaId);
   const chosen = stored?.staff.find((member) => member.id === chosenId);
   let screen: Screen;
@@ -745,6 +823,66 @@ function Counter() {
   } else {
     screen = "pin";
   }
+
+  /** An order is open on the counter screen: switching barista asks first, as it clears it (K11). */
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [confirmSwitch, setConfirmSwitch] = useState(false);
+  /** Said under the header until the next barista signs in: why the last one was signed out. */
+  const [signedOut, setSignedOut] = useState<string | null>(null);
+  const switchButton = useRef<HTMLButtonElement>(null);
+  const keepButton = useRef<HTMLButtonElement>(null);
+  const signOut = useCallback(
+    (why: string | null) => {
+      setConfirmSwitch(false);
+      setOrderOpen(false);
+      deleteMeta("barista").then(
+        () => {
+          setSignedOut(why);
+        },
+        (caught: unknown) => {
+          console.error("Signing out the barista failed", caught);
+          setProblem("Switching barista failed on this phone. Reload the page and try again." satisfies AppText);
+        },
+      );
+    },
+    [],
+  );
+
+  // Signed out after 4 hours with nobody using the counter, so the next shift's stamps are not credited to them (K3).
+  // The last use is stored at most a minute behind, so a reload does not restart the 4 hours.
+  const baristaId = stored?.baristaId;
+  const lastActiveAt = stored?.baristaLastActiveAt;
+  useEffect(() => {
+    if (screen !== "home" || baristaId === undefined) {
+      return;
+    }
+    const check = () => {
+      const seen = Math.max(lastActivity(), lastActiveAt ?? PAGE_LOADED_AT);
+      if (Date.now() - seen >= BARISTA_IDLE_MS) {
+        signOut("The barista was signed out after 4 hours without use." satisfies AppText);
+      } else if (lastActivity() - (lastActiveAt ?? 0) >= 60_000) {
+        setMeta("barista", { staffId: baristaId, lastActiveAt: lastActivity() }).catch((caught: unknown) => {
+          console.error("Keeping the barista's last use failed", caught);
+        });
+      }
+    };
+    check();
+    const timer = setInterval(check, 60_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [screen, baristaId, lastActiveAt, signOut]);
+
+  // The confirmation takes the keyboard to its safe choice; keeping the order brings it back to Switch barista.
+  const wasConfirming = useRef(false);
+  useEffect(() => {
+    if (confirmSwitch) {
+      keepButton.current?.focus();
+    } else if (wasConfirming.current) {
+      switchButton.current?.focus();
+    }
+    wasConfirming.current = confirmSwitch;
+  }, [confirmSwitch]);
 
   // A new screen takes focus at its heading, so it is announced and the keyboard starts there.
   useEffect(() => {
@@ -797,9 +935,10 @@ function Counter() {
             }}
             onSignedIn={() => {
               setBusy(false);
-              setMeta("barista", { staffId: chosen.id }).then(
+              setMeta("barista", { staffId: chosen.id, lastActiveAt: Date.now() }).then(
                 () => {
                   setChosenId(null);
+                  setSignedOut(null);
                 },
                 (caught: unknown) => {
                   console.error("Saving the barista failed", caught);
@@ -821,19 +960,54 @@ function Counter() {
               {t("Signed in as {name} on {device}.", { name: barista?.name ?? "", device: stored?.device?.deviceName ?? "" })}
             </p>
             <button
+              ref={switchButton}
               type="button"
               onClick={() => {
-                deleteMeta("barista").catch((caught: unknown) => {
-                  console.error("Signing out the barista failed", caught);
-                  setProblem("Switching barista failed on this phone. Reload the page and try again." satisfies AppText);
-                });
+                if (orderOpen) {
+                  setConfirmSwitch(true);
+                } else {
+                  signOut(null);
+                }
               }}
             >
               {t("Switch barista")}
             </button>
           </div>
+          {confirmSwitch ? (
+            <div role="alert" className="warning-box switch-confirm">
+              <p>{t("An order is open. Switching barista clears it.")}</p>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    signOut(null);
+                  }}
+                >
+                  {t("Switch and clear the order")}
+                </button>
+                <button
+                  ref={keepButton}
+                  type="button"
+                  onClick={() => {
+                    setConfirmSwitch(false);
+                  }}
+                >
+                  {t("Keep the order")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {device === undefined || barista === undefined ? null : (
-            <CounterScreen device={device} barista={barista} catalog={stored?.catalog} online={online} onBusy={setBusy} />
+            <CounterScreen
+              device={device}
+              barista={barista}
+              catalog={stored?.catalog}
+              online={online}
+              onBusy={setBusy}
+              onOrderOpen={setOrderOpen}
+              lastVisit={stored?.lastVisit}
+            />
           )}
         </section>
       );
@@ -853,11 +1027,11 @@ function Counter() {
             <span className="brand-app">{appName}</span>
           </h1>
         </div>
-        <ConnectionStatus online={online} pending={pending} />
+        <ConnectionStatus online={online} pending={pending} health={health} refused={stored?.rejected.length ?? 0} />
         <LanguageSwitch />
       </header>
       <main>
-        <StatusMessages problem={problem} notice={notice} update={update} />
+        <StatusMessages problem={problem} notice={notice} info={signedOut} update={update} />
         <div ref={screenRef}>{content}</div>
         <RejectedList rejected={stored?.rejected ?? []} />
       </main>

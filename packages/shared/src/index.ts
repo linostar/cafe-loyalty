@@ -42,6 +42,8 @@ export {
   previousDeviceSchema,
   redemptionRequestSchema,
   redemptionSchema,
+  cardStatusRequestSchema,
+  cardStatusSchema,
   staffCreateSchema,
   staffListSchema,
   staffMemberSchema,

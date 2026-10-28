@@ -42,6 +42,8 @@ const check = async (page: Page) => {
 };
 
 async function toPin(page: Page, sync: (route: Route) => Promise<void>): Promise<void> {
+  // The page's clock runs as usual, and is moved on past a recorded visit's Undo to send it.
+  await page.clock.install();
   await mockApi(page, {
     "POST /api/device/pair": reply(201, PAIRED),
     "GET /api/device/staff": reply(200, { staff: [RAMI] }),
@@ -86,6 +88,8 @@ test("lists a visit the server refused, in Arabic, and says why", async ({ page 
   await page.getByRole("button", { name: /^زيادة .*قهوة/ }).click();
   await page.getByLabel("لا بطاقة؟ رقم هاتف الزبون المحمول").fill("٧٠ ١٢٣ ٤٥٦");
   await page.getByRole("button", { name: "تسجيل الزيارة" }).click();
+  await expect(page.getByRole("button", { name: "التراجع عن الزيارة" })).toBeVisible();
+  await page.clock.fastForward(11_000);
   const rejected = page.getByRole("region", { name: "لم يقبلها الخادم" });
   await expect(rejected).toBeVisible();
   await expect(rejected.getByRole("listitem")).toHaveCount(1);

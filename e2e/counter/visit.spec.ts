@@ -48,13 +48,24 @@ const ALL_DAY = {
 
 const json = (route: Route): unknown => route.request().postDataJSON();
 
-/** Pairs the counter and signs Rami in, with the API answering `extra` routes too. Returns what the counter synced. */
+/** How long a recorded visit stays unsent for its Undo (UNDO_MS in apps/counter/src/visit.tsx). */
+const UNDO_MS = 10_000;
+
+/** Lets a recorded visit's Undo pass, so the counter sends it. */
+const afterUndo = (page: Page) => page.clock.fastForward(UNDO_MS + 1000);
+
+/**
+ * Pairs the counter and signs Rami in, with the API answering `extra` routes too. Returns what the counter synced. The
+ * page's clock runs as usual, and can be moved on past a visit's Undo (afterUndo).
+ */
 async function signedIn(page: Page, extra: Parameters<typeof mockApi>[1] = {}): Promise<unknown[]> {
   const synced: unknown[] = [];
+  await page.clock.install();
   await mockApi(page, {
     "POST /api/device/pair": reply(201, PAIRED),
     "GET /api/device/staff": reply(200, { staff: [RAMI] }),
     "GET /api/device/catalog": reply(200, CATALOG),
+    "POST /api/device/cards/status": reply(200, { stamps: 2, rewardReady: false }),
     "POST /api/device/sync": async (route) => {
       const { events } = json(route) as { events: unknown[] };
       synced.push(...events);
@@ -79,6 +90,7 @@ test("records a visit for a phone number and sends it, priced as the menu showed
   await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
   await page.getByRole("button", { name: "Record visit" }).click();
   await expect(page.getByText("Visit saved, earning up to 2 stamps.", { exact: false })).toBeVisible();
+  await afterUndo(page);
   await expect
     .poll(() => synced)
     .toMatchObject([
@@ -103,6 +115,8 @@ test("gives a running campaign's discount and sends it with the visit (AC 35)", 
   await expect(page.getByText("Total $1.50 · 1 stamp")).toBeVisible();
   await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
   await page.getByRole("button", { name: "Record visit" }).click();
+  await expect(page.getByRole("button", { name: "Undo the visit" })).toBeVisible();
+  await afterUndo(page);
   await expect
     .poll(() => synced)
     .toMatchObject([
@@ -119,7 +133,47 @@ test("scans the customer's card with the camera for a visit", async ({ page }) =
   await page.getByRole("button", { name: "Scan card", exact: true }).click();
   await expect(page.getByText("Card scanned.")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Record visit" }).click();
+  await expect(page.getByRole("button", { name: "Undo the visit" })).toBeVisible();
+  await afterUndo(page);
   await expect.poll(() => synced).toMatchObject([{ payload: { card: { kind: "qr", token: CAMERA_CARD_QR } } }]);
+});
+
+test("undoes a visit before it is sent, so the server never gets it, and sends the corrected one (K2)", async ({ page }) => {
+  const synced = await signedIn(page);
+  // A tap anywhere on the row adds one (K9): on the name, it lands on the + button's area over it (forced, as
+  // Playwright would otherwise wait for the name itself to take the click).
+  const name = page.locator(".menu-item").filter({ hasText: "Coffee" });
+  await name.click({ force: true });
+  await name.click({ force: true });
+  await expect(page.getByText("Total $6.00 · 2 stamps")).toBeVisible();
+  await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
+  await page.getByRole("button", { name: "Record visit" }).click();
+  await page.getByRole("button", { name: "Undo the visit" }).click();
+  await expect(page.getByText("Visit undone. Change the order and record it again.")).toBeVisible();
+  // One coffee too many: back to one, and recorded again.
+  await page.getByRole("button", { name: "One less Coffee" }).click();
+  await page.getByRole("button", { name: "Record visit" }).click();
+  await expect(page.getByRole("button", { name: "Undo the visit" })).toBeVisible();
+  await afterUndo(page);
+  await expect.poll(() => synced).toMatchObject([{ payload: { items: [{ quantity: 1 }], totalCents: 300 } }]);
+  await page.clock.fastForward(UNDO_MS);
+  expect(synced).toHaveLength(1);
+});
+
+test("offers a scanned card's ready reward, given with the same scan (K6)", async ({ page }) => {
+  const redeemed: unknown[] = [];
+  await signedIn(page, {
+    "POST /api/device/cards/status": reply(200, { stamps: 9, rewardReady: true }),
+    "POST /api/device/redemptions": async (route) => {
+      redeemed.push(json(route));
+      await route.fulfill({ status: 201, json: { stampsUsed: 9, stampsLeft: 0, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } });
+    },
+  });
+  await page.getByRole("button", { name: "Scan card", exact: true }).click();
+  await expect(page.getByText("Reward ready: Free coffee.")).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Give Free coffee now" }).click();
+  await expect(page.getByText("Reward given: Free coffee. 0 stamps left on the card.")).toBeVisible();
+  expect(redeemed).toMatchObject([{ cardQr: CAMERA_CARD_QR, staffId: RAMI.id }]);
 });
 
 test("gives a reward for a scanned card online, and refuses one offline (AC 31)", async ({ page, context }) => {

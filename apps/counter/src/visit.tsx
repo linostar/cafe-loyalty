@@ -1,5 +1,6 @@
 import {
   bestCampaign,
+  cardStatusSchema,
   formatUsd,
   localiseApiMessage,
   plural,
@@ -13,11 +14,12 @@ import {
   type Lang,
   type WinBackOffer,
 } from "@cafe-loyalty/shared";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { DeviceUnpairedError, RequestError, deviceRequest } from "./device.js";
 import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
+import { lastActivity } from "./idle.js";
 import { QrScanner } from "./scanner.js";
-import { deleteMeta, getMeta, setMeta, type DeviceRecord, type MetaValues, type StaffEntry } from "./storage.js";
+import { deleteMeta, getMeta, setMeta, unqueue, type DeviceRecord, type MetaValues, type StaffEntry } from "./storage.js";
 import { recordEvent } from "./sync.js";
 
 const AR = {
@@ -80,6 +82,28 @@ const AR = {
   "Nothing is on sale yet. Ask the owner to add order types on the dashboard.": "لا شيء معروض للبيع بعد. اطلب من المالك إضافة أنواع الطلبات من لوحة التحكم.",
   "{answer} This phone could not forget the reward, so it may offer it again after a reload: do not give it twice.":
     "{answer} تعذّر على هذا الهاتف نسيان المكافأة، فقد يعرضها مجدداً بعد إعادة التحميل: لا تمنحها مرتين.",
+  Undo: "تراجع",
+  "Undo the visit": "التراجع عن الزيارة",
+  "Visit undone. Change the order and record it again.": "أُلغيت الزيارة. عدّل الطلب وسجّله مجدداً.",
+  "Too late to undo: the visit was sent. Tell the owner, who can fix it in Review.": "فات وقت التراجع: أُرسلت الزيارة. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
+  "The visit could not be undone on this phone. Tell the owner, who can fix it in Review.": "تعذّر التراجع عن الزيارة على هذا الهاتف. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
+  "Records it for {phone}.": "تُسجَّل للرقم {phone}.",
+  "The open order was cleared after 5 minutes without use.": "مُسح الطلب المفتوح بعد 5 دقائق دون استخدام.",
+  "The camera turned off after a minute without a card. Press Scan card when the customer is ready.":
+    "أُطفئت الكاميرا بعد دقيقة دون بطاقة. اضغط «امسح البطاقة» حين يكون الزبون جاهزاً.",
+  "The camera turned off after a minute without a card. Press Scan card for a reward when the customer is ready.":
+    "أُطفئت الكاميرا بعد دقيقة دون بطاقة. اضغط «امسح البطاقة لإعطاء مكافأة» حين يكون الزبون جاهزاً.",
+  "Last visit, at {time}: recorded.": "آخر زيارة، عند {time}: سُجّلت.",
+  "Last visit, at {time}: recorded with no stamps, because the card got stamps less than 30 minutes before.":
+    "آخر زيارة، عند {time}: سُجّلت دون أختام، لأن البطاقة حصلت على أختام قبل أقل من 30 دقيقة.",
+  "Last visit, at {time}: recorded with no stamps, because this phone reached its stamps for today. Tell the owner.":
+    "آخر زيارة، عند {time}: سُجّلت دون أختام، لأن هذا الهاتف بلغ حدّ أختامه لهذا اليوم. أخبر المالك.",
+  "Last visit, at {time}: recorded with no stamps, because the card was deleted.": "آخر زيارة، عند {time}: سُجّلت دون أختام، لأن البطاقة حُذفت.",
+  "Last visit, at {time}: held for the owner to check; its stamps wait until the owner accepts it.":
+    "آخر زيارة، عند {time}: أُوقفت ليراجعها المالك؛ تنتظر أختامها حتى يقبلها المالك.",
+  "Reward ready: {reward}.": "المكافأة جاهزة: {reward}.",
+  "Give {reward} now": "أعطِ {reward} الآن",
+  "Finish the reward waiting under Give a reward first: press Try again there.": "أنهِ أولاً المكافأة المنتظرة تحت «إعطاء مكافأة»: اضغط «حاول مجدداً» هناك.",
 } as const;
 
 type T = Translate<typeof AR>;
@@ -152,6 +176,67 @@ export function discountFor(catalog: DeviceCatalog, type: DeviceCatalog["orderTy
 const discountText = (discount: { kind: "percent" | "amount"; value: number }, t: T) =>
   discount.kind === "percent" ? t("{value}% off", { value: discount.value }) : t("{amount} off", { amount: formatUsd(discount.value, "en") });
 
+/** How long a recorded visit stays unsent, so the barista can undo it (owner's decision, K2). */
+export const UNDO_MS = 10_000;
+/** How long an open order may sit untouched before it is cleared, so the next customer's is not recorded on it (K3). */
+export const ORDER_IDLE_MS = 5 * 60 * 1000;
+
+/** A short buzz where the phone can (Android; iOS has no vibration for web pages): a scan read, a visit saved. */
+function buzz(): void {
+  if ("vibrate" in navigator) {
+    navigator.vibrate(50);
+  }
+}
+
+/** A Lebanese number in E.164 as it is read out ("+961 70 123 456"); any other number as it is. */
+export function phoneShown(e164: string): string {
+  if (!e164.startsWith("+961")) {
+    return e164;
+  }
+  const local = e164.slice(4);
+  const lead = local.length === 8 ? 2 : 1;
+  return `+961 ${local.slice(0, lead)} ${local.slice(lead, lead + 3)} ${local.slice(lead + 3)}`;
+}
+
+/** What the server did with the last visit it settled, by its result code (K1). */
+function lastVisitText(t: T, lang: Lang, last: MetaValues["lastVisit"]): string {
+  const time = dateFormat(lang, { timeStyle: "short" }).format(new Date(last.occurredAt));
+  switch (last.code) {
+    case "STAMP_COOLDOWN":
+      return t("Last visit, at {time}: recorded with no stamps, because the card got stamps less than 30 minutes before.", { time });
+    case "DAILY_STAMP_CAP":
+      return t("Last visit, at {time}: recorded with no stamps, because this phone reached its stamps for today. Tell the owner.", { time });
+    case "CARD_GONE":
+      return t("Last visit, at {time}: recorded with no stamps, because the card was deleted.", { time });
+    case "HELD_FOR_REVIEW":
+      return t("Last visit, at {time}: held for the owner to check; its stamps wait until the owner accepts it.", { time });
+    default:
+      return t("Last visit, at {time}: recorded.", { time });
+  }
+}
+
+/** A reward the visit form asked the reward panel to give, and its answer, for the card it was for. */
+export interface RewardNote {
+  cardQr: string;
+  message: RewardMessage;
+}
+
+/** The order as it was before it was recorded, put back on screen when the visit is undone. */
+interface OrderDraft {
+  quantities: Record<string, number>;
+  names: Record<string, { nameAr: string; nameEn: string }>;
+  scanned: string | null;
+  phone: string;
+  applyWinBack: boolean;
+}
+
+/** What the form last said: `saved` (the success style), and `undo` while the visit it saved can still be taken back. */
+interface VisitNotice {
+  say: Message;
+  saved: boolean;
+  undo?: { sequence: number; holdUntil: number; draft: OrderDraft };
+}
+
 interface VisitFormProps {
   device: DeviceRecord;
   barista: StaffEntry;
@@ -161,10 +246,17 @@ interface VisitFormProps {
   scanner: ScanPurpose | null;
   onScanner: (purpose: ScanPurpose | null) => void;
   onBusy: (busy: boolean) => void;
+  /** Whether an order is open, for Switch barista to ask first (K11). */
+  onOrderOpen: (open: boolean) => void;
+  /** The server's answer to the last visit it settled, if any (K1). */
+  lastVisit: MetaValues["lastVisit"] | undefined;
+  /** Gives the reward for a card already scanned (K6), through the reward panel; its answer comes back as `rewardNote`. */
+  onRedeem: (cardQr: string) => void;
+  rewardNote: RewardNote | null;
 }
 
 /** Records a visit offline: what was ordered and whose card, by QR or phone number (AC 22, 30, 32). */
-function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBusy }: VisitFormProps) {
+function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBusy, onOrderOpen, lastVisit, onRedeem, rewardNote }: VisitFormProps) {
   const t = useT(AR);
   const lang = useLang();
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -176,17 +268,99 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   const [phone, setPhone] = useState("");
   /** What is wrong, and whether it is the phone number (then tied to that field). */
   const [problem, setProblem] = useState<{ say: Message; phone: boolean } | null>(null);
-  const [notice, setNotice] = useState<Message | null>(null);
+  const [notice, setNotice] = useState<VisitNotice | null>(null);
   const [saving, setSaving] = useState(false);
+  /** The scanned card whose reward the server says is ready (K6); shown only while that card is the one scanned. */
+  const [rewardReady, setRewardReady] = useState<string | null>(null);
   const phoneId = useId();
   const problemId = useId();
+  const phoneShownId = useId();
   const scanButton = useRef<HTMLButtonElement>(null);
   const recordButton = useRef<HTMLButtonElement>(null);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const actionBar = useRef<HTMLDivElement>(null);
+
+  // On a phone the action bar stays at the bottom of the screen and grows with what it says: the page keeps a control
+  // the keyboard reaches clear of it by its height now (styles.css, scroll-padding).
+  useEffect(() => {
+    const bar = actionBar.current;
+    if (bar === null || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => {
+      root.style.setProperty("--action-bar-block-size", `${String(bar.getBoundingClientRect().height)}px`);
+    });
+    observer.observe(bar);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--action-bar-block-size");
+    };
+  }, [scanner]);
   /** The connection now, read when a save completes: the phone may go offline while it is saved. */
   const onlineNow = useRef(online);
   useEffect(() => {
     onlineNow.current = online;
   }, [online]);
+  /** The card scanned now, read when the reward check answers: the barista may have cleared or changed it meanwhile. */
+  const scannedNow = useRef(scanned);
+  useEffect(() => {
+    scannedNow.current = scanned;
+  }, [scanned]);
+
+  const clearOrder = () => {
+    setQuantities({});
+    setScanned(null);
+    setPhone("");
+    setApplyWinBack(false);
+  };
+
+  // Undo lasts as long as the visit is held unsent; then the button goes, and the keyboard moves off it to Scan card.
+  const undo = notice?.undo;
+  useEffect(() => {
+    if (undo === undefined) {
+      return;
+    }
+    const timer = setTimeout(
+      () => {
+        if (document.activeElement === undoButton.current) {
+          requestAnimationFrame(() => scanButton.current?.focus());
+        }
+        setNotice((current) => (current?.undo === undo ? { say: current.say, saved: current.saved } : current));
+      },
+      Math.max(undo.holdUntil - Date.now(), 0),
+    );
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [undo]);
+
+  const takeBack = () => {
+    if (undo === undefined) {
+      return;
+    }
+    unqueue(undo.sequence, Date.now()).then(
+      (taken) => {
+        if (taken) {
+          // Back on screen as it was recorded, to fix and record again.
+          setQuantities(undo.draft.quantities);
+          setNames(undo.draft.names);
+          setScanned(undo.draft.scanned);
+          setPhone(undo.draft.phone);
+          setApplyWinBack(undo.draft.applyWinBack);
+          setNotice({ say: (say) => say("Visit undone. Change the order and record it again."), saved: false });
+        } else {
+          setNotice({ say: (say) => say("Too late to undo: the visit was sent. Tell the owner, who can fix it in Review."), saved: false });
+        }
+        requestAnimationFrame(() => recordButton.current?.focus());
+      },
+      (caught: unknown) => {
+        console.error("Undoing the visit failed", caught);
+        setNotice({ say: (say) => say("The visit could not be undone on this phone. Tell the owner, who can fix it in Review."), saved: false });
+        requestAnimationFrame(() => recordButton.current?.focus());
+      },
+    );
+  };
 
   const items = catalog.orderTypes.filter((type) => (quantities[type.id] ?? 0) > 0).map((type) => ({ type, quantity: quantities[type.id] ?? 0 }));
   // Taken off sale by the owner while this order was open: left out, and said so by name.
@@ -234,6 +408,33 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   useEffect(() => {
     onBusy(open || saving);
   }, [open, saving, onBusy]);
+  const ordering = items.length > 0 || scanned !== null || phone !== "";
+  useEffect(() => {
+    onOrderOpen(ordering);
+  }, [ordering, onOrderOpen]);
+
+  // An order left untouched is cleared, with a notice, so the next customer's is not recorded on the last one's card.
+  const openedAt = useRef(0);
+  useEffect(() => {
+    if (!ordering || saving) {
+      return;
+    }
+    openedAt.current = Date.now();
+    const check = () => {
+      if (Date.now() - Math.max(lastActivity(), openedAt.current) >= ORDER_IDLE_MS) {
+        setQuantities({});
+        setScanned(null);
+        setPhone("");
+        setApplyWinBack(false);
+        setProblem(null);
+        setNotice({ say: (say) => say("The open order was cleared after 5 minutes without use."), saved: false });
+      }
+    };
+    const timer = setInterval(check, 15_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [ordering, saving]);
 
   // Clamped here: the steppers stay focusable at 0 and 50 (aria-disabled), so a click there changes nothing.
   const change = (type: { id: string; nameAr: string; nameEn: string }, delta: number) => {
@@ -270,24 +471,26 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
       return;
     }
     setSaving(true);
-    recordEvent("visit.recorded", 3, barista.id, payload.data, at).then(
-      () => {
+    const draft: OrderDraft = { quantities, names, scanned, phone, applyWinBack };
+    recordEvent("visit.recorded", 3, barista.id, payload.data, at, UNDO_MS).then(
+      (queued) => {
         setSaving(false);
-        setQuantities({});
-        setScanned(null);
-        setPhone("");
-        setApplyWinBack(false);
+        clearOrder();
+        buzz();
         // The server decides the stamps (cooldown, daily cap), so the counter promises no more than the order earns.
-        // Now or later, as the phone's connection is when saved; the queue sends it either way.
+        // Now or later, as the phone's connection is when saved; the queue sends it either way, once Undo has passed.
         const sending = onlineNow.current;
-        setNotice(() =>
-          stamps > 0
-            ? (say: T, shownIn: Lang) =>
-                sending
-                  ? say("Visit saved, earning up to {stamps}. Sending it now.", { stamps: plural(shownIn, STAMPS, stamps) })
-                  : say("Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.", { stamps: plural(shownIn, STAMPS, stamps) })
-            : (say: T) => (sending ? say("Visit saved. Sending it now.") : say("Visit saved. It is sent as soon as the phone is online.")),
-        );
+        setNotice({
+          say:
+            stamps > 0
+              ? (say, shownIn) =>
+                  sending
+                    ? say("Visit saved, earning up to {stamps}. Sending it now.", { stamps: plural(shownIn, STAMPS, stamps) })
+                    : say("Visit saved, earning up to {stamps}. It is sent as soon as the phone is online.", { stamps: plural(shownIn, STAMPS, stamps) })
+              : (say) => (sending ? say("Visit saved. Sending it now.") : say("Visit saved. It is sent as soon as the phone is online.")),
+          saved: true,
+          undo: { sequence: queued.sequence, holdUntil: queued.holdUntil, draft },
+        });
       },
       (caught: unknown) => {
         console.error("Recording the visit failed", caught);
@@ -296,6 +499,10 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
       },
     );
   };
+
+  const typedPhone = phone === "" ? null : normalizePhoneInput(phone);
+  /** The answer to a reward given from this form, for the card scanned now. */
+  const shownNote = rewardNote !== null && rewardNote.cardQr === scanned ? rewardNote : null;
 
   if (scanner === "visit") {
     return (
@@ -308,17 +515,39 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
             onScanner(null);
             requestAnimationFrame(() => scanButton.current?.focus());
           }}
+          onTimeout={() => {
+            onScanner(null);
+            setNotice({ say: (say) => say("The camera turned off after a minute without a card. Press Scan card when the customer is ready."), saved: false });
+            requestAnimationFrame(() => scanButton.current?.focus());
+          }}
           onScan={(text) => {
             onScanner(null);
+            buzz();
             const read = readCardQr(text, device.cafe.id);
             if ("problem" in read) {
               setProblem({ say: read.problem, phone: false });
               requestAnimationFrame(() => scanButton.current?.focus());
             } else {
-              setScanned(read.token);
+              const token = read.token;
+              setScanned(token);
               setApplyWinBack(false);
               setPhone("");
               setProblem(null);
+              setNotice(null);
+              // Online, whether this card's reward is ready, to give it without a second scan (K6). Offline, or when the
+              // check fails, nothing is offered: the reward panel still gives it with a scan.
+              if (onlineNow.current && catalog.program !== null) {
+                deviceRequest("POST", "/api/device/cards/status", cardStatusSchema, { cardQr: token }).then(
+                  (status) => {
+                    if (status.rewardReady && scannedNow.current === token) {
+                      setRewardReady(token);
+                    }
+                  },
+                  (caught: unknown) => {
+                    console.warn("Checking the card's reward failed", caught);
+                  },
+                );
+              }
               // The next step: recording the visit.
               requestAnimationFrame(() => recordButton.current?.focus());
             }
@@ -366,8 +595,10 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
                   −
                 </button>
                 <span className={quantity === 0 ? "count" : "count count-chosen"}>{quantity}</span>
+                {/* It covers its whole row (styles.css), so a tap anywhere on the row adds one (K9). */}
                 <button
                   type="button"
+                  className="more"
                   aria-label={t("One more {name}", { name })}
                   aria-disabled={quantity === 50}
                   onClick={() => {
@@ -416,6 +647,21 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
               ) : null}
             </>
           )}
+          {scanned !== null && rewardReady === scanned && catalog.program !== null ? (
+            <div className="reward-ready">
+              <p>{t("Reward ready: {reward}.", { reward: nameIn(lang, { nameAr: catalog.program.rewardNameAr, nameEn: catalog.program.rewardNameEn }) })}</p>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  setRewardReady(null);
+                  onRedeem(scanned);
+                }}
+              >
+                {t("Give {reward} now", { reward: nameIn(lang, { nameAr: catalog.program.rewardNameAr, nameEn: catalog.program.rewardNameEn }) })}
+              </button>
+            </div>
+          ) : null}
           {scanned === null ? (
             <div className="field">
               {/* Above the action bar and its Scan card button, so the label stands on its own. */}
@@ -428,16 +674,22 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
                 dir="ltr"
                 value={phone}
                 aria-invalid={problem?.phone === true ? true : undefined}
-                aria-describedby={problem?.phone === true ? problemId : undefined}
+                aria-describedby={[problem?.phone === true ? problemId : null, typedPhone === null ? null : phoneShownId].filter((id) => id !== null).join(" ") || undefined}
                 onChange={(event) => {
                   setPhone(event.target.value);
                   setNotice(null);
                 }}
               />
+              {/* The number as it will be recorded, so a mistyped one is caught before Record (K10). */}
+              {typedPhone === null ? null : (
+                <p id={phoneShownId} className="hint">
+                  {t("Records it for {phone}.", { phone: `⁦${phoneShown(typedPhone)}⁩` })}
+                </p>
+              )}
             </div>
           ) : null}
         </div>
-        <div className="action-bar">
+        <div ref={actionBar} className="action-bar">
           <p aria-live="polite" className="total">
             {t("Total {total} · {stamps}", { total: formatUsd(total ?? 0, "en"), stamps: plural(lang, STAMPS, stamps) })}
           </p>
@@ -446,8 +698,29 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
               {problem.say(t, lang)}
             </p>
           )}
-          {/* Always in the page, so a new notice is announced. */}
-          <p role="status">{notice?.(t, lang) ?? ""}</p>
+          {/* Always in the page, so what appears in them is announced; empty, they take no room. */}
+          <div className="statuses">
+            {/* A saved visit's notice in the success style, glanceable (K4), with its Undo while it is unsent (K2). */}
+            <p role="status" className={notice?.saved === true ? "saved" : undefined}>
+              {notice?.say(t, lang) ?? ""}
+            </p>
+            {undo === undefined ? null : (
+              <button ref={undoButton} type="button" className="undo" aria-label={t("Undo the visit")} onClick={takeBack}>
+                {t("Undo")}
+              </button>
+            )}
+            {shownNote?.message.problem === true ? (
+              <p role="alert" className="field-error">
+                {shownNote.message.say(t, lang)}
+              </p>
+            ) : null}
+            <p role="status" className={shownNote?.message.problem === false ? "saved" : undefined}>
+              {shownNote?.message.problem === false ? shownNote.message.say(t, lang) : ""}
+            </p>
+            <p role="status" className="hint">
+              {lastVisit === undefined ? "" : lastVisitText(t, lang, lastVisit)}
+            </p>
+          </div>
           <div className="card-choice">
             {scanned === null ? (
               <button
@@ -505,14 +778,24 @@ interface RedeemPanelProps {
   scanner: ScanPurpose | null;
   onScanner: (purpose: ScanPurpose | null) => void;
   onBusy: (busy: boolean) => void;
+  /** Lets the visit form give the reward for a card it scanned (K6). */
+  ref: Ref<Redeemer>;
+  /** The answer to a reward the visit form asked for, said there, where the barista is. */
+  onRequestDone: (note: RewardNote) => void;
+}
+
+/** What the visit form can ask of the reward panel. */
+interface Redeemer {
+  redeem: (cardQr: string) => void;
 }
 
 /**
  * Gives a reward for a scanned card, online only (AC 31). A redemption without a confirmed answer is kept in
  * IndexedDB and must be tried again (same event id) before another can start, so a lost answer, a reload or an update
- * never gives the reward twice.
+ * never gives the reward twice. The visit form can ask for one for a card it scanned: its answer is said there, and a
+ * problem here too, where Try again is.
  */
-function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onBusy }: RedeemPanelProps) {
+function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onBusy, ref, onRequestDone }: RedeemPanelProps) {
   const t = useT(AR);
   const lang = useLang();
   const [pending, setPending] = useState<PendingReward | null>(null);
@@ -560,11 +843,22 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
     onBusy(pending !== null || sending || scanner === "reward");
   }, [pending, sending, scanner, onBusy]);
 
-  /** Ends an attempt: the message, and the keyboard back on the panel's button. */
+  /** The card of an attempt the visit form asked for, until it ends: its answer goes back there. */
+  const askedFor = useRef<string | null>(null);
+
+  /** Ends an attempt: the message, and the keyboard back on the panel's button (or left in the visit form, if asked from there). */
   const finish = (say: Message, problem: boolean) => {
     setSending(false);
-    setMessage({ say, problem });
-    setRefocus((turn) => turn + 1);
+    const asked = askedFor.current;
+    askedFor.current = null;
+    if (asked === null) {
+      setMessage({ say, problem });
+      setRefocus((turn) => turn + 1);
+      return;
+    }
+    onRequestDone({ cardQr: asked, message: { say, problem } });
+    // A problem stays here too, beside the Try again it may need.
+    setMessage(problem ? { say, problem } : null);
   };
 
   /** The server's answer, so the redemption is done with either way. */
@@ -628,6 +922,17 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
     }
   };
 
+  useImperativeHandle(ref, () => ({
+    redeem: (cardQr: string) => {
+      if (pending !== null || sending) {
+        onRequestDone({ cardQr, message: { say: (say) => say("Finish the reward waiting under Give a reward first: press Try again there."), problem: true } });
+        return;
+      }
+      askedFor.current = cardQr;
+      void send({ eventId: crypto.randomUUID(), cardQr, startedAt: new Date().toISOString(), earlier: false });
+    },
+  }));
+
   if (catalog.program === null) {
     return null;
   }
@@ -648,8 +953,13 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
             onScanner(null);
             setRefocus((turn) => turn + 1);
           }}
+          onTimeout={() => {
+            onScanner(null);
+            finish((say) => say("The camera turned off after a minute without a card. Press Scan card for a reward when the customer is ready."), false);
+          }}
           onScan={(text) => {
             onScanner(null);
+            buzz();
             const read = readCardQr(text, device.cafe.id);
             if ("problem" in read) {
               finish(read.problem, true);
@@ -701,24 +1011,70 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
   );
 }
 
-/** The barista's counter: recording visits, and rewards when online. The camera serves one of them at a time. */
+const noop = () => undefined;
+
+/**
+ * The barista's counter: recording visits, and rewards when online. The camera serves one of them at a time. The screen
+ * is kept awake while it shows.
+ */
 export function CounterScreen({
   device,
   barista,
   catalog,
   online,
   onBusy,
+  onOrderOpen = noop,
+  lastVisit,
 }: {
   device: DeviceRecord;
   barista: StaffEntry;
   catalog: DeviceCatalog | undefined;
   online: boolean;
   onBusy: (busy: boolean) => void;
+  onOrderOpen?: (open: boolean) => void;
+  lastVisit?: MetaValues["lastVisit"] | undefined;
 }) {
   const t = useT(AR);
   const [scanner, setScanner] = useState<ScanPurpose | null>(null);
   const [visitBusy, setVisitBusy] = useState(false);
   const [rewardBusy, setRewardBusy] = useState(false);
+  const redeemer = useRef<Redeemer>(null);
+  const [rewardNote, setRewardNote] = useState<RewardNote | null>(null);
+
+  // The screen stays on between customers (K13), where the browser allows it; asked again when the page shows again,
+  // as the browser lets it go when the page is hidden.
+  useEffect(() => {
+    if (!("wakeLock" in navigator)) {
+      return;
+    }
+    let lock: WakeLockSentinel | null = null;
+    let active = true;
+    const keepAwake = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      navigator.wakeLock.request("screen").then(
+        (sentinel) => {
+          if (active) {
+            lock = sentinel;
+          } else {
+            void sentinel.release();
+          }
+        },
+        (caught: unknown) => {
+          // Refused (battery saver, a hidden page): the phone just sleeps as it would anyway.
+          console.warn("Keeping the screen on failed", caught);
+        },
+      );
+    };
+    keepAwake();
+    document.addEventListener("visibilitychange", keepAwake);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", keepAwake);
+      void lock?.release();
+    };
+  }, []);
   useEffect(() => {
     onBusy(visitBusy || rewardBusy);
   }, [visitBusy, rewardBusy, onBusy]);
@@ -739,8 +1095,33 @@ export function CounterScreen({
   // Both stay mounted (an open order survives a reward); the other's scan button is disabled while one scans.
   return (
     <div className="counter-screen">
-      <VisitForm device={device} barista={barista} catalog={catalog} online={online} scanner={scanner} onScanner={setScanner} onBusy={setVisitBusy} />
-      <RedeemPanel device={device} barista={barista} catalog={catalog} online={online} scanner={scanner} onScanner={setScanner} onBusy={setRewardBusy} />
+      <VisitForm
+        device={device}
+        barista={barista}
+        catalog={catalog}
+        online={online}
+        scanner={scanner}
+        onScanner={setScanner}
+        onBusy={setVisitBusy}
+        onOrderOpen={onOrderOpen}
+        lastVisit={lastVisit}
+        rewardNote={rewardNote}
+        onRedeem={(cardQr) => {
+          setRewardNote(null);
+          redeemer.current?.redeem(cardQr);
+        }}
+      />
+      <RedeemPanel
+        device={device}
+        barista={barista}
+        catalog={catalog}
+        online={online}
+        scanner={scanner}
+        onScanner={setScanner}
+        onBusy={setRewardBusy}
+        ref={redeemer}
+        onRequestDone={setRewardNote}
+      />
     </div>
   );
 }

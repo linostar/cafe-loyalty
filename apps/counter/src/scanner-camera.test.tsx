@@ -1,0 +1,82 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { QrScanner, SCAN_TIMEOUT_MS } from "./scanner.js";
+
+/** A camera that opens, with a torch or not; its track records what it was asked. */
+function fakeCamera(options: { torch: boolean } | { refuse: string }) {
+  const track = {
+    stop: vi.fn(),
+    getCapabilities: vi.fn(() => ("torch" in options && options.torch ? { torch: true } : {})),
+    applyConstraints: vi.fn(() => Promise.resolve()),
+  };
+  const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+  const getUserMedia = vi.fn(() => ("refuse" in options ? Promise.reject(new DOMException("No", options.refuse)) : Promise.resolve(stream)));
+  Object.defineProperty(navigator, "mediaDevices", { value: { getUserMedia }, configurable: true });
+  // jsdom plays no video: the preview starts at once.
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  return track;
+}
+
+function scanner(onTimeout = vi.fn()) {
+  render(<QrScanner purpose="customer's card" noCamera="Type the number instead." onScan={vi.fn()} onCancel={vi.fn()} onTimeout={onTimeout} />);
+  return onTimeout;
+}
+
+describe("QrScanner", () => {
+  it("offers the camera's torch for a dark counter, and switches it (K7)", async () => {
+    const track = fakeCamera({ torch: true });
+    scanner();
+    const torch = await screen.findByRole("button", { name: "Torch" });
+    expect(torch).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(torch);
+    await waitFor(() => {
+      expect(torch).toHaveAttribute("aria-pressed", "true");
+    });
+    expect(track.applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
+  });
+
+  it("shows no torch on a camera without one", async () => {
+    const track = fakeCamera({ torch: false });
+    scanner();
+    await waitFor(() => {
+      expect(track.getCapabilities).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole("button", { name: "Torch" })).not.toBeInTheDocument();
+  });
+
+  it("turns the camera off after a minute without a card (K7)", () => {
+    fakeCamera({ torch: false });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const onTimeout = scanner();
+      act(() => {
+        vi.advanceTimersByTime(SCAN_TIMEOUT_MS - 1);
+      });
+      expect(onTimeout).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(onTimeout).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("points to typing the number when the camera is not allowed, and leaves that on screen", async () => {
+    fakeCamera({ refuse: "NotAllowedError" });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const onTimeout = scanner();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent(/^The camera is not allowed\. Type the number instead\./);
+      act(() => {
+        vi.advanceTimersByTime(SCAN_TIMEOUT_MS * 2);
+      });
+      expect(onTimeout).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
