@@ -203,7 +203,7 @@ ${savedNotice(lang, view.saved === "offers")}
 <p id="delete-text">${t(lang, "deleteText")}</p>
 <form method="post" action="${view.path}/delete#delete-title" novalidate>
 <input type="hidden" name="lang" value="${lang}">
-<label class="check"><input type="checkbox" name="confirm" value="yes" aria-describedby="delete-text${errors.delete === undefined ? "" : " delete-error"}"${errors.delete === undefined ? "" : html` aria-invalid="true"`}> ${t(lang, "deleteConfirm")}</label>
+<label class="check"><input type="checkbox" name="confirm" value="yes" required aria-describedby="delete-text${errors.delete === undefined ? "" : " delete-error"}"${errors.delete === undefined ? "" : html` aria-invalid="true"`}> ${t(lang, "deleteConfirm")}</label>
 ${errorBlock(errors.delete, "delete-error")}
 <button type="submit" class="danger">${t(lang, "deleteButton")}</button>
 </form>
@@ -252,7 +252,7 @@ export function restoreView(lang: Lang, path: string, otherLangHref: string, del
 <form method="post" action="${path}#restore-delete-title" novalidate>
 <input type="hidden" name="lang" value="${lang}">
 <input type="hidden" name="action" value="delete">
-<label class="check"><input type="checkbox" name="confirm" value="yes" aria-describedby="restore-delete-text${deleteError === undefined ? "" : " restore-delete-error"}"${deleteError === undefined ? "" : html` aria-invalid="true"`}> ${t(lang, "restoreDeleteConfirm")}</label>
+<label class="check"><input type="checkbox" name="confirm" value="yes" required aria-describedby="restore-delete-text${deleteError === undefined ? "" : " restore-delete-error"}"${deleteError === undefined ? "" : html` aria-invalid="true"`}> ${t(lang, "restoreDeleteConfirm")}</label>
 ${errorBlock(deleteError, "restore-delete-error")}
 <button type="submit" class="danger">${t(lang, "restoreDeleteButton")}</button>
 </form>

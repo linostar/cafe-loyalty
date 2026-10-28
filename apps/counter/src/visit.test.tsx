@@ -86,6 +86,19 @@ describe("visits", () => {
     expect(await screen.findByText("Visit saved, earning up to 1 stamp. It is sent as soon as the phone is online.")).toBeInTheDocument();
   });
 
+  it("says the connection as it is when the save completes, not when Record was tapped", async () => {
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    const props = { device, barista, catalog: CATALOG, onBusy: vi.fn() };
+    const { rerender } = render(<CounterScreen {...props} online />);
+    fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+    fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+    // The save (IndexedDB) is still pending: the phone goes offline meanwhile.
+    rerender(<CounterScreen {...props} online={false} />);
+    expect(await screen.findByText("Visit saved, earning up to 1 stamp. It is sent as soon as the phone is online.")).toBeInTheDocument();
+  });
+
   it("records what was ordered, priced as the menu shows it, for a phone number (AC 22, 32)", async () => {
     const { barista, onBusy } = await counter();
     fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));

@@ -151,19 +151,25 @@ export function useSubmit(): SubmitState {
   const [done, setDone] = useState(false);
   // Read and set synchronously: two clicks before a re-render would both see `pending` false.
   const inFlight = useRef(false);
+  // Edits counted by `clearDone`: one made while a request was on its way means what it saved is no longer what the
+  // form shows, so it does not say "Saved.".
+  const edits = useRef(0);
 
   async function submit<T>(action: () => Promise<T>): Promise<SubmitResult<T>> {
     if (inFlight.current) {
       return { ok: false, error: new StillPendingError() };
     }
     inFlight.current = true;
+    const editsAtStart = edits.current;
     setPending(true);
     setError(null);
     setFieldErrors({});
     setDone(false);
     try {
       const value = await action();
-      setDone(true);
+      if (edits.current === editsAtStart) {
+        setDone(true);
+      }
       return { ok: true, value };
     } catch (caught) {
       if (caught instanceof ApiRequestError && caught.failure.code === "UNAUTHENTICATED" && onSessionEnded !== null) {
@@ -194,6 +200,7 @@ export function useSubmit(): SubmitState {
     fieldErrors,
     done,
     clearDone: () => {
+      edits.current += 1;
       setDone(false);
     },
     submit,

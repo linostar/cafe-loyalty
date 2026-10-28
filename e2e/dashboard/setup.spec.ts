@@ -249,6 +249,39 @@ test("saves the minimum margin campaigns must keep", async ({ page }) => {
   await expect(margin.getByRole("status")).toHaveText("");
 });
 
+test("says nothing is saved when the field changed while its save was on its way", async ({ page }) => {
+  let setup = { cafe: CAFE, program: PROGRAM, orderTypes: [ESPRESSO] };
+  let held = false;
+  let answer: () => void = () => undefined;
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "PATCH /api/cafe": async (route) => {
+      // Held until the test lets it go, so the edit below lands while it is pending.
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+        held = true;
+      });
+      setup = { ...setup, cafe: { ...CAFE, minMarginPercent: 35 } };
+      await route.fulfill({ json: setup });
+    },
+  });
+  await page.goto("/cafe");
+  const margin = page.getByRole("form", { name: "Minimum margin" });
+  const field = margin.getByLabel("Minimum margin over cost (%)");
+  await field.fill("35");
+  await margin.getByRole("button", { name: "Save margin" }).click();
+  await expect(margin.getByRole("button", { name: "Saving…" })).toHaveAttribute("aria-disabled", "true");
+  await field.fill("36");
+  await expect.poll(() => held).toBe(true);
+  answer();
+  await expect(margin.getByRole("button", { name: "Save margin" })).not.toHaveAttribute("aria-disabled");
+  // 36 was never sent: "Saved." would claim it was.
+  await expect(margin.getByRole("status")).toHaveText("");
+  await expect(field).toHaveValue("36");
+});
+
 test("checks the café's own fields itself, in the page's language, and focuses the first with a problem", async ({ page }) => {
   await mockApi(page, {
     "GET /api/auth/session": reply(200, SESSION),

@@ -182,6 +182,11 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   const problemId = useId();
   const scanButton = useRef<HTMLButtonElement>(null);
   const recordButton = useRef<HTMLButtonElement>(null);
+  /** The connection now, read when a save completes: the phone may go offline while it is saved. */
+  const onlineNow = useRef(online);
+  useEffect(() => {
+    onlineNow.current = online;
+  }, [online]);
 
   const items = catalog.orderTypes.filter((type) => (quantities[type.id] ?? 0) > 0).map((type) => ({ type, quantity: quantities[type.id] ?? 0 }));
   // Taken off sale by the owner while this order was open: left out, and said so by name.
@@ -274,7 +279,7 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
         setApplyWinBack(false);
         // The server decides the stamps (cooldown, daily cap), so the counter promises no more than the order earns.
         // Now or later, as the phone's connection is when saved; the queue sends it either way.
-        const sending = online;
+        const sending = onlineNow.current;
         setNotice(() =>
           stamps > 0
             ? (say: T, shownIn: Lang) =>

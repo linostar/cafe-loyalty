@@ -445,7 +445,8 @@ describe("web card", () => {
     expect(typo.statusCode).toBe(400);
     expect(typo.body).toContain('value="rana@example"');
     const unconfirmed = await app.inject({ method: "POST", url: `/c/${secret}/delete`, ...formBody({ lang: "en" }) });
-    expect(unconfirmed.body).toMatch(/name="confirm" value="yes" aria-describedby="delete-text delete-error" aria-invalid="true"/);
+    // Required, for assistive technology: the form is novalidate, so the server's message is what stops it.
+    expect(unconfirmed.body).toMatch(/name="confirm" value="yes" required aria-describedby="delete-text delete-error" aria-invalid="true"/);
   });
 
   it("links the card to its settings page, which holds the email, offers and delete forms and leads back (AC 11)", async () => {
@@ -600,6 +601,7 @@ describe("recovery", () => {
     expect(unconfirmed.statusCode).toBe(400);
     expect(unconfirmed.body).toContain('<p class="field-error" id="restore-delete-error" role="alert">Tick the box to confirm.</p>');
     expect(unconfirmed.body).toContain('<form method="post" action="/r/' + token + '#restore-delete-title" novalidate>');
+    expect(unconfirmed.body).toMatch(/name="confirm" value="yes" required aria-describedby="restore-delete-text restore-delete-error" aria-invalid="true"/);
     for (const secret of secrets) {
       expect(await cardRow(secret)).toBeDefined();
     }
