@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
-import { addQueued, getMeta, setMeta, settleQueued } from "./storage.js";
+import { addQueued, deleteMeta, getMeta, setMeta, settleQueued, signOutIdle, touchBarista } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice, type ApiCall, type FakeReply } from "./test-helpers.js";
 import { useServiceWorkerUpdate } from "./updates.js";
 
@@ -262,5 +262,175 @@ describe("Counter App in Arabic", () => {
     fireEvent.change(await screen.findByLabelText("الرمز السري"), { target: { value: "٠٠٠٠٠٠" } });
     fireEvent.click(screen.getByRole("button", { name: "تسجيل الدخول" }));
     expect(await screen.findByText("رمز سري خاطئ. بقيت ⁨4⁩ محاولات قبل الإيقاف المؤقت.")).toBeInTheDocument();
+  });
+
+  it("says on the chip when the server does not answer though the phone is online, and links to refused events (K8)", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    await setMeta("staff", [await staffEntry(RAMI_ID, "Rami", "482913")]);
+    await addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} });
+    await settleQueued([], [{ eventId: "e0", type: "visit.recorded", occurredAt: "2026-10-01T07:00:00.000Z", code: "CLOCK_SKEW", rejectedAt: "2026-10-01T07:05:00.000Z" }]);
+    // Wi-Fi with no internet: every request fails, while the browser says it is online.
+    fakeApi(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    render(<App />);
+    const chip = await screen.findByRole("region", { name: "Counter status" });
+    await waitFor(() => {
+      expect(within(chip).getByRole("status")).toHaveTextContent(/^Can't reach server/);
+    });
+    expect(chip).toHaveClass("is-offline");
+    expect(within(chip).getByText("The phone is online but the server did not answer: stamps are saved on this phone and sent once it does.")).toHaveClass("visually-hidden");
+    expect(within(chip).getByRole("link", { name: "1 refused" })).toHaveAttribute("href", "#rejected-title");
+  });
+
+  it.each([
+    { what: "a proxy's page while the server is down", reply: { status: 502, body: "<html>Bad gateway</html>" }, said: /HTTP 502/, chip: /^Can't reach server/ },
+    { what: "an answer from the server, though an error", reply: { status: 500, body: envelope("INTERNAL") }, said: "Server says INTERNAL.", chip: "Online" },
+  ])("says the server cannot be reached only when nothing answered: $what (K8)", async ({ reply, said, chip: shown }) => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    await setMeta("staff", [await staffEntry(RAMI_ID, "Rami", "482913")]);
+    await addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} });
+    fakeApi(() => reply);
+    render(<App />);
+    expect(await screen.findByText(said)).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Counter status" })).getByRole("status")).toHaveTextContent(shown);
+  });
+
+  it("says when events were last sent, once the server has taken some (K8)", async () => {
+    setOnline(true);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    await setMeta("staff", [await staffEntry(RAMI_ID, "Rami", "482913")]);
+    await addQueued({ sequence: 1, eventId: "e1", type: "visit.recorded", occurredAt: "2026-10-01T08:00:00.000Z", event: {} });
+    await workingApi();
+    render(<App />);
+    const chip = await screen.findByRole("region", { name: "Counter status" });
+    expect(await within(chip).findByText(/^Last sent /)).toBeInTheDocument();
+    expect(within(chip).getByRole("status")).toHaveTextContent("Online");
+  });
+
+  it("asks before Switch barista clears an open order, keeping it on Keep the order (K11)", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() });
+    const coffee = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
+    await setMeta("catalog", { catalogVersion: 1, timeZone: "Asia/Beirut", campaigns: [], winBackOffers: [], orderTypes: [coffee], program: null });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "One more Coffee" }));
+    const switchButton = screen.getByRole("button", { name: "Switch barista" });
+    fireEvent.click(switchButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent("An order is open. Switching barista clears it.");
+    // The safe choice takes the keyboard.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Keep the order" })).toHaveFocus();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Keep the order" }));
+    await waitFor(() => {
+      expect(switchButton).toHaveFocus();
+    });
+    expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+    expect(await getMeta("barista")).toMatchObject({ staffId: rami.id });
+    fireEvent.click(switchButton);
+    fireEvent.click(await screen.findByRole("button", { name: "Switch and clear the order" }));
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+    expect(await getMeta("barista")).toBeUndefined();
+  });
+
+  it("switches barista at once when no order is open", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Switch barista" }));
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+  });
+
+  it("signs the barista out after 4 hours nobody used the counter, even across a reload, and says why (K3)", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    // Last used just over 4 hours ago, before the page was loaded again.
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() - 4 * 60 * 60 * 1000 - 1000 });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Who is working?" })).toBeInTheDocument();
+    expect(screen.getByText("The barista was signed out after 4 hours without use.")).toBeInTheDocument();
+    expect(await getMeta("barista")).toBeUndefined();
+    // Gone once the next barista signs in.
+    fireEvent.click(screen.getByRole("button", { name: "Rami" }));
+    await enterPin("482913");
+    expect(await screen.findByText("Signed in as Rami on Front counter.")).toBeInTheDocument();
+    expect(screen.queryByText("The barista was signed out after 4 hours without use.")).not.toBeInTheDocument();
+    expect(await getMeta("barista")).toMatchObject({ staffId: rami.id, lastActiveAt: expect.any(Number) as unknown });
+  });
+
+  it("keeps the barista's last use, so their 4 hours start again from it, even after a reload (K3)", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() - 3 * 60 * 60 * 1000 });
+    const usedAt = Date.now();
+    fireEvent.pointerDown(document.body);
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Switch barista" })).toBeInTheDocument();
+    await waitFor(async () => {
+      expect((await getMeta("barista"))?.lastActiveAt).toBeGreaterThanOrEqual(usedAt);
+    });
+  });
+
+  it("never signs a barista back in by keeping their last use after a sign-out or a switch (K3)", async () => {
+    await setMeta("barista", { staffId: RAMI_ID, lastActiveAt: 1 });
+    await deleteMeta("barista");
+    await touchBarista(RAMI_ID, 2);
+    expect(await getMeta("barista")).toBeUndefined();
+    await setMeta("barista", { staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 1 });
+    await touchBarista(RAMI_ID, 2);
+    expect(await getMeta("barista")).toEqual({ staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 1 });
+    await touchBarista("9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", 2);
+    expect(await getMeta("barista")).toEqual({ staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 2 });
+    // A tab behind the times never moves another's later use back.
+    await touchBarista("9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", 1);
+    expect(await getMeta("barista")).toEqual({ staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 2 });
+  });
+
+  it("signs a barista out for idleness only if they are still the one signed in, unused in every tab (K3)", async () => {
+    const idleSince = 1_000;
+    await setMeta("barista", { staffId: RAMI_ID, lastActiveAt: idleSince + 1 });
+    // Another tab stored a use since this one last looked: kept.
+    expect(await signOutIdle(RAMI_ID, idleSince)).toBe(false);
+    expect(await getMeta("barista")).toMatchObject({ staffId: RAMI_ID });
+    // Someone else signed in meanwhile: kept too.
+    expect(await signOutIdle("9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", idleSince + 2)).toBe(false);
+    expect(await getMeta("barista")).toMatchObject({ staffId: RAMI_ID });
+    expect(await signOutIdle(RAMI_ID, idleSince + 2)).toBe(true);
+    expect(await getMeta("barista")).toBeUndefined();
+  });
+
+  it("says what the server did with the last visit it settled, as soon as a sync stores it (K1)", async () => {
+    setOnline(false);
+    window.history.replaceState(null, "", "/");
+    await storePairedDevice();
+    const rami = await staffEntry(RAMI_ID, "Rami", "482913");
+    await setMeta("staff", [rami]);
+    await setMeta("barista", { staffId: rami.id, lastActiveAt: Date.now() });
+    const coffee = { id: "3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e0f", nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1 };
+    await setMeta("catalog", { catalogVersion: 1, timeZone: "Asia/Beirut", campaigns: [], winBackOffers: [], orderTypes: [coffee], program: null });
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Record visit" })).toBeInTheDocument();
+    await setMeta("lastVisit", { eventId: "e1", occurredAt: "2026-10-01T08:00:00.000Z", code: "STAMP_COOLDOWN" });
+    expect(await screen.findByText(/^Last visit, at .+: recorded with no stamps, because the card got stamps less than 30 minutes before\.$/)).toBeInTheDocument();
   });
 });

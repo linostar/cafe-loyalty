@@ -1,5 +1,5 @@
 import { formatCardQr, type DeviceCatalog } from "@cafe-loyalty/shared";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { getMeta, listQueued, setMeta } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice } from "./test-helpers.js";
@@ -348,6 +348,10 @@ describe("rewards", () => {
       return { status: 201, body: { stampsUsed: 9, stampsLeft: 1, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } };
     });
     nextScan = cardOf(CAFE.id);
+    // Once the phone has been checked for an unconfirmed reward.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^The reward started at .+ was not confirmed\. Do not give it yet: check the connection, then press Try again\.$/);
@@ -399,6 +403,9 @@ describe("rewards", () => {
     await counter();
     fakeApi(() => ({ status: 409, body: envelope("CONFLICT", "This card has 4 of the 9 stamps a reward needs. Add stamps first.") }));
     nextScan = cardOf(CAFE.id);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This card has 4 of the 9 stamps a reward needs.");
@@ -406,5 +413,322 @@ describe("rewards", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Scan card for a reward" })).toHaveFocus();
     });
+  });
+});
+
+describe("the counter's speed and recovery (phase 2)", () => {
+  const record = () => {
+    fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+    fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 123 456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record visit" }));
+  };
+
+  it("shows a saved visit in the success style and buzzes, then undoes it while unsent, putting the order back (K2, K4)", async () => {
+    const vibrate = vi.fn(() => true);
+    Object.defineProperty(navigator, "vibrate", { value: vibrate, configurable: true });
+    try {
+      await counter({ online: false });
+      record();
+      const saved = await screen.findByText("Visit saved, earning up to 1 stamp. It is sent as soon as the phone is online.");
+      expect(saved).toHaveClass("saved");
+      expect(vibrate).toHaveBeenCalledWith(50);
+      const [queued] = await listQueued(10);
+      expect(queued?.holdUntil).toBeGreaterThan(Date.now());
+      // Said too, for those who do not see the button come.
+      expect(screen.getByText("It can be undone for 10 seconds.")).toHaveAttribute("role", "status");
+      fireEvent.click(screen.getByRole("button", { name: "Undo the visit" }));
+      expect(await screen.findByText("Visit undone. Change the order and record it again.")).not.toHaveClass("saved");
+      expect(screen.queryByText("It can be undone for 10 seconds.")).not.toBeInTheDocument();
+      expect(await listQueued(10)).toEqual([]);
+      // As it was recorded: one coffee, for that number.
+      expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+      expect(screen.getByLabelText("No card? The customer's mobile number")).toHaveValue("70 123 456");
+      expect(screen.queryByRole("button", { name: "Undo the visit" })).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Record visit" })).toHaveFocus();
+      });
+    } finally {
+      Reflect.deleteProperty(navigator, "vibrate");
+    }
+  });
+
+  it("says it is too late once the visit's hold has passed, and keeps it queued (K2)", async () => {
+    await counter({ online: false });
+    record();
+    await screen.findByRole("button", { name: "Undo the visit" });
+    // The tap lands just as the hold ends (the button goes a moment later).
+    const later = Date.now() + 11_000;
+    const now = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Undo the visit" }));
+      expect(await screen.findByText("Too late to undo: the visit is sent or on its way. Tell the owner, who can fix it in Review.")).toBeInTheDocument();
+    } finally {
+      now.mockRestore();
+    }
+    expect(await listQueued(10)).toHaveLength(1);
+    expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
+  });
+
+  it("ends the Undo offer when the next order starts", async () => {
+    await counter({ online: false });
+    record();
+    await screen.findByRole("button", { name: "Undo the visit" });
+    fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+    expect(screen.queryByRole("button", { name: "Undo the visit" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an order started while its Undo was being taken back, instead of putting the undone one over it (K2)", async () => {
+    await counter({ online: false });
+    record();
+    fireEvent.click(await screen.findByRole("button", { name: "Undo the visit" }));
+    // The next order starts before the phone's storage has answered.
+    fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+    expect(await screen.findByText("Visit undone. Change the order and record it again.")).toBeInTheDocument();
+    expect(await listQueued(10)).toEqual([]);
+    expect(screen.getByText("Total $4.50 · 0 stamps")).toBeInTheDocument();
+  });
+
+  it("shows a typed number as it will be recorded, before Record (K10)", async () => {
+    await counter();
+    const phone = screen.getByLabelText("No card? The customer's mobile number");
+    fireEvent.change(phone, { target: { value: "70123456" } });
+    expect(phone).toHaveAccessibleDescription("Records it for ⁦+961 70 123 456⁩.");
+    fireEvent.change(phone, { target: { value: "03 123 456" } });
+    expect(phone).toHaveAccessibleDescription("Records it for ⁦+961 3 123 456⁩.");
+    // Not a number yet: nothing to read back.
+    fireEvent.change(phone, { target: { value: "70 12" } });
+    expect(screen.queryByText(/^Records it for/)).not.toBeInTheDocument();
+  });
+
+  it("says why the last visit the server settled got no stamps (K1)", async () => {
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    const props = { device, barista, catalog: CATALOG, online: true, onBusy: vi.fn() };
+    const occurredAt = "2026-10-01T08:00:00.000Z";
+    const { rerender } = render(<CounterScreen {...props} lastVisit={{ eventId: "e1", occurredAt, code: "STAMP_COOLDOWN" }} />);
+    expect(screen.getByText(/^Last visit, at .+: recorded with no stamps, because the card got stamps less than 30 minutes before\.$/)).toBeInTheDocument();
+    rerender(<CounterScreen {...props} lastVisit={{ eventId: "e2", occurredAt, code: "DAILY_STAMP_CAP" }} />);
+    expect(screen.getByText(/this phone reached its stamps for today\. Tell the owner\.$/)).toBeInTheDocument();
+    rerender(<CounterScreen {...props} lastVisit={{ eventId: "e5", occurredAt, code: "CARD_GONE" }} />);
+    expect(screen.getByText(/recorded with no stamps, because the card was deleted\.$/)).toBeInTheDocument();
+    rerender(<CounterScreen {...props} lastVisit={{ eventId: "e3", occurredAt, code: "HELD_FOR_REVIEW" }} />);
+    expect(screen.getByText(/held for the owner to check; its stamps wait until the owner accepts it\.$/)).toBeInTheDocument();
+    rerender(<CounterScreen {...props} lastVisit={{ eventId: "e4", occurredAt, code: "OK" }} />);
+    expect(screen.getByText(/^Last visit, at .+: recorded\.$/)).toBeInTheDocument();
+  });
+
+  it("offers a scanned card's ready reward and gives it with the same scan, saying so in the order (K6)", async () => {
+    await counter();
+    const card = cardOf(CAFE.id);
+    const calls = fakeApi((call) =>
+      call.path === "/api/device/cards/status"
+        ? { status: 200, body: { stamps: 9, rewardReady: true } }
+        : { status: 201, body: { stampsUsed: 9, stampsLeft: 0, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } },
+    );
+    nextScan = card;
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    // Shown, and announced: focus is on Record visit, after it.
+    const [shown, said] = await screen.findAllByText("Reward ready: Free coffee.");
+    expect(shown?.closest(".reward-ready")).not.toBeNull();
+    expect(said).toHaveAttribute("role", "status");
+    expect(calls[0]).toMatchObject({ method: "POST", path: "/api/device/cards/status", body: { cardQr: card } });
+    fireEvent.click(screen.getByRole("button", { name: "Give Free coffee now" }));
+    // The button goes; the keyboard moves on to the next step instead of the page.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Record visit" })).toHaveFocus();
+    });
+    expect(await screen.findByText("Reward given: Free coffee. 0 stamps left on the card.")).toHaveClass("saved");
+    expect(calls[1]).toMatchObject({ path: "/api/device/redemptions", body: { cardQr: card } });
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+    // The visit is still to record, for the same card.
+    expect(screen.getByText("Card scanned.")).toBeInTheDocument();
+  });
+
+  it("offers a reward only from this scan's check, not an earlier one's (K6)", async () => {
+    await counter();
+    let ready = true;
+    const calls = fakeApi(() => ({ status: 200, body: { stamps: ready ? 9 : 0, rewardReady: ready } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    expect(await screen.findAllByText("Reward ready: Free coffee.")).toHaveLength(2);
+    // Given meanwhile (on the reward panel, or another phone): the same card's next scan is told it is not ready.
+    ready = false;
+    fireEvent.click(screen.getByRole("button", { name: "Clear card" }));
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    expect(await screen.findByText("Card scanned.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls).toHaveLength(2);
+    });
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+  });
+
+  it("keeps Give now off while the reward panel scans, so one redemption runs at a time", async () => {
+    await counter();
+    fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    const give = await screen.findByRole("button", { name: "Give Free coffee now" });
+    fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
+    expect(give).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(give).toBeEnabled();
+  });
+
+  it("ignores a slow answer for an earlier scan of the same card (K6)", async () => {
+    await counter();
+    let answerFirst: (ready: boolean) => void = () => undefined;
+    const answers = [
+      new Promise<boolean>((resolve) => {
+        answerFirst = resolve;
+      }),
+      Promise.resolve(false),
+    ];
+    const calls = fakeApi(async () => {
+      const ready = await answers[calls.length - 1];
+      return { status: 200, body: { stamps: ready === true ? 9 : 0, rewardReady: ready === true } };
+    });
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Clear card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    await waitFor(() => {
+      expect(calls).toHaveLength(2);
+    });
+    // The first scan's answer comes last, saying ready: the card scanned now was answered not ready.
+    answerFirst(true);
+    await act(async () => {
+      await answers[0];
+    });
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+  });
+
+  it("keeps Give now off while the phone is offline, as rewards need the server", async () => {
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    const { rerender } = render(<CounterScreen device={device} barista={barista} catalog={CATALOG} online onBusy={vi.fn()} />);
+    fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    const give = await screen.findByRole("button", { name: "Give Free coffee now" });
+    rerender(<CounterScreen device={device} barista={barista} catalog={CATALOG} online={false} onBusy={vi.fn()} />);
+    expect(give).toBeDisabled();
+  });
+
+  it("announces a refused reward asked for from the visit once, showing it beside Try again too", async () => {
+    await counter();
+    fakeApi((call) =>
+      call.path === "/api/device/cards/status"
+        ? { status: 200, body: { stamps: 9, rewardReady: true } }
+        : { status: 404, body: envelope("NOT_FOUND", "This is not a loyalty card of this café.") },
+    );
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Give Free coffee now" }));
+    expect(await screen.findAllByText("This is not a loyalty card of this café.")).toHaveLength(2);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("offers no reward for a card short of it", async () => {
+    await counter();
+    const calls = fakeApi(() => ({ status: 200, body: { stamps: 4, rewardReady: false } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    await waitFor(() => {
+      expect(calls).toHaveLength(1);
+    });
+    expect(screen.queryByText(/^Reward ready/)).not.toBeInTheDocument();
+  });
+
+  it("asks nothing about the reward offline", async () => {
+    await counter({ online: false });
+    const calls = fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    expect(await screen.findByText("Card scanned.")).toBeInTheDocument();
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps the screen on while the counter shows, asking again when the page shows again (K13)", async () => {
+    const sentinels: { release: () => Promise<void> }[] = [];
+    const request = vi.fn(() => {
+      const sentinel = { release: vi.fn(() => Promise.resolve()) };
+      sentinels.push(sentinel);
+      return Promise.resolve(sentinel);
+    });
+    Object.defineProperty(navigator, "wakeLock", { value: { request }, configurable: true });
+    try {
+      await counter();
+      await waitFor(() => {
+        expect(request).toHaveBeenCalledWith("screen");
+      });
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(request).toHaveBeenCalledTimes(2);
+      // Only the latest lock is kept: the first is let go once the second is held.
+      await waitFor(() => {
+        expect(sentinels[0]?.release).toHaveBeenCalled();
+      });
+      expect(sentinels[1]?.release).not.toHaveBeenCalled();
+      cleanup();
+      expect(sentinels[1]?.release).toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(navigator, "wakeLock");
+    }
+  });
+
+  it("clears an open order nobody touched for 5 minutes, and says so (K3)", async () => {
+    await counter({ online: false });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      act(() => {
+        vi.advanceTimersByTime(5 * 60 * 1000 - 1);
+      });
+      expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
+      expect(screen.getByText("The open order was cleared after 5 minutes without use.")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts only changes to the order as touching it: each restarts its 5 minutes, other use does not (K3)", async () => {
+    await counter({ online: false });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
+      act(() => {
+        vi.advanceTimersByTime(4 * 60 * 1000);
+      });
+      fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 1" } });
+      act(() => {
+        vi.advanceTimersByTime(4 * 60 * 1000);
+      });
+      expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+      // Using the rest of the counter (the reward panel, a tap elsewhere) leaves the order as untouched as it was.
+      fireEvent.pointerDown(document.body);
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      act(() => {
+        vi.advanceTimersByTime(60 * 1000);
+      });
+      expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -113,6 +113,7 @@ async function mockCounter(page: Page): Promise<void> {
     "GET /api/device/staff": reply(200, { staff: STAFF }),
     "GET /api/device/catalog": reply(200, CATALOG),
     "POST /api/device/sync": reply(200, { results: [] }),
+    "POST /api/device/cards/status": reply(200, { stamps: 9, rewardReady: true }),
   });
 }
 
@@ -183,6 +184,46 @@ for (const { width, height } of WIDTHS) {
       await expectLanguageAndFit(page, "en");
       await expectAccessible(page);
       // Offline, the status chip is at its widest; on a phone the action bar is at the bottom of the screen.
+      await expectFocusNeverHidden(page);
+    });
+
+    test("a saved visit with its Undo, a card with its reward ready, and switching barista with an order open", async ({ page }, testInfo) => {
+      const check = async (name: string) => {
+        await capture(page, testInfo, `counter-${name}-${String(width)}`);
+        await expectLanguageAndFit(page, "en");
+        await expectAccessible(page);
+      };
+      await toPin(page, testInfo, width, false);
+      await page.getByLabel("PIN", { exact: true }).fill("482913");
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await page.getByRole("button", { name: "One more Latte" }).click();
+      await page.getByLabel("No card? The customer's mobile number").fill("70 123 456");
+      await expect(page.getByText("Records it for", { exact: false })).toBeVisible();
+      await page.getByRole("button", { name: "Record visit" }).click();
+      await expect(page.getByRole("button", { name: "Undo the visit" })).toBeVisible();
+      if (width >= 1024) {
+        // Read from arm's length on a landscape tablet (K12): the menu and the saved visit larger than body text.
+        const sizes = await page.evaluate(() =>
+          [".menu-item", ".saved", "body"].map((selector) => parseFloat(getComputedStyle(document.querySelector(selector) ?? document.body).fontSize)),
+        );
+        const [menu = 0, saved = 0, body = 0] = sizes;
+        expect(menu, "menu text").toBeGreaterThan(body);
+        expect(saved, "saved visit").toBeGreaterThan(menu);
+      }
+      await check("saved");
+      await page.getByRole("button", { name: "Scan card", exact: true }).click();
+      await expect(page.locator(".reward-ready").getByText("Reward ready: Free coffee.")).toBeVisible({ timeout: 15_000 });
+      await check("reward-ready");
+      await page.getByRole("button", { name: "Switch barista" }).click();
+      await expect(page.getByRole("button", { name: "Keep the order" })).toBeFocused();
+      await check("switch-confirm");
+      // With a card scanned, the action bar is at its tallest on a phone: nothing the keyboard reaches hides under it.
+      await expectFocusNeverHidden(page);
+      await page.getByRole("button", { name: "Keep the order" }).click();
+      await page.getByRole("button", { name: "One more Latte" }).click();
+      await page.getByRole("button", { name: "Record visit" }).click();
+      await expect(page.getByRole("button", { name: "Undo the visit" })).toBeVisible();
+      // And with a saved visit's notice and its Undo in it.
       await expectFocusNeverHidden(page);
     });
 

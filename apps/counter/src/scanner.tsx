@@ -8,10 +8,25 @@ const AR = {
   "No camera was found on this phone. {next}": "لم يُعثر على كاميرا في هذا الهاتف. {next}",
   "The camera could not start. Close other apps that use it, then try again.": "تعذّر تشغيل الكاميرا. أغلق التطبيقات الأخرى التي تستخدمها، ثم حاول مجدداً.",
   "Point the camera at the {purpose}.": "وجّه الكاميرا نحو {purpose}.",
+  Torch: "المصباح",
 } as const;
 
 /** How often a camera frame is checked for a QR code. */
 const SCAN_INTERVAL_MS = 200;
+/** How long the camera stays on without reading a code: then it turns off, sparing the battery and the phone's heat (K7). */
+export const SCAN_TIMEOUT_MS = 60_000;
+
+/** A camera track's torch, where the browser offers one (Chrome on Android); not yet in TypeScript's DOM types. */
+type TorchCapabilities = MediaTrackCapabilities & { torch?: boolean };
+
+/** Whether a camera track has a torch; false where the browser cannot tell (some have no getCapabilities). */
+function hasTorch(track: MediaStreamTrack): boolean {
+  try {
+    return (track.getCapabilities() as TorchCapabilities).torch === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The text of the QR code in an image (RGBA pixels), or null when there is none. Inverted codes (light on dark) are
@@ -35,10 +50,23 @@ function cameraProblem(error: unknown, noCamera: string, t: Translate<typeof AR>
 
 /**
  * Shows the back camera and reports the first QR code it sees, reading frames on the phone (nothing leaves it). The
- * camera is released when the scanner closes. `purpose` names what to scan and `noCamera` says what to do instead on a
- * phone without one, both in the page's language.
+ * camera is released when the scanner closes, and after a minute without a code (`onTimeout`). `purpose` names what to
+ * scan and `noCamera` says what to do instead without a camera (none, or not allowed), both in the page's language. A
+ * Torch button shows where the camera has one, for a dark counter.
  */
-export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: string; noCamera: string; onScan: (text: string) => void; onCancel: () => void }) {
+export function QrScanner({
+  purpose,
+  noCamera,
+  onScan,
+  onCancel,
+  onTimeout,
+}: {
+  purpose: string;
+  noCamera: string;
+  onScan: (text: string) => void;
+  onCancel: () => void;
+  onTimeout: () => void;
+}) {
   const t = useT(AR);
   const video = useRef<HTMLVideoElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
@@ -46,6 +74,26 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
   /** Why the camera failed, put into words when shown, so it follows a language switch. */
   const [failure, setFailure] = useState<{ error: unknown } | null>(null);
   const problem = failure === null ? null : cameraProblem(failure.error, noCamera, t);
+  /** The camera track and whether its torch is on, when it has one. */
+  const [torch, setTorch] = useState<{ track: MediaStreamTrack; on: boolean; switching?: boolean } | null>(null);
+
+  const timedOut = useRef(onTimeout);
+  useEffect(() => {
+    timedOut.current = onTimeout;
+  }, [onTimeout]);
+  // Only while the camera may still read a code: a failed one says why, until the barista cancels.
+  const failed = failure !== null;
+  useEffect(() => {
+    if (failed) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      timedOut.current();
+    }, SCAN_TIMEOUT_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [failed]);
 
   // The keyboard lands on the way out of the scanner, which is all it can do here.
   useEffect(() => {
@@ -89,6 +137,10 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
             setFailure({ error: caught });
           }
           return;
+        }
+        const track = opened.getVideoTracks()[0];
+        if (track !== undefined && hasTorch(track) && isActive()) {
+          setTorch({ track, on: false });
         }
         timer = setInterval(() => {
           if (element.videoWidth === 0) {
@@ -135,9 +187,38 @@ export function QrScanner({ purpose, noCamera, onScan, onCancel }: { purpose: st
         </p>
       )}
       {problem === null ? <video ref={video} className="camera" muted playsInline aria-describedby={helpId} /> : null}
-      <button ref={cancel} type="button" onClick={onCancel}>
-        {t("Cancel")}
-      </button>
+      <div className="actions">
+        {torch === null || problem !== null ? null : (
+          // aria-disabled while it switches, so a second tap cannot ask for the same state again; the keyboard stays on it.
+          <button
+            type="button"
+            aria-pressed={torch.on}
+            aria-disabled={torch.switching === true}
+            onClick={() => {
+              if (torch.switching === true) {
+                return;
+              }
+              const on = !torch.on;
+              setTorch({ track: torch.track, on: torch.on, switching: true });
+              torch.track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] }).then(
+                () => {
+                  setTorch({ track: torch.track, on });
+                },
+                (caught: unknown) => {
+                  // The camera said it had one but refused: the button goes, and scanning goes on.
+                  console.warn("Switching the torch failed", caught);
+                  setTorch(null);
+                },
+              );
+            }}
+          >
+            {t("Torch")}
+          </button>
+        )}
+        <button ref={cancel} type="button" onClick={onCancel}>
+          {t("Cancel")}
+        </button>
+      </div>
     </div>
   );
 }

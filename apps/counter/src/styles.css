@@ -78,8 +78,24 @@ button {
   color: var(--color-warning);
 }
 
-.queue::before {
+.queue::before,
+.sent::before {
   content: "· ";
+}
+
+/* Events the server refused: a link to their list, which is below the counter screen. */
+.connection .refused {
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-danger);
+  color: var(--color-surface);
+  text-decoration: none;
+}
+
+@media (forced-colors: active) {
+  .connection .refused {
+    border: 1px solid LinkText;
+  }
 }
 
 /*
@@ -105,7 +121,9 @@ button {
     font-size: var(--text-base);
   }
 
-  .topbar .brand-app {
+  /* The last-sent time for screen readers only: on a phone, the one-row header has no room for it. */
+  .topbar .brand-app,
+  .connection .sent {
     position: absolute;
     inline-size: 1px;
     block-size: 1px;
@@ -243,6 +261,7 @@ main {
 }
 
 .menu > li {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -273,6 +292,29 @@ main {
   padding: 0;
   border-radius: 50%;
   font-size: var(--text-xl);
+}
+
+/*
+ * A tap anywhere on a menu row adds one (K9): the + button's hit area covers the row, while its name and focus ring stay
+ * the button's own. The − button sits above it.
+ */
+.stepper .more::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+/*
+ * Not sunk when pressed (base.css): a transform would shrink the row's area back to the button between press and
+ * release, so a tap on the row would lose its click.
+ */
+.stepper .more:active {
+  transform: none;
+}
+
+.stepper button:not(.more) {
+  position: relative;
+  z-index: 1;
 }
 
 /* A line in the order: a copper edge at its start and a bold count, so it differs from the rest by more than colour. */
@@ -353,6 +395,74 @@ main {
   font-size: var(--text-lg);
 }
 
+/* What the order says: empty lines take no room, so only what is said shows. */
+.statuses > * {
+  margin: 0;
+}
+
+.statuses > * + :not(:empty) {
+  margin-block-start: var(--space-2);
+}
+
+/*
+ * Nothing said: no gap for it in the action bar either (the regions stay, empty, so what comes is announced). A line
+ * said to screen readers only takes no room.
+ */
+.action-bar > .statuses:not(:has(> :not(:empty, .visually-hidden))) {
+  margin-block-start: calc(var(--space-3) * -1);
+}
+
+/* A saved visit (or a reward given): seen at a glance, by a check mark and the success colours (K4). */
+.saved:not(:empty) {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.saved:not(:empty)::before {
+  content: "✓ ";
+}
+
+.undo {
+  inline-size: 100%;
+}
+
+.reward-ready {
+  display: grid;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+  padding: var(--space-4);
+  border: 2px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+}
+
+.reward-ready > p {
+  margin: 0;
+  color: var(--color-accent-strong);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.switch-confirm {
+  margin-block-end: var(--space-4);
+}
+
+.switch-confirm > p {
+  margin-block-start: 0;
+}
+
+.switch-confirm .actions,
+.scanner .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 /* The shared checkbox label (base.css) at the touch height, with a larger box centred on its one-line label. */
 .check {
   align-items: center;
@@ -393,8 +503,9 @@ main {
  * visit card, as the order's own box sets no layout here), and a control the keyboard reaches scrolls clear of it.
  */
 @media (max-width: 55.99rem) {
+  /* As tall as the action bar is now (the order screen measures it; it grows with what it says), with room to spare. */
   html {
-    scroll-padding-block-end: 14rem;
+    scroll-padding-block-end: calc(var(--action-bar-block-size, 14rem) + var(--space-3));
   }
 
   .order-side {
@@ -446,6 +557,15 @@ main {
   .visit > .menu {
     grid-area: menu;
     margin: 0;
+  }
+
+  /* Read from arm's length on a tablet (K12): the menu a size up, a saved visit two. */
+  .menu-item {
+    font-size: var(--text-lg);
+  }
+
+  .saved:not(:empty) {
+    font-size: var(--text-xl);
   }
 
   .visit > .order-side {

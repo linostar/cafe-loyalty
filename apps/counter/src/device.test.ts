@@ -41,14 +41,16 @@ describe("pairDevice", () => {
     expect(await getMeta("device")).toMatchObject({ paired: true, unpairedReason: null, keyId: PAIRED.keyId });
   });
 
-  it("forgets the baristas of another café", async () => {
+  it("forgets the baristas of another café, and what it said about that café's last visit", async () => {
     await storePairedDevice({ cafe: { id: "0f0f0f0f-0000-4000-8000-000000000000", name: "Elsewhere" } });
     await setMeta("staff", [await staffEntry("s1", "Rami", "482913")]);
     await setMeta("barista", { staffId: "s1" });
+    await setMeta("lastVisit", { eventId: "e1", occurredAt: "2026-10-01T08:00:00.000Z", code: "STAMP_COOLDOWN" });
     fakeApi(() => ({ status: 201, body: PAIRED }));
     await pairDevice("ABCD1234EFGH");
     expect(await getMeta("staff")).toBeUndefined();
     expect(await getMeta("barista")).toBeUndefined();
+    expect(await getMeta("lastVisit")).toBeUndefined();
   });
 
   it("starts over only when told to, when the phone is still paired with another café", async () => {
