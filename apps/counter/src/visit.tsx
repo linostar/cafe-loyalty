@@ -17,7 +17,6 @@ import {
 import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { DeviceUnpairedError, RequestError, deviceRequest } from "./device.js";
 import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
-import { lastActivity } from "./idle.js";
 import { QrScanner } from "./scanner.js";
 import { deleteMeta, getMeta, setMeta, unqueue, type DeviceRecord, type MetaValues, type StaffEntry } from "./storage.js";
 import { recordEvent } from "./sync.js";
@@ -86,7 +85,8 @@ const AR = {
   "Undo the visit": "التراجع عن الزيارة",
   "It can be undone for 10 seconds.": "يمكن التراجع عنها خلال 10 ثوانٍ.",
   "Visit undone. Change the order and record it again.": "أُلغيت الزيارة. عدّل الطلب وسجّله مجدداً.",
-  "Too late to undo: the visit was sent. Tell the owner, who can fix it in Review.": "فات وقت التراجع: أُرسلت الزيارة. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
+  "Too late to undo: the visit is sent or on its way. Tell the owner, who can fix it in Review.":
+    "فات وقت التراجع: أُرسلت الزيارة أو هي في طريقها. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
   "The visit could not be undone on this phone. Tell the owner, who can fix it in Review.": "تعذّر التراجع عن الزيارة على هذا الهاتف. أخبر المالك، فهو يستطيع تصحيحها من «المراجعة».",
   "Records it for {phone}.": "تُسجَّل للرقم {phone}.",
   "The open order was cleared after 5 minutes without use.": "مُسح الطلب المفتوح بعد 5 دقائق دون استخدام.",
@@ -308,6 +308,8 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   useEffect(() => {
     scannedNow.current = scanned;
   }, [scanned]);
+  /** Counts card scans: a check's answer counts only for its own scan, not an earlier scan of the same card. */
+  const scanTurn = useRef(0);
 
   const clearOrder = () => {
     setQuantities({});
@@ -352,7 +354,8 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
           setApplyWinBack(undo.draft.applyWinBack);
           setNotice({ say: (say) => say("Visit undone. Change the order and record it again."), saved: false });
         } else {
-          setNotice({ say: (say) => say("Too late to undo: the visit was sent. Tell the owner, who can fix it in Review."), saved: false });
+          // Its hold has ended: sent already, or sent at the next sync.
+          setNotice({ say: (say) => say("Too late to undo: the visit is sent or on its way. Tell the owner, who can fix it in Review."), saved: false });
         }
         requestAnimationFrame(() => recordButton.current?.focus());
       },
@@ -416,28 +419,24 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   }, [ordering, onOrderOpen]);
 
   // An order left untouched is cleared, with a notice, so the next customer's is not recorded on the last one's card.
-  const openedAt = useRef(0);
+  // Only a change to the order counts as touching it (its items, card or number), not using the rest of the counter.
   useEffect(() => {
     if (!ordering || saving) {
       return;
     }
-    openedAt.current = Date.now();
-    const check = () => {
-      if (Date.now() - Math.max(lastActivity(), openedAt.current) >= ORDER_IDLE_MS) {
-        setQuantities({});
-        setScanned(null);
-        setPhone("");
-        setApplyWinBack(false);
-        setRewardReady(null);
-        setProblem(null);
-        setNotice({ say: (say) => say("The open order was cleared after 5 minutes without use."), saved: false });
-      }
-    };
-    const timer = setInterval(check, 15_000);
+    const timer = setTimeout(() => {
+      setQuantities({});
+      setScanned(null);
+      setPhone("");
+      setApplyWinBack(false);
+      setRewardReady(null);
+      setProblem(null);
+      setNotice({ say: (say) => say("The open order was cleared after 5 minutes without use."), saved: false });
+    }, ORDER_IDLE_MS);
     return () => {
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [ordering, saving]);
+  }, [ordering, saving, quantities, scanned, phone, applyWinBack]);
 
   // Clamped here: the steppers stay focusable at 0 and 50 (aria-disabled), so a click there changes nothing.
   const change = (type: { id: string; nameAr: string; nameEn: string }, delta: number) => {
@@ -546,10 +545,12 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
               setNotice(null);
               // Online, whether this card's reward is ready, to give it without a second scan (K6). Offline, or when the
               // check fails, nothing is offered: the reward panel still gives it with a scan.
+              scanTurn.current += 1;
+              const turn = scanTurn.current;
               if (onlineNow.current && catalog.program !== null) {
                 deviceRequest("POST", "/api/device/cards/status", cardStatusSchema, { cardQr: token }).then(
                   (status) => {
-                    if (status.rewardReady && scannedNow.current === token) {
+                    if (status.rewardReady && scanTurn.current === turn && scannedNow.current === token) {
                       setRewardReady(token);
                     }
                   },
@@ -660,11 +661,14 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
           {scanned !== null && rewardShown !== null ? (
             <div className="reward-ready">
               <p>{t("Reward ready: {reward}.", { reward: rewardShown })}</p>
-              {/* Disabled while either scanner is open: the reward panel's scan would start a second redemption alongside. */}
+              {/*
+                Disabled while either scanner is open (the reward panel's scan would start a second redemption alongside),
+                and offline, as rewards need the server, like the panel's own button.
+              */}
               <button
                 type="button"
                 className="primary"
-                disabled={scanner !== null}
+                disabled={scanner !== null || !online}
                 onClick={() => {
                   setRewardReady(null);
                   onRedeem(scanned);
@@ -825,6 +829,8 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
   /** `echo`: what the visit form says already, shown here but not announced a second time. */
   const [message, setMessage] = useState<(RewardMessage & { echo?: boolean }) | null>(null);
   const [sending, setSending] = useState(false);
+  /** Whether the phone's storage was read for an unconfirmed reward: none can start before, so none is given twice. */
+  const [checked, setChecked] = useState(false);
   /** Bumped whenever the scanner closes or an attempt ends: the keyboard goes back to the panel's button. */
   const [refocus, setRefocus] = useState(0);
   /** "Scan card for a reward" or "Try again", whichever is shown. */
@@ -840,6 +846,9 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
     let current = true;
     getMeta("pendingRedemption").then(
       (stored) => {
+        if (current) {
+          setChecked(true);
+        }
         if (current && stored !== undefined) {
           setPending({ ...stored, earlier: true });
           setMessage({
@@ -948,6 +957,10 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
 
   useImperativeHandle(ref, () => ({
     redeem: (cardQr: string) => {
+      if (!checked) {
+        onRequestDone({ cardQr, message: { say: (say) => say("This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward."), problem: true } });
+        return;
+      }
       if (pending !== null || sending) {
         onRequestDone({ cardQr, message: { say: (say) => say("Finish the reward waiting under Give a reward first: press Try again there."), problem: true } });
         return;
@@ -1002,7 +1015,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
             <button
               ref={actionButton}
               type="button"
-              disabled={!online || sending || scanner !== null}
+              disabled={!online || sending || scanner !== null || !checked}
               onClick={() => {
                 setMessage(null);
                 onScanner("reward");
@@ -1080,6 +1093,8 @@ export function CounterScreen({
       navigator.wakeLock.request("screen").then(
         (sentinel) => {
           if (active) {
+            // Two requests may both resolve (one pending across the page hiding and showing): keep only the latest.
+            void lock?.release();
             lock = sentinel;
           } else {
             void sentinel.release();

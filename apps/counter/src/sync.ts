@@ -82,7 +82,9 @@ async function drain(): Promise<SyncSummary> {
       done.push(entry.sequence);
       if (result.status === "rejected") {
         rejected.push({ eventId: entry.eventId, type: entry.type, occurredAt: entry.occurredAt, code: result.code, rejectedAt });
-      } else if (result.status === "applied" && entry.type === "visit.recorded") {
+      } else if (entry.type === "visit.recorded") {
+        // Applied, or a duplicate: an earlier send was applied and its answer lost. The server keeps no first code for a
+        // duplicate, so the counter says only that it was recorded, rather than keep saying the visit before it.
         lastVisit = { eventId: entry.eventId, occurredAt: entry.occurredAt, code: result.code };
       }
     });

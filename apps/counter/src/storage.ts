@@ -309,15 +309,32 @@ export function storeStaff(keyId: string, staff: StaffEntry[]): Promise<boolean>
 
 /**
  * Stores the signed-in barista's last use (ms), in one step: only while `staffId` is still the one signed in, so a
- * sign-out or a switch made meanwhile (in this tab or another) is never undone.
+ * sign-out or a switch made meanwhile (in this tab or another) is never undone, and only if it is later than the one
+ * stored, so another tab's later use is never moved back.
  */
 export function touchBarista(staffId: string, lastActiveAt: number): Promise<void> {
   return transact([META], "readwrite", async (transaction) => {
     const meta = transaction.objectStore(META);
     const barista = await promised(meta.get("barista") as IDBRequest<MetaValues["barista"] | undefined>);
-    if (barista?.staffId === staffId) {
+    if (barista?.staffId === staffId && lastActiveAt > (barista.lastActiveAt ?? 0)) {
       await promised(meta.put({ ...barista, lastActiveAt }, "barista"));
     }
+  });
+}
+
+/**
+ * Signs out a barista left unused, in one step: only while `staffId` is still the one signed in and their stored last
+ * use (from any tab) is before `usedBefore` (ms). Returns whether they were signed out.
+ */
+export function signOutIdle(staffId: string, usedBefore: number): Promise<boolean> {
+  return transact([META], "readwrite", async (transaction) => {
+    const meta = transaction.objectStore(META);
+    const barista = await promised(meta.get("barista") as IDBRequest<MetaValues["barista"] | undefined>);
+    if (barista?.staffId !== staffId || (barista.lastActiveAt ?? 0) >= usedBefore) {
+      return false;
+    }
+    await promised(meta.delete("barista"));
+    return true;
   });
 }
 

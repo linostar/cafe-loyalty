@@ -35,6 +35,29 @@ describe("QrScanner", () => {
     expect(track.applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
   });
 
+  it("takes no second torch tap while the first is switching it, so a double tap does not leave it on", async () => {
+    const track = fakeCamera({ torch: true });
+    let switched: () => void = () => undefined;
+    track.applyConstraints.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          switched = resolve;
+        }),
+    );
+    scanner();
+    const torch = await screen.findByRole("button", { name: "Torch" });
+    fireEvent.click(torch);
+    expect(torch).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(torch);
+    expect(track.applyConstraints).toHaveBeenCalledOnce();
+    await act(async () => {
+      switched();
+      await Promise.resolve();
+    });
+    expect(torch).toHaveAttribute("aria-pressed", "true");
+    expect(torch).toHaveAttribute("aria-disabled", "false");
+  });
+
   it("shows no torch on a camera without one", async () => {
     const track = fakeCamera({ torch: false });
     scanner();
@@ -44,11 +67,16 @@ describe("QrScanner", () => {
     expect(screen.queryByRole("button", { name: "Torch" })).not.toBeInTheDocument();
   });
 
-  it("turns the camera off after a minute without a card (K7)", () => {
-    fakeCamera({ torch: false });
+  it("turns the camera off after a minute without a card (K7)", async () => {
+    const track = fakeCamera({ torch: false });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const onTimeout = scanner();
+      const onTimeout = vi.fn();
+      const { unmount } = render(<QrScanner purpose="customer's card" noCamera="Type the number instead." onScan={vi.fn()} onCancel={vi.fn()} onTimeout={onTimeout} />);
+      // The camera opens first, so its track is there to stop.
+      await act(async () => {
+        await Promise.resolve();
+      });
       act(() => {
         vi.advanceTimersByTime(SCAN_TIMEOUT_MS - 1);
       });
@@ -57,6 +85,9 @@ describe("QrScanner", () => {
         vi.advanceTimersByTime(1);
       });
       expect(onTimeout).toHaveBeenCalledOnce();
+      // The screen that asked closes it, and the camera is let go.
+      unmount();
+      expect(track.stop).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }

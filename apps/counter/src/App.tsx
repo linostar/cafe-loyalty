@@ -23,6 +23,7 @@ import {
   listRejected,
   onStorageChange,
   setMeta,
+  signOutIdle,
   storeCatalog,
   storeStaff,
   STORAGE_BUSY,
@@ -837,13 +838,16 @@ function Counter() {
   const [signedOut, setSignedOut] = useState<string | null>(null);
   const switchButton = useRef<HTMLButtonElement>(null);
   const keepButton = useRef<HTMLButtonElement>(null);
+  /** Signs the barista out through `clear`, which says whether it did (an idle sign-out may find them used meanwhile). */
   const signOut = useCallback(
-    (why: string | null) => {
-      setConfirmSwitch(false);
-      setOrderOpen(false);
-      deleteMeta("barista").then(
-        () => {
-          setSignedOut(why);
+    (why: string | null, clear: () => Promise<boolean> = () => deleteMeta("barista").then(() => true)) => {
+      clear().then(
+        (out) => {
+          if (out) {
+            setConfirmSwitch(false);
+            setOrderOpen(false);
+            setSignedOut(why);
+          }
         },
         (caught: unknown) => {
           console.error("Signing out the barista failed", caught);
@@ -865,7 +869,9 @@ function Counter() {
     const check = () => {
       const seen = Math.max(lastActivity(), lastActiveAt ?? PAGE_LOADED_AT);
       if (Date.now() - seen >= BARISTA_IDLE_MS) {
-        signOut("The barista was signed out after 4 hours without use." satisfies AppText);
+        // Checked again in storage: another tab may have stored a later use, or signed someone else in, meanwhile.
+        const usedBefore = Date.now() - BARISTA_IDLE_MS;
+        signOut("The barista was signed out after 4 hours without use." satisfies AppText, () => signOutIdle(baristaId, usedBefore));
       } else if (lastActivity() - (lastActiveAt ?? 0) >= 60_000) {
         touchBarista(baristaId, lastActivity()).catch((caught: unknown) => {
           console.error("Keeping the barista's last use failed", caught);

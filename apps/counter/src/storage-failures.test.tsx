@@ -1,5 +1,5 @@
 import { formatCardQr, type DeviceCatalog } from "@cafe-loyalty/shared";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 import * as storage from "./storage.js";
@@ -52,6 +52,20 @@ describe("when the phone's storage fails", () => {
     vi.mocked(storage.getMeta).mockRejectedValue(new Error("storage broke"));
     await counter();
     expect(await screen.findByRole("alert")).toHaveTextContent("This phone's storage could not be read, so an unconfirmed reward may be waiting.");
+    expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeDisabled();
+  });
+
+  it("starts no reward from the visit's Give now while an unconfirmed one may be waiting, so none is given twice", async () => {
+    const real = await vi.importActual<typeof storage>("./storage.js");
+    vi.mocked(storage.getMeta).mockImplementation((key) => (key === "pendingRedemption" ? Promise.reject(new Error("storage broke")) : real.getMeta(key)));
+    await counter();
+    const calls = fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
+    nextScan = CARD;
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Give Free coffee now" }));
+    expect(await screen.findAllByText(/^This phone's storage could not be read/)).toHaveLength(2);
+    expect(calls.map((call) => call.path)).toEqual(["/api/device/cards/status"]);
   });
 
   it("warns not to give a reward twice when it cannot forget one already given", async () => {
@@ -59,6 +73,10 @@ describe("when the phone's storage fails", () => {
     vi.mocked(storage.deleteMeta).mockRejectedValue(new Error("storage broke"));
     fakeApi(() => ({ status: 201, body: { stampsUsed: 9, stampsLeft: 1, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } }));
     nextScan = CARD;
+    // Once the phone has been checked for an unconfirmed reward.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     // The answer stays in the warning, now an alert rather than a confirmation.

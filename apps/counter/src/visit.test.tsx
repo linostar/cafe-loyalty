@@ -348,6 +348,10 @@ describe("rewards", () => {
       return { status: 201, body: { stampsUsed: 9, stampsLeft: 1, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" } };
     });
     nextScan = cardOf(CAFE.id);
+    // Once the phone has been checked for an unconfirmed reward.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^The reward started at .+ was not confirmed\. Do not give it yet: check the connection, then press Try again\.$/);
@@ -399,6 +403,9 @@ describe("rewards", () => {
     await counter();
     fakeApi(() => ({ status: 409, body: envelope("CONFLICT", "This card has 4 of the 9 stamps a reward needs. Add stamps first.") }));
     nextScan = cardOf(CAFE.id);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Scan card for a reward" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This card has 4 of the 9 stamps a reward needs.");
@@ -454,7 +461,7 @@ describe("the counter's speed and recovery (phase 2)", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(later);
     try {
       fireEvent.click(screen.getByRole("button", { name: "Undo the visit" }));
-      expect(await screen.findByText("Too late to undo: the visit was sent. Tell the owner, who can fix it in Review.")).toBeInTheDocument();
+      expect(await screen.findByText("Too late to undo: the visit is sent or on its way. Tell the owner, who can fix it in Review.")).toBeInTheDocument();
     } finally {
       now.mockRestore();
     }
@@ -561,6 +568,49 @@ describe("the counter's speed and recovery (phase 2)", () => {
     expect(give).toBeEnabled();
   });
 
+  it("ignores a slow answer for an earlier scan of the same card (K6)", async () => {
+    await counter();
+    let answerFirst: (ready: boolean) => void = () => undefined;
+    const answers = [
+      new Promise<boolean>((resolve) => {
+        answerFirst = resolve;
+      }),
+      Promise.resolve(false),
+    ];
+    const calls = fakeApi(async () => {
+      const ready = await answers[calls.length - 1];
+      return { status: 200, body: { stamps: ready === true ? 9 : 0, rewardReady: ready === true } };
+    });
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Clear card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    await waitFor(() => {
+      expect(calls).toHaveLength(2);
+    });
+    // The first scan's answer comes last, saying ready: the card scanned now was answered not ready.
+    answerFirst(true);
+    await act(async () => {
+      await answers[0];
+    });
+    expect(screen.queryByText("Reward ready: Free coffee.")).not.toBeInTheDocument();
+  });
+
+  it("keeps Give now off while the phone is offline, as rewards need the server", async () => {
+    const { device } = await storePairedDevice();
+    const barista = await staffEntry("2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e", "Rami", "482913");
+    const { rerender } = render(<CounterScreen device={device} barista={barista} catalog={CATALOG} online onBusy={vi.fn()} />);
+    fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
+    nextScan = cardOf(CAFE.id);
+    fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
+    const give = await screen.findByRole("button", { name: "Give Free coffee now" });
+    rerender(<CounterScreen device={device} barista={barista} catalog={CATALOG} online={false} onBusy={vi.fn()} />);
+    expect(give).toBeDisabled();
+  });
+
   it("announces a refused reward asked for from the visit once, showing it beside Try again too", async () => {
     await counter();
     fakeApi((call) =>
@@ -599,8 +649,12 @@ describe("the counter's speed and recovery (phase 2)", () => {
   });
 
   it("keeps the screen on while the counter shows, asking again when the page shows again (K13)", async () => {
-    const release = vi.fn(() => Promise.resolve());
-    const request = vi.fn(() => Promise.resolve({ release }));
+    const sentinels: { release: () => Promise<void> }[] = [];
+    const request = vi.fn(() => {
+      const sentinel = { release: vi.fn(() => Promise.resolve()) };
+      sentinels.push(sentinel);
+      return Promise.resolve(sentinel);
+    });
     Object.defineProperty(navigator, "wakeLock", { value: { request }, configurable: true });
     try {
       await counter();
@@ -611,8 +665,13 @@ describe("the counter's speed and recovery (phase 2)", () => {
         document.dispatchEvent(new Event("visibilitychange"));
       });
       expect(request).toHaveBeenCalledTimes(2);
+      // Only the latest lock is kept: the first is let go once the second is held.
+      await waitFor(() => {
+        expect(sentinels[0]?.release).toHaveBeenCalled();
+      });
+      expect(sentinels[1]?.release).not.toHaveBeenCalled();
       cleanup();
-      expect(release).toHaveBeenCalled();
+      expect(sentinels[1]?.release).toHaveBeenCalled();
     } finally {
       Reflect.deleteProperty(navigator, "wakeLock");
     }
@@ -620,15 +679,15 @@ describe("the counter's speed and recovery (phase 2)", () => {
 
   it("clears an open order nobody touched for 5 minutes, and says so (K3)", async () => {
     await counter({ online: false });
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     try {
       fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
       act(() => {
-        vi.advanceTimersByTime(4 * 60 * 1000);
+        vi.advanceTimersByTime(5 * 60 * 1000 - 1);
       });
       expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
       act(() => {
-        vi.advanceTimersByTime(60 * 1000 + 15_000);
+        vi.advanceTimersByTime(1);
       });
       expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
       expect(screen.getByText("The open order was cleared after 5 minutes without use.")).toBeInTheDocument();
@@ -637,25 +696,24 @@ describe("the counter's speed and recovery (phase 2)", () => {
     }
   });
 
-  it("keeps an open order someone is using: a tap or a key press restarts its 5 minutes (K3)", async () => {
+  it("counts only changes to the order as touching it: each restarts its 5 minutes, other use does not (K3)", async () => {
     await counter({ online: false });
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     try {
       fireEvent.click(screen.getByRole("button", { name: "One more Coffee" }));
       act(() => {
         vi.advanceTimersByTime(4 * 60 * 1000);
       });
-      fireEvent.pointerDown(document.body);
-      act(() => {
-        vi.advanceTimersByTime(4 * 60 * 1000);
-      });
-      fireEvent.keyDown(document.body, { key: "Tab" });
+      fireEvent.change(screen.getByLabelText("No card? The customer's mobile number"), { target: { value: "70 1" } });
       act(() => {
         vi.advanceTimersByTime(4 * 60 * 1000);
       });
       expect(screen.getByText("Total $3.00 · 1 stamp")).toBeInTheDocument();
+      // Using the rest of the counter (the reward panel, a tap elsewhere) leaves the order as untouched as it was.
+      fireEvent.pointerDown(document.body);
+      fireEvent.keyDown(document.body, { key: "Tab" });
       act(() => {
-        vi.advanceTimersByTime(60 * 1000 + 15_000);
+        vi.advanceTimersByTime(60 * 1000);
       });
       expect(screen.getByText("Total $0.00 · 0 stamps")).toBeInTheDocument();
     } finally {

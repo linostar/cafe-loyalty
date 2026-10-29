@@ -1,6 +1,6 @@
 import { MAX_SYNC_BATCH, syncEventSigningPayload } from "@cafe-loyalty/shared";
 import { describe, expect, it, vi } from "vitest";
-import { countQueued, getMeta, listQueued, listRejected, unqueue } from "./storage.js";
+import { countQueued, getMeta, listQueued, listRejected, setMeta, unqueue } from "./storage.js";
 import { recordEvent, syncQueue } from "./sync.js";
 import { fakeApi, storePairedDevice, verifies } from "./test-helpers.js";
 
@@ -147,6 +147,16 @@ describe("syncQueue", () => {
     await syncQueue();
     // The second visit's answer: the lockout report after it is not a visit.
     expect(await getMeta("lastVisit")).toMatchObject({ occurredAt: "2026-10-01T08:05:00.000Z", code: "STAMP_COOLDOWN" });
+  });
+
+  it("takes a duplicate as the last visit settled too, so the one before it is not said in its place (K1)", async () => {
+    await storePairedDevice();
+    await setMeta("lastVisit", { eventId: "e0", occurredAt: "2026-10-01T07:00:00.000Z", code: "STAMP_COOLDOWN" });
+    await recordEvent("visit.recorded", 3, STAFF_ID, {}, new Date("2026-10-01T08:00:00.000Z"));
+    // Sent before, with its answer lost: the server says only that it has it.
+    fakeApi(() => ({ status: 200, body: { results: [{ index: 0, eventId: null, status: "duplicate", code: "DUPLICATE" }] } }));
+    await syncQueue();
+    expect(await getMeta("lastVisit")).toMatchObject({ occurredAt: "2026-10-01T08:00:00.000Z", code: "DUPLICATE" });
   });
 
   it("sends a long queue in batches, oldest first, one sync at a time", async () => {

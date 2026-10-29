@@ -75,7 +75,7 @@ export function QrScanner({
   const [failure, setFailure] = useState<{ error: unknown } | null>(null);
   const problem = failure === null ? null : cameraProblem(failure.error, noCamera, t);
   /** The camera track and whether its torch is on, when it has one. */
-  const [torch, setTorch] = useState<{ track: MediaStreamTrack; on: boolean } | null>(null);
+  const [torch, setTorch] = useState<{ track: MediaStreamTrack; on: boolean; switching?: boolean } | null>(null);
 
   const timedOut = useRef(onTimeout);
   useEffect(() => {
@@ -189,11 +189,17 @@ export function QrScanner({
       {problem === null ? <video ref={video} className="camera" muted playsInline aria-describedby={helpId} /> : null}
       <div className="actions">
         {torch === null || problem !== null ? null : (
+          // aria-disabled while it switches, so a second tap cannot ask for the same state again; the keyboard stays on it.
           <button
             type="button"
             aria-pressed={torch.on}
+            aria-disabled={torch.switching === true}
             onClick={() => {
+              if (torch.switching === true) {
+                return;
+              }
               const on = !torch.on;
+              setTorch({ track: torch.track, on: torch.on, switching: true });
               torch.track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] }).then(
                 () => {
                   setTorch({ track: torch.track, on });

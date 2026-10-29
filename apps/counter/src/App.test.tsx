@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
-import { addQueued, deleteMeta, getMeta, setMeta, settleQueued, touchBarista } from "./storage.js";
+import { addQueued, deleteMeta, getMeta, setMeta, settleQueued, signOutIdle, touchBarista } from "./storage.js";
 import { CAFE, envelope, fakeApi, staffEntry, storePairedDevice, type ApiCall, type FakeReply } from "./test-helpers.js";
 import { useServiceWorkerUpdate } from "./updates.js";
 
@@ -401,6 +401,22 @@ describe("Counter App in Arabic", () => {
     expect(await getMeta("barista")).toEqual({ staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 1 });
     await touchBarista("9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", 2);
     expect(await getMeta("barista")).toEqual({ staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 2 });
+    // A tab behind the times never moves another's later use back.
+    await touchBarista("9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", 1);
+    expect(await getMeta("barista")).toEqual({ staffId: "9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", lastActiveAt: 2 });
+  });
+
+  it("signs a barista out for idleness only if they are still the one signed in, unused in every tab (K3)", async () => {
+    const idleSince = 1_000;
+    await setMeta("barista", { staffId: RAMI_ID, lastActiveAt: idleSince + 1 });
+    // Another tab stored a use since this one last looked: kept.
+    expect(await signOutIdle(RAMI_ID, idleSince)).toBe(false);
+    expect(await getMeta("barista")).toMatchObject({ staffId: RAMI_ID });
+    // Someone else signed in meanwhile: kept too.
+    expect(await signOutIdle("9f8e7d6c-5b4a-4f3e-8d2c-1b0a9f8e7d6c", idleSince + 2)).toBe(false);
+    expect(await getMeta("barista")).toMatchObject({ staffId: RAMI_ID });
+    expect(await signOutIdle(RAMI_ID, idleSince + 2)).toBe(true);
+    expect(await getMeta("barista")).toBeUndefined();
   });
 
   it("says what the server did with the last visit it settled, as soon as a sync stores it (K1)", async () => {
