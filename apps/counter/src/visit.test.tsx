@@ -477,6 +477,17 @@ describe("the counter's speed and recovery (phase 2)", () => {
     expect(screen.queryByRole("button", { name: "Undo the visit" })).not.toBeInTheDocument();
   });
 
+  it("keeps an order started while its Undo was being taken back, instead of putting the undone one over it (K2)", async () => {
+    await counter({ online: false });
+    record();
+    fireEvent.click(await screen.findByRole("button", { name: "Undo the visit" }));
+    // The next order starts before the phone's storage has answered.
+    fireEvent.click(screen.getByRole("button", { name: "One more Cake" }));
+    expect(await screen.findByText("Visit undone. Change the order and record it again.")).toBeInTheDocument();
+    expect(await listQueued(10)).toEqual([]);
+    expect(screen.getByText("Total $4.50 · 0 stamps")).toBeInTheDocument();
+  });
+
   it("shows a typed number as it will be recorded, before Record (K10)", async () => {
     await counter();
     const phone = screen.getByLabelText("No card? The customer's mobile number");

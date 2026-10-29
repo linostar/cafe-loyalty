@@ -55,16 +55,20 @@ describe("when the phone's storage fails", () => {
     expect(screen.getByRole("button", { name: "Scan card for a reward" })).toBeDisabled();
   });
 
-  it("starts no reward from the visit's Give now while an unconfirmed one may be waiting, so none is given twice", async () => {
+  it.each([
+    { when: "its read failed", read: () => Promise.reject(new Error("storage broke")), said: /^This phone's storage could not be read/, times: 2 },
+    // Only the visit says so: the panel has nothing to say until the read answers.
+    { when: "its read has not answered yet", read: () => new Promise<never>(() => undefined), said: /^This phone is still checking for an unconfirmed reward/, times: 1 },
+  ])("starts no reward from the visit's Give now while an unconfirmed one may be waiting ($when), so none is given twice", async ({ read, said, times }) => {
     const real = await vi.importActual<typeof storage>("./storage.js");
-    vi.mocked(storage.getMeta).mockImplementation((key) => (key === "pendingRedemption" ? Promise.reject(new Error("storage broke")) : real.getMeta(key)));
+    vi.mocked(storage.getMeta).mockImplementation((key) => (key === "pendingRedemption" ? read() : real.getMeta(key)));
     await counter();
     const calls = fakeApi(() => ({ status: 200, body: { stamps: 9, rewardReady: true } }));
     nextScan = CARD;
     fireEvent.click(screen.getByRole("button", { name: "Scan card" }));
     fireEvent.click(screen.getByRole("button", { name: "Camera sees a code" }));
     fireEvent.click(await screen.findByRole("button", { name: "Give Free coffee now" }));
-    expect(await screen.findAllByText(/^This phone's storage could not be read/)).toHaveLength(2);
+    expect(await screen.findAllByText(said)).toHaveLength(times);
     expect(calls.map((call) => call.path)).toEqual(["/api/device/cards/status"]);
   });
 

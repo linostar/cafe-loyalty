@@ -35,6 +35,21 @@ describe("QrScanner", () => {
     expect(track.applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
   });
 
+  it("switches the torch off again once it is on", async () => {
+    const track = fakeCamera({ torch: true });
+    scanner();
+    const torch = await screen.findByRole("button", { name: "Torch" });
+    fireEvent.click(torch);
+    await waitFor(() => {
+      expect(torch).toHaveAttribute("aria-pressed", "true");
+    });
+    fireEvent.click(torch);
+    await waitFor(() => {
+      expect(torch).toHaveAttribute("aria-pressed", "false");
+    });
+    expect(track.applyConstraints).toHaveBeenLastCalledWith({ advanced: [{ torch: false }] });
+  });
+
   it("takes no second torch tap while the first is switching it, so a double tap does not leave it on", async () => {
     const track = fakeCamera({ torch: true });
     let switched: () => void = () => undefined;

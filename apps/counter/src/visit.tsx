@@ -63,6 +63,8 @@ const AR = {
     "لم تُؤكَّد مكافأة بدأت عند {time}. اضغط «حاول مجدداً» لمعرفة ما إذا حصل عليها ذلك الزبون، قبل إعطاء أخرى.",
   "This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward.":
     "تعذّرت قراءة ذاكرة هذا الهاتف، فقد تكون هناك مكافأة غير مؤكَّدة. أعد تحميل الصفحة قبل إعطاء مكافأة.",
+  "This phone is still checking for an unconfirmed reward. Scan the card under Give a reward in a moment.":
+    "لا يزال هذا الهاتف يتحقق من مكافأة غير مؤكَّدة. امسح البطاقة تحت «إعطاء مكافأة» بعد لحظة.",
   "The reward could not be started on this phone. Reload the page and try again.": "تعذّر بدء المكافأة على هذا الهاتف. أعد تحميل الصفحة وحاول مجدداً.",
   "Reward given: {reward}. {left} left on the card.": "مُنحت المكافأة: {reward}. المتبقّي على البطاقة: {left}.",
   "The earlier reward, started at {time}, was given: {reward}. {left} left on that card. If that customer did not get it, tell the owner.":
@@ -303,6 +305,11 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   useEffect(() => {
     onlineNow.current = online;
   }, [online]);
+  /** The notice now, read when an Undo completes: the barista may have started another order meanwhile. */
+  const noticeNow = useRef(notice);
+  useEffect(() => {
+    noticeNow.current = notice;
+  }, [notice]);
   /** The card scanned now, read when the reward check answers: the barista may have cleared or changed it meanwhile. */
   const scannedNow = useRef(scanned);
   useEffect(() => {
@@ -346,12 +353,15 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
     unqueue(undo.sequence).then(
       (taken) => {
         if (taken) {
-          // Back on screen as it was recorded, to fix and record again.
-          setQuantities(undo.draft.quantities);
-          setNames(undo.draft.names);
-          setScanned(undo.draft.scanned);
-          setPhone(undo.draft.phone);
-          setApplyWinBack(undo.draft.applyWinBack);
+          // Back on screen as it was recorded, to fix and record again; unless the barista started another order while
+          // it was taken back (any change to the order clears this notice), which is kept as it is.
+          if (noticeNow.current?.undo === undo) {
+            setQuantities(undo.draft.quantities);
+            setNames(undo.draft.names);
+            setScanned(undo.draft.scanned);
+            setPhone(undo.draft.phone);
+            setApplyWinBack(undo.draft.applyWinBack);
+          }
           setNotice({ say: (say) => say("Visit undone. Change the order and record it again."), saved: false });
         } else {
           // Its hold has ended: sent already, or sent at the next sync.
@@ -829,8 +839,8 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
   /** `echo`: what the visit form says already, shown here but not announced a second time. */
   const [message, setMessage] = useState<(RewardMessage & { echo?: boolean }) | null>(null);
   const [sending, setSending] = useState(false);
-  /** Whether the phone's storage was read for an unconfirmed reward: none can start before, so none is given twice. */
-  const [checked, setChecked] = useState(false);
+  /** The phone's storage read for an unconfirmed reward: none can start until it is read, so none is given twice. */
+  const [check, setCheck] = useState<"reading" | "read" | "failed">("reading");
   /** Bumped whenever the scanner closes or an attempt ends: the keyboard goes back to the panel's button. */
   const [refocus, setRefocus] = useState(0);
   /** "Scan card for a reward" or "Try again", whichever is shown. */
@@ -847,7 +857,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
     getMeta("pendingRedemption").then(
       (stored) => {
         if (current) {
-          setChecked(true);
+          setCheck("read");
         }
         if (current && stored !== undefined) {
           setPending({ ...stored, earlier: true });
@@ -863,6 +873,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
       (caught: unknown) => {
         console.error("Reading the unconfirmed reward failed", caught);
         if (current) {
+          setCheck("failed");
           setMessage({ say: (say) => say("This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward."), problem: true });
         }
       },
@@ -957,8 +968,17 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
 
   useImperativeHandle(ref, () => ({
     redeem: (cardQr: string) => {
-      if (!checked) {
-        onRequestDone({ cardQr, message: { say: (say) => say("This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward."), problem: true } });
+      if (check !== "read") {
+        onRequestDone({
+          cardQr,
+          message: {
+            say:
+              check === "failed"
+                ? (say) => say("This phone's storage could not be read, so an unconfirmed reward may be waiting. Reload the page before giving a reward.")
+                : (say) => say("This phone is still checking for an unconfirmed reward. Scan the card under Give a reward in a moment."),
+            problem: true,
+          },
+        });
         return;
       }
       if (pending !== null || sending) {
@@ -1015,7 +1035,7 @@ function RedeemPanel({ device, barista, catalog, online, scanner, onScanner, onB
             <button
               ref={actionButton}
               type="button"
-              disabled={!online || sending || scanner !== null || !checked}
+              disabled={!online || sending || scanner !== null || check !== "read"}
               onClick={() => {
                 setMessage(null);
                 onScanner("reward");
