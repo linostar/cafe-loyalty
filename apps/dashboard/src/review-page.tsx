@@ -1,4 +1,4 @@
-import { reviewDecisionSchema, reviewQueueSchema, type Lang, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
+import { formatUsd, plural, reviewDecisionSchema, reviewQueueSchema, type Lang, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
 import { useContext, useEffect, useRef, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, FormError, Notice, useSubmit } from "./forms.js";
@@ -11,8 +11,8 @@ const AR = {
   "from a phone you removed": "من هاتف أزلته",
   "by a barista you removed": "من باريستا أزلته",
   "that reached the server more than two days later": "وصل إلى الخادم بعد أكثر من يومين",
-  "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)":
-    "بخصم لم تسمح به حملته أو عرض الاسترجاع على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك)",
+  "with a discount its campaign or the card's welcome-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)":
+    "بخصم لم تسمح به حملته أو عرض العودة على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك)",
   "with more stamps than the reward needs": "بأختام أكثر مما تحتاجه المكافأة",
   "that would take that phone past its most stamps for the day the server received it":
     "كانت ستتجاوز بذلك الهاتف الحد الأقصى من الأختام لليوم الذي استلمها فيه الخادم",
@@ -27,14 +27,19 @@ const AR = {
   "{done} It counts as a visit, but the card got no stamps: {why}.": "{done} تُحتسب زيارةً، لكن البطاقة لم تحصل على أختام: {why}.",
   "{type} by {staff} on {device} at {time}": "{type} من {staff} على {device} في {time}",
   "at {time} {reason}: {staff} on {device}.": "في {time} {reason}: {staff} على {device}.",
-  "It also has a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).":
-    "وفيه أيضاً خصم لم تسمح به حملته أو عرض الاسترجاع على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك).",
+  "It also has a discount its campaign or the card's welcome-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).":
+    "وفيه أيضاً خصم لم تسمح به حملته أو عرض العودة على البطاقة في ذلك الوقت (منتهٍ، أو خارج ساعاته، أو مستخدم من قبل، أو دون هامشك).",
+  "Order: {items}. Total {total}, for {stamps}.": "الطلب: {items}. المجموع {total}، مقابل {stamps}.",
+  "{quantity} × {name}": "{quantity} × {name}",
   Accept: "قبول",
-  "Yes, accept": "نعم، اقبل",
   Discard: "إهمال",
   "Yes, discard": "نعم، أهمل",
   "Accept {what}": "قبول {what}",
-  "Yes, accept {what}": "نعم، اقبل {what}",
+  "Accepted in 10 seconds unless you undo it.": "يُقبل بعد 10 ثوانٍ ما لم تتراجع عنه.",
+  Undo: "تراجع",
+  "Undo accepting {what}": "تراجع عن قبول {what}",
+  "{what} will be accepted in 10 seconds. Undo stops it.": "سيُقبل {what} بعد 10 ثوانٍ. زر التراجع يوقفه.",
+  "Not accepted: {what}.": "لم يُقبل: {what}.",
   "Discard {what}": "إهمال {what}",
   "Yes, discard {what}": "نعم، أهمل {what}",
   Review: "المراجعة",
@@ -53,7 +58,7 @@ const REASONS = {
   device_revoked: "from a phone you removed",
   staff_revoked: "by a barista you removed",
   late_sync: "that reached the server more than two days later",
-  campaign_check: "with a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)",
+  campaign_check: "with a discount its campaign or the card's welcome-back offer did not allow at that time (ended, outside its hours, already used, or below your margin)",
   large_visit: "with more stamps than the reward needs",
   daily_cap_received: "that would take that phone past its most stamps for the day the server received it",
   before_key: "dated before that phone was paired with the key that signed it",
@@ -102,10 +107,48 @@ function describe(t: T, timeFormat: Intl.DateTimeFormat, item: ReviewItem): stri
 // To the second, so two items from the same phone and barista still get different button names.
 const TIME_OPTIONS = { dateStyle: "medium", timeStyle: "medium" } as const;
 
-function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: boolean; onDecide: (decision: "accept" | "discard") => void }) {
+/** How long an Accept waits, with Undo, before it is sent: the server's accept is final. */
+export const ACCEPT_DELAY_MS = 10_000;
+
+const STAMPS = {
+  en: { one: "{n} stamp", other: "{n} stamps" },
+  ar: { zero: "بلا أختام", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختماً", other: "{n} ختم" },
+};
+
+/** Sends an accept still waiting as the page goes, with keepalive, so the browser finishes it after the page has gone. */
+function sendOnLeaving(id: string) {
+  void fetch(`/api/review-queue/${id}/accept`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", keepalive: true }).catch(() => undefined);
+}
+
+function ReviewEntry({
+  item,
+  pending,
+  waiting,
+  onAccept,
+  onUndo,
+  onDiscard,
+}: {
+  item: ReviewItem;
+  pending: boolean;
+  /** Accepted, and waiting to be sent: Undo still takes it back. */
+  waiting: boolean;
+  onAccept: () => void;
+  onUndo: () => void;
+  onDiscard: () => void;
+}) {
   const t = useT(AR);
-  const timeFormat = dateFormat(useLang(), TIME_OPTIONS);
+  const lang = useLang();
+  const timeFormat = dateFormat(lang, TIME_OPTIONS);
   const what = describe(t, timeFormat, item);
+  const actions = useRef<HTMLDivElement>(null);
+  /** Set by Accept and Undo, so focus goes to the button that replaced the one pressed (Undo, Accept); not when the wait ends. */
+  const focusNext = useRef(false);
+  useEffect(() => {
+    if (focusNext.current) {
+      focusNext.current = false;
+      actions.current?.querySelector("button")?.focus();
+    }
+  }, [waiting]);
   return (
     <li tabIndex={-1} data-review-id={item.id} className="review-item">
       <strong>{typeLabel(t, item)}</strong>{" "}
@@ -119,32 +162,61 @@ function ReviewEntry({ item, pending, onDecide }: { item: ReviewItem; pending: b
         <>
           {" "}
           {t(
-            "It also has a discount its campaign or the card's win-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).",
+            "It also has a discount its campaign or the card's welcome-back offer did not allow at that time (ended, outside its hours, already used, or below your margin).",
           )}
         </>
       ) : null}
-      <div className="actions">
+      {item.visit === null ? null : (
+        <p>
+          {t("Order: {items}. Total {total}, for {stamps}.", {
+            items: new Intl.ListFormat(lang, { type: "unit" }).format(
+              item.visit.items.map((line) => t("{quantity} × {name}", { quantity: line.quantity, name: lang === "ar" ? line.nameAr : line.nameEn })),
+            ),
+            total: formatUsd(item.visit.totalCents, "en"),
+            stamps: plural(lang, STAMPS, item.visit.stamps),
+          })}
+        </p>
+      )}
+      {waiting ? <p className="hint">{t("Accepted in 10 seconds unless you undo it.")}</p> : null}
+      <div className="actions" ref={actions}>
         {/* Short visible labels; each name adds the item, so it is the button's own (WCAG 2.5.3: it starts with what is shown). */}
-        <ConfirmButton
-          label={t("Accept")}
-          confirmLabel={t("Yes, accept")}
-          name={t("Accept {what}", { what })}
-          confirmName={t("Yes, accept {what}", { what })}
-          pending={pending}
-          onConfirm={() => {
-            onDecide("accept");
-          }}
-        />
-        <ConfirmButton
-          label={t("Discard")}
-          confirmLabel={t("Yes, discard")}
-          name={t("Discard {what}", { what })}
-          confirmName={t("Yes, discard {what}", { what })}
-          pending={pending}
-          onConfirm={() => {
-            onDecide("discard");
-          }}
-        />
+        {waiting ? (
+          <button
+            type="button"
+            aria-label={t("Undo accepting {what}", { what })}
+            onClick={() => {
+              focusNext.current = true;
+              onUndo();
+            }}
+          >
+            {t("Undo")}
+          </button>
+        ) : (
+          <>
+            {/* One tap: the accept waits, with Undo, before it is sent. */}
+            <button
+              type="button"
+              aria-label={t("Accept {what}", { what })}
+              aria-disabled={pending || undefined}
+              onClick={() => {
+                if (!pending) {
+                  focusNext.current = true;
+                  onAccept();
+                }
+              }}
+            >
+              {t("Accept")}
+            </button>
+            <ConfirmButton
+              label={t("Discard")}
+              confirmLabel={t("Yes, discard")}
+              name={t("Discard {what}", { what })}
+              confirmName={t("Yes, discard {what}", { what })}
+              pending={pending}
+              onConfirm={onDiscard}
+            />
+          </>
+        )}
       </div>
     </li>
   );
@@ -159,6 +231,8 @@ export function ReviewPage() {
   const attention = useContext(AttentionContext);
   /** Every item loaded so far (the first page, then each "Show more"), less the ones decided here. */
   const [items, setItems] = useState<ReviewItem[] | null>(null);
+  /** Kept by id, so a decision sent after its wait leaves out its item from whatever list is shown by then. */
+  const [decidedIds, setDecidedIds] = useState<ReadonlySet<string>>(new Set());
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   /** Built when shown, so it follows a language switch. */
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
@@ -166,6 +240,11 @@ export function ReviewPage() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const { pending, error, submit } = useSubmit();
+  /** Accepted items waiting to be sent (ACCEPT_DELAY_MS), and their timers. */
+  const [waiting, setWaiting] = useState<ReadonlySet<string>>(new Set());
+  const timers = useRef(new Map<string, number>());
+  /** Requests one after another: an accept whose wait ends while another request is on its way is sent next, not dropped. */
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     if (focusId !== null) {
@@ -173,14 +252,79 @@ export function ReviewPage() {
     }
   }, [focusId]);
 
+  // An accept still waiting when the owner leaves (another page, a closed tab) is sent, never silently dropped.
+  useEffect(() => {
+    const waitingTimers = timers.current;
+    const sendWaiting = () => {
+      for (const [id, timer] of waitingTimers) {
+        window.clearTimeout(timer);
+        sendOnLeaving(id);
+      }
+      waitingTimers.clear();
+    };
+    const onPageHide = () => {
+      sendWaiting();
+      setWaiting(new Set());
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      sendWaiting();
+    };
+  }, []);
+
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
   }
-  const shown = items ?? state.data.items;
+  const shown = (items ?? state.data.items).filter((entry) => !decidedIds.has(entry.id));
   const cursor = items === null ? state.data.nextCursor : nextCursor;
   const startOver = () => {
     setItems(null);
     setReload((value) => value + 1);
+  };
+  const inTurn = (request: () => Promise<void>) => {
+    queue.current = queue.current.then(request);
+  };
+  const decide = (item: ReviewItem, decision: "accept" | "discard") => {
+    inTurn(async () => {
+      setNotice(null);
+      const result = await submit(() => apiRequest("POST", `/api/review-queue/${item.id}/${decision}`, reviewDecisionSchema));
+      if (result.ok) {
+        // Taken off the list in place, so the owner keeps every page already loaded.
+        setDecidedIds((current) => new Set(current).add(item.id));
+        const { outcome } = result.value;
+        setNotice(() => (say: T, shownIn: Lang) => decided(say, dateFormat(shownIn, TIME_OPTIONS), decision, item, outcome));
+        // The navigation's count, too.
+        attention.reload();
+      } else if (isStale(result.error)) {
+        startOver();
+      }
+    });
+  };
+  const stopWaiting = (id: string) => {
+    window.clearTimeout(timers.current.get(id));
+    timers.current.delete(id);
+    setWaiting((current) => new Set([...current].filter((entry) => entry !== id)));
+  };
+  const accept = (item: ReviewItem) => {
+    setWaiting((current) => new Set(current).add(item.id));
+    timers.current.set(
+      item.id,
+      window.setTimeout(() => {
+        // Focus on the item's Undo goes to the heading, which stays as the item goes.
+        if (list.current?.querySelector(`[data-review-id="${item.id}"]`)?.contains(document.activeElement) === true) {
+          document.getElementById("review-page-title")?.focus();
+        }
+        stopWaiting(item.id);
+        decide(item, "accept");
+      }, ACCEPT_DELAY_MS),
+    );
+    // Said once, in the page's status; the item says it too, without counting down.
+    setNotice(() => (say: T, shownIn: Lang) => say("{what} will be accepted in 10 seconds. Undo stops it.", { what: describe(say, dateFormat(shownIn, TIME_OPTIONS), item) }));
+  };
+  const undo = (item: ReviewItem) => {
+    stopWaiting(item.id);
+    setNotice(() => (say: T, shownIn: Lang) => say("Not accepted: {what}.", { what: describe(say, dateFormat(shownIn, TIME_OPTIONS), item) }));
   };
 
   return (
@@ -202,21 +346,15 @@ export function ReviewPage() {
               key={item.id}
               item={item}
               pending={pending}
-              onDecide={(decision) => {
-                setNotice(null);
-                void submit(() => apiRequest("POST", `/api/review-queue/${item.id}/${decision}`, reviewDecisionSchema)).then((result) => {
-                  if (result.ok) {
-                    // Taken off the list in place, so the owner keeps every page already loaded.
-                    setItems(shown.filter((entry) => entry.id !== item.id));
-                    setNextCursor(cursor);
-                    const { outcome } = result.value;
-                    setNotice(() => (say: T, shownIn: Lang) => decided(say, dateFormat(shownIn, TIME_OPTIONS), decision, item, outcome));
-                    // The navigation's count, too.
-                    attention.reload();
-                  } else if (isStale(result.error)) {
-                    startOver();
-                  }
-                });
+              waiting={waiting.has(item.id)}
+              onAccept={() => {
+                accept(item);
+              }}
+              onUndo={() => {
+                undo(item);
+              }}
+              onDiscard={() => {
+                decide(item, "discard");
               }}
             />
           ))}
@@ -227,7 +365,11 @@ export function ReviewPage() {
           type="button"
           aria-disabled={pending || undefined}
           onClick={() => {
-            void submit(() => apiRequest("GET", `/api/review-queue?cursor=${encodeURIComponent(cursor)}`, reviewQueueSchema)).then((result) => {
+            if (pending) {
+              return;
+            }
+            inTurn(async () => {
+              const result = await submit(() => apiRequest("GET", `/api/review-queue?cursor=${encodeURIComponent(cursor)}`, reviewQueueSchema));
               if (result.ok) {
                 const known = new Set(shown.map((entry) => entry.id));
                 const added = result.value.items.filter((entry) => !known.has(entry.id));

@@ -26,6 +26,7 @@ const AR = {
   "Baristas sign in on the counter phones with their PIN, and every stamp they give is recorded under their name.":
     "يسجّل الباريستا الدخول على هواتف الكاونتر برمزهم السري، ويُسجَّل كل ختم يمنحونه باسمهم.",
   "No baristas yet. Each one gets a PIN to use at the counter.": "لا باريستا بعد. يحصل كل واحد منهم على رمز سري يستخدمه على الكاونتر.",
+  "Removed ({count})": "المُزالون ({count})",
 } as const;
 
 type Change = (method: "POST" | "PATCH", path: string, body?: unknown) => Promise<void>;
@@ -37,7 +38,7 @@ const reloadIfStale = (reload: () => void) => (result: { ok: boolean; error?: un
   }
 };
 
-function AddStaffForm({ change }: { change: Change }) {
+export function AddStaffForm({ change }: { change: Change }) {
   const t = useT(AR);
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
@@ -183,6 +184,8 @@ export function StaffPage() {
     return <PageStatus state={state} onRetry={retry} />;
   }
   const staff = state.data.staff;
+  const active = staff.filter((member) => !member.revoked);
+  const removed = staff.filter((member) => member.revoked);
 
   const change: Change = async (method, path, body) => {
     setList(await apiRequest(method, path, staffListSchema, body));
@@ -205,11 +208,26 @@ export function StaffPage() {
       {staff.length === 0 ? (
         <p className="empty">{t("No baristas yet. Each one gets a PIN to use at the counter.")}</p>
       ) : (
-        <ul className="items">
-          {staff.map((member) => (
-            <StaffItem key={member.id} member={member} change={changeAndSay} reload={reload} />
-          ))}
-        </ul>
+        <>
+          {active.length === 0 ? null : (
+            <ul className="items">
+              {active.map((member) => (
+                <StaffItem key={member.id} member={member} change={changeAndSay} reload={reload} />
+              ))}
+            </ul>
+          )}
+          {/* Removed baristas stay listed, out of the way: what they recorded may still be under Review. */}
+          {removed.length === 0 ? null : (
+            <details>
+              <summary>{t("Removed ({count})", { count: removed.length })}</summary>
+              <ul className="items">
+                {removed.map((member) => (
+                  <StaffItem key={member.id} member={member} change={changeAndSay} reload={reload} />
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
       )}
       <AddStaffForm change={change} />
     </section>

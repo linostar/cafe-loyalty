@@ -320,7 +320,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
   app.get("/review-queue", { config: { access: "owner" } }, async (request): Promise<ReviewQueue> => {
     const owner = ownerOf(request);
     const { cursor } = parseInput(reviewQuery, request.query);
-    const rows = await withCafe(db, owner.cafeId, (trx) => {
+    const rows = await withCafe(db, owner.cafeId, async (trx) => {
       let query = trx
         .selectFrom("sync_events")
         .innerJoin("devices", "devices.id", "sync_events.device_id")
@@ -335,15 +335,32 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
           sql<string>`to_char(sync_events.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("position"),
           "devices.name as deviceName",
           "staff.name as staffName",
+          "visits.id as visitId",
           "visits.discount_refused",
+          "visits.stamps_earned",
+          "visits.total_cents",
         ])
         .where("sync_events.status", "=", "held");
       if (cursor !== undefined) {
         query = query.where(sql<boolean>`(sync_events.received_at, sync_events.id) > (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)`);
       }
-      return query.orderBy("sync_events.received_at").orderBy("sync_events.id").limit(REVIEW_PAGE_SIZE + 1).execute();
+      const held = await query.orderBy("sync_events.received_at").orderBy("sync_events.id").limit(REVIEW_PAGE_SIZE + 1).execute();
+      // The page's visits' lines, so the owner sees what was ordered before deciding.
+      const visitIds = held.slice(0, REVIEW_PAGE_SIZE).flatMap((row) => (row.visitId === null ? [] : [row.visitId]));
+      const lines =
+        visitIds.length === 0
+          ? []
+          : await trx
+              .selectFrom("visit_items")
+              .innerJoin("order_types", "order_types.id", "visit_items.order_type_id")
+              .select(["visit_items.visit_id", "visit_items.quantity", "order_types.name_en", "order_types.name_ar"])
+              .where("visit_items.visit_id", "in", visitIds)
+              .orderBy("visit_items.visit_id")
+              .orderBy("visit_items.line")
+              .execute();
+      return { held, lines };
     });
-    const page = rows.slice(0, REVIEW_PAGE_SIZE);
+    const page = rows.held.slice(0, REVIEW_PAGE_SIZE);
     const last = page.at(-1);
     return {
       items: page.map((row) => ({
@@ -353,10 +370,20 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
         staffName: row.staffName,
         reason: holdReasonOf(row.hold_reason),
         discountRefused: row.discount_refused === true,
+        visit:
+          row.visitId === null || row.stamps_earned === null || row.total_cents === null
+            ? null
+            : {
+                stamps: row.stamps_earned,
+                totalCents: row.total_cents,
+                items: rows.lines
+                  .filter((line) => line.visit_id === row.visitId)
+                  .map((line) => ({ nameEn: line.name_en, nameAr: line.name_ar, quantity: line.quantity })),
+              },
         occurredAt: row.occurred_at.toISOString(),
         receivedAt: row.received_at.toISOString(),
       })),
-      nextCursor: rows.length > REVIEW_PAGE_SIZE && last !== undefined ? encodeCursor(last.position, last.id) : null,
+      nextCursor: rows.held.length > REVIEW_PAGE_SIZE && last !== undefined ? encodeCursor(last.position, last.id) : null,
     };
   });
 

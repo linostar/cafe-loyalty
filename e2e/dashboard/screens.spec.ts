@@ -1,5 +1,5 @@
 import { PRODUCT_NAME } from "@cafe-loyalty/shared";
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
 import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectUsableInForcedColors, shownText } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { FAKE_TOKEN, SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
@@ -83,23 +83,35 @@ const SIGNED_IN = {
     ],
     pairingCodes: [{ id: "be1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", deviceName: "Back bar", expiresAt: "2026-10-09T09:00:00.000Z" }],
   }),
-  "GET /api/review-queue": reply(200, { items: [held(1, "device_revoked"), { ...held(2, "campaign_check"), discountRefused: true }], nextCursor: null }),
+  "GET /api/review-queue": reply(200, {
+    items: [
+      { ...held(1, "device_revoked"), visit: { stamps: 2, totalCents: 850, items: [{ nameEn: "Espresso", nameAr: "إسبريسو", quantity: 2 }, { nameEn: "Latte", nameAr: "لاتيه", quantity: 1 }] } },
+      { ...held(2, "campaign_check"), discountRefused: true },
+    ],
+    nextCursor: null,
+  }),
   "GET /api/feedback": reply(200, {
     items: [
       { id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", message: "The croissant was cold, but the latte was great.", receivedAt: "2026-10-08T11:30:00.000Z", visitedAt: "2026-10-08T09:00:00.000Z", read: false },
       { id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", message: "Lovely music this morning.", receivedAt: "2026-10-07T12:10:00.000Z", visitedAt: "2026-10-07T10:00:00.000Z", read: true },
     ],
     unread: 1,
-    more: false,
+    nextCursor: null,
   }),
-  "GET /api/results": reply(200, {
-    window: { from: "2026-09-20T08:00:00.000Z", to: "2026-10-20T08:00:00.000Z", complete: false },
-    memberVisits: 412,
-    customersWonBack: 6,
-    quietHourVisits: 58,
-    rewardRedemptions: 21,
-    offers: { winBack: { visits: 6, costCents: 540, revenueCents: 2830 }, quietHour: { visits: 58, costCents: 4350, revenueCents: 21460 } },
-  }),
+  // This month so far, or the month before when picked.
+  "GET /api/results": (route: Route) => {
+    const month = new URL(route.request().url()).searchParams.get("month") ?? "2026-10";
+    return reply(200, {
+      month,
+      current: month === "2026-10",
+      months: ["2026-10", "2026-09"],
+      memberVisits: 412,
+      customersWonBack: 6,
+      quietHourVisits: 58,
+      rewardRedemptions: 21,
+      offers: { winBack: { visits: 6, costCents: 540, revenueCents: 2830 }, quietHour: { visits: 58, costCents: 4350, revenueCents: 21460 } },
+    })(route);
+  },
 };
 
 /** The operator's admin screen with fake cafés. */
@@ -123,7 +135,16 @@ const ADMIN = {
   }),
 };
 
-const OWNER_PATHS = ["/", "/cafe", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"] as const;
+const OWNER_PATHS = ["/", "/cafe", "/cafe/print-qr", "/campaigns", "/staff", "/devices", "/review", "/inbox", "/results", "/account"] as const;
+
+/** A new café's Home, in its setup wizard (D1), and a set-up one's with the checklist of what is left (D22). */
+const NEW_CAFE = { ...SIGNED_IN, "GET /api/cafe": reply(200, { ...CAFE, cafe: { ...CAFE.cafe, setupFinishedAt: null, signupQrPrintedAt: null } }) };
+const CHECKLIST = {
+  ...SIGNED_IN,
+  "GET /api/cafe": reply(200, { ...CAFE, cafe: { ...CAFE.cafe, setupFinishedAt: "2026-10-01T08:00:00.000Z", signupQrPrintedAt: null }, program: null, orderTypes: [] }),
+};
+/** The wizard's way on, whatever its label (Next, or Skip this step) and language. */
+const nextStep = (page: Page) => page.locator(".setup-wizard .actions button.primary");
 const ADMIN_PATHS = ["/admin", `/admin/cafes/${SESSION.cafe.id}`, "/admin/cafes/new", "/admin/password"] as const;
 const SIGNED_OUT_PATHS = ["/", `/signup#invite=${FAKE_TOKEN}`, "/forgot-password", `/reset-password#token=${FAKE_TOKEN}`, "/admin"] as const;
 const WIDTHS = [1440, 1024, 390] as const;
@@ -167,11 +188,39 @@ for (const { lang, locale } of LANGS) {
           // The window is titled by the page's own heading, in its language (WCAG 2.4.2).
           const heading = ((await page.getByRole("heading", { level: 2 }).first().textContent()) ?? "").trim();
           await expect(page).toHaveTitle(`${heading} · ${PRODUCT_NAME} ${lang === "ar" ? "لوحة التحكم" : "Dashboard"}`);
-          await capture(page, testInfo, `dashboard${path === "/" ? "-home" : path.replace("/", "-")}${suffix}`);
+          await capture(page, testInfo, `dashboard${path === "/" ? "-home" : path.replaceAll("/", "-")}${suffix}`);
           await check(page);
           await expectFocusNeverHidden(page);
         });
       }
+
+      test("setup wizard, every step", async ({ page }, testInfo) => {
+        await mockApi(page, NEW_CAFE);
+        await page.goto("/");
+        for (let step = 1; step <= 5; step += 1) {
+          const heading = page.getByRole("heading", { level: 3, name: lang === "ar" ? `الخطوة \u2068${String(step)}\u2069 من \u20685\u2069` : `Step ${String(step)} of 5` });
+          await expect(heading).toBeVisible();
+          if (step > 1) {
+            await expect(heading).toBeFocused();
+          }
+          await expect(page.getByRole("status").filter({ hasText: /\S/ })).toHaveCount(0);
+          await capture(page, testInfo, `dashboard-setup-step-${String(step)}${suffix}`);
+          await check(page);
+          await expectFocusNeverHidden(page);
+          if (step < 5) {
+            await nextStep(page).click();
+          }
+        }
+      });
+
+      test("Home with the setup checklist", async ({ page }, testInfo) => {
+        await mockApi(page, CHECKLIST);
+        await page.goto("/");
+        await expect(page.getByRole("region", { name: lang === "ar" ? "أكمل التجهيز" : "Finish setting up" })).toBeVisible();
+        await capture(page, testInfo, `dashboard-home-checklist${suffix}`);
+        await check(page);
+        await expectFocusNeverHidden(page);
+      });
 
       for (const [name, path] of [
         ["admin", ADMIN_PATHS[0]],
@@ -202,6 +251,44 @@ for (const { lang, locale } of LANGS) {
         await expectFocusNeverHidden(page);
       });
 
+      test("inbox with its older messages loaded", async ({ page }, testInfo) => {
+        await mockApi(page, {
+          ...SIGNED_IN,
+          "GET /api/feedback": async (route) => {
+            const older = new URL(route.request().url()).searchParams.has("cursor");
+            await route.fulfill({
+              json: older
+                ? {
+                    items: [{ id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f03", message: "Fake older message about the cake.", receivedAt: "2026-10-01T09:45:00.000Z", visitedAt: "2026-10-01T08:00:00.000Z", read: true }],
+                    unread: 1,
+                    nextCursor: null,
+                  }
+                : {
+                    items: [{ id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", message: "The croissant was cold, but the latte was great.", receivedAt: "2026-10-08T11:30:00.000Z", visitedAt: "2026-10-08T09:00:00.000Z", read: false }],
+                    unread: 1,
+                    nextCursor: "fake-cursor",
+                  },
+            });
+          },
+        });
+        await page.goto("/inbox");
+        await page.getByRole("button", { name: /^Show older messages$|^عرض الرسائل الأقدم$/ }).click();
+        await expect(page.getByRole("listitem").filter({ hasText: "Fake older message about the cake." })).toBeFocused();
+        await capture(page, testInfo, `dashboard-inbox-older${suffix}`);
+        await check(page);
+        await expectFocusNeverHidden(page);
+      });
+
+      test("campaign started again from an ended one", async ({ page }, testInfo) => {
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/campaigns");
+        await page.getByRole("button", { name: /^Start again Opening week$|^البدء من جديد ⁨عرض⁩$/ }).click();
+        await expect(page.getByRole("heading", { level: 3, name: /^New campaign$|^حملة جديدة$/ })).toBeFocused();
+        await capture(page, testInfo, `dashboard-campaigns-start-again${suffix}`);
+        await check(page);
+        await expectFocusNeverHidden(page);
+      });
+
       test("profile menu open", async ({ page }, testInfo) => {
         await mockApi(page, SIGNED_IN);
         await page.goto("/");
@@ -214,6 +301,16 @@ for (const { lang, locale } of LANGS) {
         // reach only until it closes, as with any menu the user opens.
         await expectNoAxeViolations(page, ["target-size"]);
         await expectUsableInForcedColors(page);
+      });
+
+      test("Results for an earlier month", async ({ page }, testInfo) => {
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/results");
+        await page.getByRole("combobox", { name: /^Month$|^الشهر$/ }).selectOption("2026-09");
+        await expect(page.getByRole("status")).toHaveText(/^(Showing|تُعرض)/);
+        await capture(page, testInfo, `dashboard-results-earlier-month${suffix}`);
+        await check(page);
+        await expectFocusNeverHidden(page);
       });
 
       test("operator signed out at /admin", async ({ page }, testInfo) => {
@@ -242,10 +339,81 @@ for (const { lang, locale } of LANGS) {
   }
 }
 
+/** Review's Undo, a shown PIN, an expired pairing code and the Removed groups (D5, D8, D14), in both languages. */
+for (const { lang, locale } of LANGS) {
+  for (const width of [1440, 390] as const) {
+    test.describe(`${lang} at ${String(width)} px: review, staff and devices states`, () => {
+      test.use({ locale, viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
+      const suffix = `${lang === "ar" ? "-ar" : ""}-${String(width)}`;
+      const check = async (page: Page) => {
+        await expectLanguageAndFit(page, lang);
+        await expectEveryControlNamed(page);
+        await expectNoAxeViolations(page);
+        await expectUsableInForcedColors(page);
+        await expectFocusNeverHidden(page);
+      };
+
+      test("Review: a held visit's order, and an accept waiting with Undo", async ({ page }, testInfo) => {
+        await page.clock.install();
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/review");
+        await expect(page.getByText(lang === "ar" ? /الطلب: / : /^Order: 2 × Espresso, 1 × Latte\. Total \$8\.50, for 2 stamps\.$/)).toBeVisible();
+        await page.getByRole("button", { name: /^Accept Visit by |^قبول .*Rami/ }).first().click();
+        await expect(page.getByRole("button", { name: /^Undo accepting |^تراجع عن قبول / })).toBeFocused();
+        await capture(page, testInfo, `dashboard-review-undo${suffix}`);
+        await check(page);
+      });
+
+      test("Staff: a PIN shown, and the Removed group open", async ({ page }, testInfo) => {
+        await mockApi(page, SIGNED_IN);
+        await page.goto("/staff");
+        await page.getByRole("button", { name: /^Show$|^إظهار$/ }).click();
+        await expect(page.getByRole("button", { name: /^Show$|^إظهار$/ })).toHaveAttribute("aria-pressed", "true");
+        await page.getByText(/^Removed \(1\)$|^المُزالون/).click();
+        await expect(page.getByText("Karim")).toBeVisible();
+        await capture(page, testInfo, `dashboard-staff-states${suffix}`);
+        await check(page);
+      });
+
+      test("Devices: an expired pairing code, and the Removed group open", async ({ page }, testInfo) => {
+        // The page's clock, not the test runner's: the code expires on the page's time.
+        const now = new Date("2026-10-09T08:00:00.000Z");
+        await page.clock.install({ time: now });
+        await mockApi(page, {
+          ...SIGNED_IN,
+          "POST /api/devices/pairing-codes": async (route) => {
+            await route.fulfill({
+              status: 201,
+              json: {
+                id: "be1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02",
+                deviceName: "Back bar",
+                code: "ABCD-EFGH-JKMN",
+                pairingUrl: "https://counter.example.test/pair#code=ABCDEFGHJKMN",
+                expiresAt: new Date(now.getTime() + 5000).toISOString(),
+              },
+            });
+          },
+        });
+        await page.goto("/devices");
+        await page.getByLabel(/^Phone name$|^اسم الهاتف$/).fill("Back bar");
+        await page.getByRole("button", { name: /^Create pairing code$|^إنشاء رمز ربط$/ }).click();
+        await page.clock.fastForward(6000);
+        await expect(page.getByRole("button", { name: /^New code$|^رمز جديد$/ })).toBeVisible();
+        await page.getByText(/^Removed \(1\)$|^المُزالة/).click();
+        await expect(page.getByText("Old phone")).toBeVisible();
+        // The page says once that the code expired.
+        await expect(page.getByRole("status").filter({ hasText: /\S/ })).toHaveCount(1);
+        await capture(page, testInfo, `dashboard-devices-states${suffix}`);
+        await check(page);
+      });
+    });
+  }
+}
+
 /** The Café page's sections, the Review page's short labels and the admin café page's layout (redesign AC 8, 9, 10), in both languages. */
 const LAYOUT_TEXT = {
-  en: { sections: "Sections of this page", names: ["Program", "Menu", "Offers and win-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
-  ar: { sections: "أقسام هذه الصفحة", names: ["البرنامج", "القائمة", "العروض والاسترجاع", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
+  en: { sections: "Sections of this page", names: ["Café", "Program", "Menu", "Offers and welcome-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
+  ar: { sections: "أقسام هذه الصفحة", names: ["المقهى", "البرنامج", "القائمة", "العروض وعرض العودة", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
 } as const;
 
 for (const { lang, locale } of LANGS) {
@@ -260,8 +428,10 @@ for (const { lang, locale } of LANGS) {
         const links = page.getByRole("navigation", { name: text.sections }).getByRole("link");
         await expect(links).toHaveText([...text.names]);
         for (const [index, name] of text.names.entries()) {
-          const section = page.getByRole("region", { name, exact: true });
-          await expect(section).toHaveAttribute("id", ((await links.nth(index).getAttribute("href")) ?? "").slice(1));
+          // Found by the link's target: the first section, Café, shares its name with the page's own region.
+          const section = page.locator(`section${(await links.nth(index).getAttribute("href")) ?? ""}`);
+          await expect(section).toHaveRole("region");
+          await expect(section).toHaveAccessibleName(name);
           // Every card takes the section's width, each below the one before.
           const boxes = await section.locator(".stack > *").evaluateAll((cards) =>
             cards.map((card) => {
@@ -280,9 +450,11 @@ for (const { lang, locale } of LANGS) {
         const widest = await page.locator(".settings-section input:not([type='radio'], [type='checkbox'])").evaluateAll((inputs) => Math.max(...inputs.map((input) => input.getBoundingClientRect().width)));
         expect(widest).toBeLessThanOrEqual(480);
         // A link in the list takes the page to its section.
-        await links.nth(1).click();
+        await links.nth(2).click();
         await expect(page).toHaveURL(/#menu$/);
-        await expect(page.getByRole("heading", { level: 3, name: text.names[1], exact: true })).toBeInViewport();
+        await expect(page.getByRole("heading", { level: 3, name: text.names[2], exact: true })).toBeInViewport();
+        // The café's name is in the first section, Café.
+        await expect(page.locator("section#cafe").getByRole("form", { name: lang === "ar" ? "اسم المقهى" : "Café name" })).toBeVisible();
       });
 
       test("Review shows short labels, and the buttons' names still say which item", async ({ page }) => {
@@ -353,6 +525,23 @@ for (const { lang, locale } of LANGS) {
         await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
         await expectLanguageAndFit(page, lang);
       }
+    });
+
+    test("every step of the setup wizard, and Home's checklist, reflow", async ({ page }) => {
+      await mockApi(page, NEW_CAFE);
+      await page.goto("/");
+      for (let step = 1; step <= 5; step += 1) {
+        await expect(page.locator("#setup-step-title")).toContainText(String(step));
+        await expectLanguageAndFit(page, lang);
+        if (step < 5) {
+          await nextStep(page).click();
+        }
+      }
+      await page.unrouteAll();
+      await mockApi(page, CHECKLIST);
+      await page.goto("/");
+      await expect(page.locator("#setup-checklist-title")).toBeVisible();
+      await expectLanguageAndFit(page, lang);
     });
 
     test("the open void form reflows", async ({ page }) => {

@@ -44,7 +44,7 @@ const AR = {
   "Enter a whole percentage from 1 to 100.": "أدخل نسبة مئوية صحيحة من 1 إلى 100.",
   "Enter an amount in dollars, such as 0.50.": "أدخل مبلغاً بالدولار، مثل 0.50.",
   "Enter a whole number of days from {min} to {max}.": "أدخل عدداً صحيحاً من الأيام، من {min} إلى {max}.",
-  "Win-back offer": "عرض الاسترجاع",
+  "Welcome-back offer": "عرض العودة",
   "When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for {days} days, if they agreed to receive offers. It never takes an item below its minimum margin.":
     "حين يغيب زبون دائم (3 زيارات أو أكثر) أطول بكثير من المعتاد، أسبوعين على الأقل، تعرض بطاقته هذا الخصم على زيارته التالية لمدة {days} يوماً، إن وافق على تلقي العروض. لا ينزل العرض بأي صنف دون الحد الأدنى لهامش ربحه.",
   Discount: "الخصم",
@@ -57,7 +57,7 @@ const AR = {
   "Such as 0.50.": "مثل 0.50.",
   "Days before the same card can get it again": "الأيام قبل أن تحصل البطاقة نفسها عليه مجدداً",
   "At least {days}, how long an offer lasts. Offers already given keep their terms.": "{days} على الأقل، وهي مدة العرض. تحتفظ العروض الممنوحة سابقاً بشروطها.",
-  "Save win-back offer": "حفظ عرض الاسترجاع",
+  "Save welcome-back offer": "حفظ عرض العودة",
   "Enter a price in dollars up to 1,000,000, such as 2.50.": "أدخل سعراً بالدولار حتى 1,000,000، مثل 2.50.",
   "Enter a cost in dollars up to 1,000,000, such as 0.70.": "أدخل تكلفة بالدولار حتى 1,000,000، مثل 0.70.",
   "Enter a whole number, such as 1.": "أدخل عدداً صحيحاً، مثل 1.",
@@ -77,6 +77,7 @@ const AR = {
   "Customer signup QR": "رمز QR لتسجيل الزبائن",
   "Print this and put it at the counter. Customers scan it to get their loyalty card.": "اطبعه وضعه على الكاونتر. يمسحه الزبائن للحصول على بطاقة الولاء.",
   "QR code customers scan to get a loyalty card": "رمز QR يمسحه الزبائن للحصول على بطاقة ولاء",
+  Print: "طباعة",
   "Replace the code only if the printed one was misused: the old one stops working at once.": "لا تستبدل الرمز إلا إذا أُسيء استخدام الرمز المطبوع: يتوقف الرمز القديم عن العمل فوراً.",
   "Replace code": "استبدال الرمز",
   "Yes, replace the code": "نعم، استبدل الرمز",
@@ -85,7 +86,7 @@ const AR = {
   "Sections of this page": "أقسام هذه الصفحة",
   Program: "البرنامج",
   Menu: "القائمة",
-  "Offers and win-back": "العروض والاسترجاع",
+  "Offers and welcome-back": "العروض وعرض العودة",
   "Signup and reviews": "التسجيل والتقييمات",
   "No order types yet. Add what baristas stamp, such as an espresso drink.": "لا أنواع طلبات بعد. أضف ما يمنح الباريستا عليه أختاماً، مثل مشروب إسبريسو.",
 } as const;
@@ -163,7 +164,7 @@ function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | n
   );
 }
 
-function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: Save }) {
+export function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: Save }) {
   const t = useT(AR);
   const lang = useLang();
   const [stamps, setStamps] = useState(program === null ? "" : String(program.stampsRequired));
@@ -299,7 +300,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         void submit(() => save("PUT", "/api/cafe/win-back", body));
       }}
     >
-      <h4 id="win-back-title">{t("Win-back offer")}</h4>
+      <h4 id="win-back-title">{t("Welcome-back offer")}</h4>
       <p className="hint">
         {t(
           "When a regular (3 visits or more) stays away much longer than usual, at least 2 weeks, their card offers this off their next visit, for {days} days, if they agreed to receive offers. It never takes an item below its minimum margin.",
@@ -354,7 +355,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
         error={problems.cooldownDays?.(t, lang) ?? fieldErrors.cooldownDays}
       />
       <button type="submit" aria-disabled={pending || undefined}>
-        {pending ? t("Saving…") : t("Save win-back offer")}
+        {pending ? t("Saving…") : t("Save welcome-back offer")}
       </button>
       <Notice>{done ? t("Saved.") : null}</Notice>
     </Form>
@@ -362,7 +363,7 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
 }
 
 /** Adds an order type, or edits one when `orderType` is given; `onDone` closes the edit, saying whether it was saved. */
-function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: (saved: boolean) => void }) {
+export function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: (saved: boolean) => void }) {
   const t = useT(AR);
   const lang = useLang();
   const [nameEn, setNameEn] = useState(orderType?.nameEn ?? "");
@@ -576,6 +577,12 @@ function SignupQr() {
           {state.data.joinUrl}
         </p>
       </div>
+      {/* The printable sheet (D6), on its own page: the café's name, the code at about 8 cm, both languages. */}
+      <p>
+        <a className="action-link" href="/cafe/print-qr">
+          {t("Print")}
+        </a>
+      </p>
       <FormError message={error} />
       <p className="hint">{t("Replace the code only if the printed one was misused: the old one stops working at once.")}</p>
       <ConfirmButton
@@ -596,9 +603,10 @@ function SignupQr() {
 
 /** The Café page's sections, in order, as the in-page list links to them. */
 const SECTIONS = [
+  ["cafe", "Café"],
   ["program", "Program"],
   ["menu", "Menu"],
-  ["offers", "Offers and win-back"],
+  ["offers", "Offers and welcome-back"],
   ["signup", "Signup and reviews"],
 ] as const;
 
@@ -643,8 +651,10 @@ export function CafePage() {
         </ul>
       </nav>
       {/* One section per part of the café, each card full width under the one before (never side by side). */}
-      <SettingsSection id="program" title="Program">
+      <SettingsSection id="cafe" title="Café">
         <CafeNameForm name={setup.cafe.name} save={save} />
+      </SettingsSection>
+      <SettingsSection id="program" title="Program">
         <ProgramForm program={setup.program} save={save} />
       </SettingsSection>
       <SettingsSection id="menu" title="Menu">
@@ -661,7 +671,7 @@ export function CafePage() {
           <OrderTypeForm save={save} />
         </div>
       </SettingsSection>
-      <SettingsSection id="offers" title="Offers and win-back">
+      <SettingsSection id="offers" title="Offers and welcome-back">
         <MarginForm minMarginPercent={setup.cafe.minMarginPercent} save={save} />
         <WinBackForm winBack={setup.cafe.winBack} save={save} />
       </SettingsSection>

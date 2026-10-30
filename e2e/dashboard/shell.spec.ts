@@ -17,7 +17,9 @@ const SIGNED_IN = {
   "GET /api/review-queue": reply(200, { items: [], nextCursor: null }),
   // Seven-digit amounts: the widest the offers table gets.
   "GET /api/results": reply(200, {
-    window: { from: "2026-09-20T08:00:00.000Z", to: "2026-10-20T08:00:00.000Z", complete: true },
+    month: "2026-10",
+    current: true,
+    months: ["2026-10", "2026-09"],
     memberVisits: 99999,
     customersWonBack: 9999,
     quietHourVisits: 9999,
@@ -272,7 +274,7 @@ const WAITING_ITEMS = [1, 2].map((index) => ({
 const WAITING = {
   ...SIGNED_IN,
   "GET /api/review-queue": reply(200, { items: WAITING_ITEMS, nextCursor: null }),
-  "GET /api/feedback": reply(200, { items: [], unread: 1, more: false }),
+  "GET /api/feedback": reply(200, { items: [], unread: 1, nextCursor: null }),
 };
 
 test("counts what waits on the Review and Inbox links, and lists it on Home with where to act", async ({ page }) => {
@@ -315,7 +317,7 @@ test("updates the counts when the owner decides a held visit and reads a message
       await route.fulfill({ json: { outcome: "OK" } });
     },
     "GET /api/feedback": async (route) => {
-      await route.fulfill({ json: { items: [{ ...message, read: unread === 0 }], unread, more: false } });
+      await route.fulfill({ json: { items: [{ ...message, read: unread === 0 }], unread, nextCursor: null } });
     },
     [`POST /api/feedback/${message.id}/read`]: async (route) => {
       unread = 0;
@@ -331,23 +333,18 @@ test("updates the counts when the owner decides a held visit and reads a message
 
   await page.goto("/inbox");
   await expect(nav.getByRole("link", { name: "Inbox 1 unread" })).toBeVisible();
-  await page.getByRole("button", { name: /^Mark the message of/ }).click();
+  await page.getByRole("button", { name: /^Mark as read/ }).click();
   await expect(nav.getByRole("link", { name: "Inbox", exact: true })).toBeVisible();
 });
 
-test("shows the first month's figures on Home, or when they start", async ({ page }) => {
+test("shows this month's figures so far on Home", async ({ page }) => {
   await page.unrouteAll();
   await mockApi(page, SIGNED_IN);
   await page.goto("/");
-  const month = page.getByRole("region", { name: "First month so far" });
+  const month = page.getByRole("region", { name: "This month so far" });
   await expect(month.getByRole("listitem").filter({ hasText: "Member visits" })).toContainText("99999");
   await expect(month.getByRole("listitem").filter({ hasText: "Rewards redeemed" })).toContainText("9999");
   await expect(month.getByRole("link", { name: "See all results" })).toHaveAttribute("href", "/results");
-
-  await page.unrouteAll();
-  await mockApi(page, { ...SIGNED_IN, "GET /api/results": reply(200, { window: null, memberVisits: 0, customersWonBack: 0, quietHourVisits: 0, rewardRedemptions: 0, offers: { winBack: { visits: 0, costCents: 0, revenueCents: 0 }, quietHour: { visits: 0, costCents: 0, revenueCents: 0 } } }) });
-  await page.reload();
-  await expect(month).toContainText("Your first month starts with your first member visit.");
 });
 
 test("says on Home what it could not load, and still shows the rest", async ({ page }) => {
@@ -359,16 +356,40 @@ test("says on Home what it could not load, and still shows the rest", async ({ p
   await expect(needs).toContainText("Could not check what is held for review: Something went wrong on our side. Try again in a moment.");
   await expect(needs).toContainText("Could not check your messages: Something went wrong on our side. Try again in a moment.");
   await expect(needs).not.toContainText("Nothing needs you right now.");
-  await expect(page.getByRole("region", { name: "First month so far" })).toContainText("Could not load your first month: Something went wrong on our side. Try again in a moment.");
+  await expect(page.getByRole("region", { name: "This month so far" })).toContainText("Could not load this month's results: Something went wrong on our side. Try again in a moment.");
   await expect(page.getByRole("navigation", { name: "Dashboard" }).getByRole("link", { name: "Review", exact: true })).toBeVisible();
 });
 
 test("says on Home when nothing waits", async ({ page }) => {
   await page.unrouteAll();
-  await mockApi(page, { ...SIGNED_IN, "GET /api/feedback": reply(200, { items: [], unread: 0, more: false }) });
+  await mockApi(page, { ...SIGNED_IN, "GET /api/feedback": reply(200, { items: [], unread: 0, nextCursor: null }) });
   await page.goto("/");
   await expect(page.getByRole("region", { name: "Needs you" })).toContainText("Nothing needs you right now.");
   await expect(page.getByRole("navigation", { name: "Dashboard" }).getByRole("link", { name: "Review", exact: true })).toBeVisible();
+});
+
+test.describe("Needs you: quiet counter phones (D15)", () => {
+  test("lists phones not seen for 2 days, not removed ones, with a link to Devices", async ({ page }) => {
+    const phone = (name: string, daysAgo: number, revoked: boolean) => ({
+      id: `ad1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f${String(daysAgo).padStart(2, "0")}`,
+      name,
+      revoked,
+      pairedAt: "2026-09-01T08:00:00.000Z",
+      lastSeenAt: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    await page.unrouteAll();
+    await mockApi(page, {
+      ...SIGNED_IN,
+      "GET /api/feedback": reply(200, { items: [], unread: 0, nextCursor: null }),
+      "GET /api/devices": reply(200, { devices: [phone("Front counter", 3, false), phone("Back bar", 1, false), phone("Old phone", 9, true)], pairingCodes: [] }),
+    });
+    await page.goto("/");
+    const needs = page.getByRole("region", { name: "Needs you" });
+    const item = needs.getByRole("listitem").filter({ hasText: "Counter phones not seen for 2 days" });
+    await expect(item).toContainText("1 phone");
+    await expect(item.getByRole("link", { name: "Check them" })).toHaveAttribute("href", "/devices");
+    await expect(needs).not.toContainText("Nothing needs you right now.");
+  });
 });
 
 test("centres the navigation and the page together on a wide screen", async ({ page }) => {

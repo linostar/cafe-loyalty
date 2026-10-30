@@ -3,6 +3,7 @@ import {
   VISIT_HOURS_WEEKS,
   apiText,
   cafeSetupSchema,
+  devicesSchema,
   feedbackInboxSchema,
   ownerSessionSchema,
   plural,
@@ -23,10 +24,12 @@ import { ForgotPasswordPage, LoginForm, ResetPasswordPage, SignupPage } from "./
 import { CafePage } from "./cafe-page.js";
 import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
+import { useFocusOnChange } from "./forms.js";
 import { LangProvider, LanguageSwitch, dateFormat, useApiText, useLang, useT } from "./i18n.js";
 import { InboxPage } from "./inbox-page.js";
 import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
+import { PrintQrPage, SetupChecklist, SetupWizard } from "./setup.js";
 import { ProfileMenu } from "./profile-menu.js";
 import { ChangePasswordForm } from "./password-form.js";
 import { AttentionContext, PageStatus, SessionEndedContext, useApiData } from "./session.js";
@@ -77,6 +80,7 @@ const AR = {
   Quiet: "هادئ",
   Busy: "مزدحم",
   "Signed in as {email}": "مسجّل الدخول باسم {email}",
+  "Could not check your café's setup: {message}": "تعذّر التحقق من تجهيز مقهاك: {message}",
   More: "المزيد",
   "{count} waiting": "{count} بالانتظار",
   "{count} or more waiting": "{count} أو أكثر بالانتظار",
@@ -86,17 +90,19 @@ const AR = {
   "Review them": "راجعها",
   "Unread messages from customers": "رسائل غير مقروءة من الزبائن",
   "Read them": "اقرأها",
+  "Counter phones not seen for 2 days": "هواتف كاونتر لم تظهر منذ يومين",
+  "Check them": "تحقق منها",
   "Nothing needs you right now.": "لا شيء بانتظارك الآن.",
   "Could not check what is held for review: {message}": "تعذّر التحقق مما هو محجوز للمراجعة: {message}",
   "Could not check your messages: {message}": "تعذّر التحقق من رسائلك: {message}",
-  "First month so far": "الشهر الأول حتى الآن",
-  "Your first month starts with your first member visit.": "يبدأ شهرك الأول مع أول زيارة أعضاء.",
+  "Could not check your counter phones: {message}": "تعذّر التحقق من هواتف الكاونتر: {message}",
+  "This month so far": "هذا الشهر حتى الآن",
   "Member visits": "زيارات الأعضاء",
   "Customers won back": "زبائن مسترجَعون",
   "Quiet-hour visits": "زيارات ساعات الهدوء",
   "Rewards redeemed": "المكافآت المستبدلة",
   "See all results": "كل النتائج",
-  "Could not load your first month: {message}": "تعذّر تحميل شهرك الأول: {message}",
+  "Could not load this month's results: {message}": "تعذّر تحميل نتائج هذا الشهر: {message}",
 } as const;
 
 type SessionState =
@@ -126,6 +132,7 @@ const MORE_PAGES = [
 const OWNER_PAGES = [
   { path: "/", label: "Home" },
   { path: "/cafe", label: "Café" },
+  { path: "/cafe/print-qr", label: "Café" },
   { path: "/campaigns", label: "Campaigns" },
   { path: "/staff", label: "Staff" },
   { path: "/devices", label: "Devices" },
@@ -355,20 +362,31 @@ function ReviewCount({ queue }: { queue: ReviewQueue }) {
   return <Count count={count} more={more} label={more ? t("{count} or more waiting", { count }) : t("{count} waiting", { count })} />;
 }
 
-/** What needs the owner now: held items and unread messages, each with its count and a link to act. */
+/** A paired phone that has not synced for this long has likely stopped recording (a sync moves its last seen time). */
+const PHONE_QUIET_MS = 2 * 24 * 60 * 60 * 1000;
+const PHONES = { en: { one: "{n} phone", other: "{n} phones" }, ar: { one: "هاتف واحد", two: "هاتفان", few: "{n} هواتف", other: "{n} هاتف" } };
+
+/** What needs the owner now: held items, unread messages and quiet counter phones, each with its count and a link to act. */
 function NeedsYou() {
   const t = useT(AR);
   const api = useApiText();
+  const lang = useLang();
   const { review, inbox } = useContext(AttentionContext);
+  const [devices] = useApiData("/api/devices", devicesSchema);
+  // As Home opened: the page loads again when the owner comes back to it.
+  const [openedAt] = useState(() => Date.now());
   const held = review.status === "loaded" ? review.data.items.length : 0;
   const unread = inbox.status === "loaded" ? inbox.data.unread : 0;
-  const settled = review.status !== "loading" && inbox.status !== "loading";
+  const quiet =
+    devices.status === "loaded" ? devices.data.devices.filter((device) => !device.revoked && openedAt - Date.parse(device.lastSeenAt) >= PHONE_QUIET_MS).length : 0;
+  const settled = review.status !== "loading" && inbox.status !== "loading" && devices.status !== "loading";
   return (
     <section aria-labelledby="needs-you-title" className="card">
       <h3 id="needs-you-title">{t("Needs you")}</h3>
       {review.status === "failed" ? <p className="form-error">{t("Could not check what is held for review: {message}", { message: api(review.message) })}</p> : null}
       {inbox.status === "failed" ? <p className="form-error">{t("Could not check your messages: {message}", { message: api(inbox.message) })}</p> : null}
-      {held > 0 || unread > 0 ? (
+      {devices.status === "failed" ? <p className="form-error">{t("Could not check your counter phones: {message}", { message: api(devices.message) })}</p> : null}
+      {held > 0 || unread > 0 || quiet > 0 ? (
         <ul className="attention">
           {review.status === "loaded" && held > 0 ? (
             <li>
@@ -388,28 +406,35 @@ function NeedsYou() {
               </a>
             </li>
           ) : null}
+          {quiet > 0 ? (
+            <li>
+              <Count count={quiet} label={plural(lang, PHONES, quiet)} />
+              <span className="attention-text">{t("Counter phones not seen for 2 days")}</span>
+              <a className="action-link" href="/devices">
+                {t("Check them")}
+              </a>
+            </li>
+          ) : null}
         </ul>
-      ) : settled && review.status === "loaded" && inbox.status === "loaded" ? (
+      ) : settled && review.status === "loaded" && inbox.status === "loaded" && devices.status === "loaded" ? (
         <p className="hint">{t("Nothing needs you right now.")}</p>
       ) : null}
     </section>
   );
 }
 
-/** The first month's main figures (AC 38), with a link to the full results. */
+/** This month's main figures so far, in café time (AC 38), with a link to the full results. */
 function FirstMonth() {
   const t = useT(AR);
   const api = useApiText();
   const [state, , retry] = useApiData("/api/results", resultsReportSchema);
   return (
     <section aria-labelledby="first-month-title" className="card">
-      <h3 id="first-month-title">{t("First month so far")}</h3>
+      <h3 id="first-month-title">{t("This month so far")}</h3>
       {state.status === "failed" ? (
-        <p className="form-error">{t("Could not load your first month: {message}", { message: api(state.message) })}</p>
+        <p className="form-error">{t("Could not load this month's results: {message}", { message: api(state.message) })}</p>
       ) : state.status === "loading" ? (
         <PageStatus state={state} onRetry={retry} />
-      ) : state.data.window === null ? (
-        <p className="hint">{t("Your first month starts with your first member visit.")}</p>
       ) : (
         <ul className="stats">
           {(
@@ -436,14 +461,45 @@ function FirstMonth() {
   );
 }
 
+/**
+ * Home: the setup wizard until the café's setup is finished or skipped (D1), then the café at a glance, with the setup
+ * checklist until every step is done (D22).
+ */
 function HomePage({ session }: { session: OwnerSession }) {
   const t = useT(AR);
+  const api = useApiText();
+  const [setup, setSetup, retry] = useApiData("/api/cafe", cafeSetupSchema);
+  // Set when the wizard closes on this page: focus goes from its last button to Home's heading.
+  const [wizardClosed, setWizardClosed] = useState(false);
+  const home = useFocusOnChange<HTMLElement>(wizardClosed);
+  if (setup.status === "loading") {
+    return <PageStatus state={setup} onRetry={retry} />;
+  }
+  if (setup.status === "loaded" && setup.data.cafe.setupFinishedAt === null) {
+    return (
+      <SetupWizard
+        setup={setup.data}
+        onSetup={(next) => {
+          setSetup(next);
+          setWizardClosed(next.cafe.setupFinishedAt !== null);
+        }}
+      />
+    );
+  }
   return (
-    <section aria-labelledby="cafe-title" className="home">
-      <h2 id="cafe-title">{session.cafe.name}</h2>
+    <section ref={home} aria-labelledby="cafe-title" className="home">
+      <h2 id="cafe-title" tabIndex={-1} data-focus-target>
+        {session.cafe.name}
+      </h2>
       <p className="page-intro">{t("Signed in as {email}", { email: session.owner.email })}</p>
       <PlanNotice />
       <WalletDeliveryNotice />
+      {setup.status === "failed" ? (
+        <p className="form-error">{t("Could not check your café's setup: {message}", { message: api(setup.message) })}</p>
+      ) : // A server from before the wizard sends no setupFinishedAt: no checklist then.
+      setup.data.cafe.setupFinishedAt === undefined ? null : (
+        <SetupChecklist setup={setup.data} />
+      )}
       <NeedsYou />
       <div className="home-columns">
         <FirstMonth />
@@ -765,6 +821,9 @@ function OwnerArea({ path }: { path: OwnerPath | null }) {
           break;
         case "/cafe":
           content = <CafePage />;
+          break;
+        case "/cafe/print-qr":
+          content = <PrintQrPage cafeName={state.session.cafe.name} />;
           break;
         case "/campaigns":
           content = <CampaignsPage />;

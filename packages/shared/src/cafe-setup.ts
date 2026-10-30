@@ -115,6 +115,10 @@ export const cafeSetupSchema = z.object({
     googleReviewUrl: z.string().nullable().default(null),
     // Set by the operator (AC 39); defaults for a server from before Step 15.
     plan: cafePlanSchema.default("pilot"),
+    // First-run setup (D1, D22): when the wizard was finished or skipped, and when the signup QR was first printed.
+    // A server from before them sends neither: no wizard and no checklist then (undefined), rather than either again.
+    setupFinishedAt: timestamp.nullable().optional(),
+    signupQrPrintedAt: timestamp.nullable().default(null),
   }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),

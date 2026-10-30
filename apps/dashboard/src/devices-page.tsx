@@ -1,5 +1,5 @@
 import { devicesSchema, pairingCodeSchema, type Devices, type PairingCode } from "@cafe-loyalty/shared";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest, isStale, noContent } from "./api.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
@@ -12,6 +12,11 @@ const AR = {
   "QR code to pair {name}": "رمز QR لربط {name}",
   "Pairing code, letter by letter: {letters}": "رمز الربط، حرفاً حرفاً: {letters}",
   "It works once, until {time}. It is not shown again.": "يعمل مرة واحدة، حتى {time}. لن يظهر مجدداً.",
+  "Expires in {left}.": "تنتهي صلاحيته بعد {left}.",
+  "This code has expired. Create a new one to pair {name}.": "انتهت صلاحية هذا الرمز. أنشئ رمزاً جديداً لربط {name}.",
+  "The pairing code for {name} has expired.": "انتهت صلاحية رمز ربط {name}.",
+  "New code": "رمز جديد",
+  "Removed ({count})": "المُزالة ({count})",
   Devices: "الأجهزة",
   Done: "تم",
   "Pair a counter phone": "اربط هاتف كاونتر",
@@ -35,10 +40,52 @@ const AR = {
   "Cancel code": "إلغاء الرمز",
 } as const;
 
-/** The new code, shown once: as text to type and as a QR that opens the counter app's pairing page (AC 17). */
-function NewCode({ code, onDone }: { code: PairingCode; onDone: () => void }) {
+/** The clock, ticking each second until `until` (ms) and then stopping. */
+function useClockUntil(until: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (now >= until) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setNow(Date.now());
+    }, Math.min(1000, until - now));
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [now, until]);
+  return now;
+}
+
+/**
+ * The new code, shown once: as text to type and as a QR that opens the counter app's pairing page (AC 17), with the
+ * time it has left. The countdown is not a live region (it would speak every second): `onExpired` (stable) has the
+ * page say once that it expired, and an expired code offers a new one for the same phone (`onRenewed`).
+ */
+export function NewCode({
+  code,
+  onDone,
+  onExpired,
+  onRenewed,
+}: {
+  code: PairingCode;
+  onDone: () => void;
+  onExpired: (deviceName: string) => void;
+  onRenewed: (code: PairingCode) => void;
+}) {
   const t = useT(AR);
   const lang = useLang();
+  const expiresAt = Date.parse(code.expiresAt);
+  const now = useClockUntil(expiresAt);
+  const expired = now >= expiresAt;
+  const { pending, error, submit } = useSubmit();
+  useEffect(() => {
+    if (expired) {
+      onExpired(code.deviceName);
+    }
+  }, [expired, onExpired, code.deviceName]);
+  const seconds = Math.ceil(Math.max(0, expiresAt - now) / 1000);
+  const left = `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, "0")}`;
   // A 4-module quiet zone, as the QR specification asks, so phone cameras read it reliably.
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(code.pairingUrl, { border: 4 }))}`;
   return (
@@ -46,21 +93,50 @@ function NewCode({ code, onDone }: { code: PairingCode; onDone: () => void }) {
       <h3 id="new-code-title" tabIndex={-1} data-focus-target>
         {t("Pair {name}", { name: code.deviceName })}
       </h3>
-      <p className="hint">{t("On the counter phone, scan this code with the camera, or open the counter app and type the code.")}</p>
-      <img src={qr} alt={t("QR code to pair {name}", { name: code.deviceName })} width={200} height={200} />
-      <p className="code" dir="ltr">
-        <span aria-hidden="true">{code.code}</span>
-        <span className="visually-hidden">{t("Pairing code, letter by letter: {letters}", { letters: Array.from(code.code.replace(/-/g, "")).join(" ") })}</span>
-      </p>
-      <p>{t("It works once, until {time}. It is not shown again.", { time: dateFormat(lang, { timeStyle: "short" }).format(new Date(code.expiresAt)) })}</p>
-      <button type="button" className="primary" onClick={onDone}>
-        {t("Done")}
-      </button>
+      {expired ? (
+        <>
+          <p>{t("This code has expired. Create a new one to pair {name}.", { name: code.deviceName })}</p>
+          <FormError message={error} />
+        </>
+      ) : (
+        <>
+          <p className="hint">{t("On the counter phone, scan this code with the camera, or open the counter app and type the code.")}</p>
+          <img src={qr} alt={t("QR code to pair {name}", { name: code.deviceName })} width={200} height={200} />
+          <p className="code" dir="ltr">
+            <span aria-hidden="true">{code.code}</span>
+            <span className="visually-hidden">{t("Pairing code, letter by letter: {letters}", { letters: Array.from(code.code.replace(/-/g, "")).join(" ") })}</span>
+          </p>
+          <p>{t("It works once, until {time}. It is not shown again.", { time: dateFormat(lang, { timeStyle: "short" }).format(new Date(code.expiresAt)) })}</p>
+          <p>{t("Expires in {left}.", { left })}</p>
+        </>
+      )}
+      {/* Done stays the same button as the code expires, so focus on it stays too. */}
+      <div className="actions">
+        {expired ? (
+          <button
+            type="button"
+            className="primary"
+            aria-disabled={pending || undefined}
+            onClick={() => {
+              void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName: code.deviceName })).then((result) => {
+                if (result.ok) {
+                  onRenewed(result.value);
+                }
+              });
+            }}
+          >
+            {pending ? t("Creating…") : t("New code")}
+          </button>
+        ) : null}
+        <button type="button" className={expired ? undefined : "primary"} onClick={onDone}>
+          {t("Done")}
+        </button>
+      </div>
     </section>
   );
 }
 
-function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void }) {
+export function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void }) {
   const t = useT(AR);
   const [deviceName, setDeviceName] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
@@ -107,13 +183,54 @@ export function DevicesPage() {
   const [newCode, setNewCode] = useState<PairingCode | null>(null);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const { pending, error, submit } = useSubmit();
-  const pairing = useFocusOnChange<HTMLDivElement>(newCode === null);
+  // Focus goes to the new code's heading as one shows (a new one too, as the button pressed goes), and to the form after Done.
+  const pairing = useFocusOnChange<HTMLDivElement>(newCode?.id ?? null);
+  const codeExpired = useCallback((name: string) => {
+    setNotice(() => (say: Translate<typeof AR>) => say("The pairing code for {name} has expired.", { name }));
+  }, []);
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
   }
   const devices: Devices = state.data;
   const timeFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
   const clockFormat = dateFormat(lang, { timeStyle: "short" });
+  const active = devices.devices.filter((device) => !device.revoked);
+  const removed = devices.devices.filter((device) => device.revoked);
+  const deviceRow = (device: Devices["devices"][number]) => (
+    <li key={device.id} className="row">
+      <span className="row-main">
+        <strong>{device.name}</strong>{" "}
+        {device.revoked ? (
+          <span className="badge">
+            <span className="visually-hidden">· </span>
+            {t("removed")}
+          </span>
+        ) : (
+          <span className="row-meta">
+            <span className="visually-hidden">· </span>
+            {t("last seen {time}", { time: timeFormat.format(new Date(device.lastSeenAt)) })}
+          </span>
+        )}
+      </span>
+      {device.revoked ? null : (
+        <ConfirmButton
+          label={t("Remove {name}", { name: device.name })}
+          confirmLabel={t("Yes, remove {name}", { name: device.name })}
+          pending={pending}
+          onConfirm={() => {
+            void submit(() => apiRequest("POST", `/api/devices/${device.id}/revoke`, devicesSchema)).then((result) => {
+              if (result.ok) {
+                setDevices(result.value);
+                setNotice(() => (say: Translate<typeof AR>) => say("{name} is removed. It stops working the next time it connects; anything it had not sent waits under Review.", { name: device.name }));
+              } else if (isStale(result.error)) {
+                setReload((value) => value + 1);
+              }
+            });
+          }}
+        />
+      )}
+    </li>
+  );
 
   return (
     <section aria-labelledby="devices-page-title">
@@ -133,10 +250,16 @@ export function DevicesPage() {
           />
         ) : (
           <NewCode
+            key={newCode.id}
             code={newCode}
             onDone={() => {
               setNewCode(null);
               setReload((value) => value + 1);
+            }}
+            onExpired={codeExpired}
+            onRenewed={(code) => {
+              setNotice(null);
+              setNewCode(code);
             }}
           />
         )}
@@ -145,43 +268,16 @@ export function DevicesPage() {
       {devices.devices.length === 0 ? (
         <p className="empty">{t("No phones paired yet. Pair one above to start recording visits at the counter.")}</p>
       ) : (
-        <ul className="items">
-          {devices.devices.map((device) => (
-            <li key={device.id} className="row">
-              <span className="row-main">
-                <strong>{device.name}</strong>{" "}
-                {device.revoked ? (
-                  <span className="badge">
-                    <span className="visually-hidden">· </span>
-                    {t("removed")}
-                  </span>
-                ) : (
-                  <span className="row-meta">
-                    <span className="visually-hidden">· </span>
-                    {t("last seen {time}", { time: timeFormat.format(new Date(device.lastSeenAt)) })}
-                  </span>
-                )}
-              </span>
-              {device.revoked ? null : (
-                <ConfirmButton
-                  label={t("Remove {name}", { name: device.name })}
-                  confirmLabel={t("Yes, remove {name}", { name: device.name })}
-                  pending={pending}
-                  onConfirm={() => {
-                    void submit(() => apiRequest("POST", `/api/devices/${device.id}/revoke`, devicesSchema)).then((result) => {
-                      if (result.ok) {
-                        setDevices(result.value);
-                        setNotice(() => (say: Translate<typeof AR>) => say("{name} is removed. It stops working the next time it connects; anything it had not sent waits under Review.", { name: device.name }));
-                      } else if (isStale(result.error)) {
-                        setReload((value) => value + 1);
-                      }
-                    });
-                  }}
-                />
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          {active.length === 0 ? null : <ul className="items">{active.map(deviceRow)}</ul>}
+          {/* Removed phones stay listed, out of the way: their queues may still be under Review. */}
+          {removed.length === 0 ? null : (
+            <details>
+              <summary>{t("Removed ({count})", { count: removed.length })}</summary>
+              <ul className="items">{removed.map(deviceRow)}</ul>
+            </details>
+          )}
+        </>
       )}
       {devices.pairingCodes.length === 0 ? null : (
         <>

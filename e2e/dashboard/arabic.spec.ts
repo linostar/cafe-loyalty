@@ -31,10 +31,12 @@ const SIGNED_IN = {
   "GET /api/feedback": reply(200, {
     items: [{ id: "7a1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", message: "كانت القهوة رائعة.", receivedAt: "2026-10-08T11:30:00.000Z", visitedAt: "2026-10-08T09:00:00.000Z", read: false }],
     unread: 1,
-    more: false,
+    nextCursor: null,
   }),
   "GET /api/results": reply(200, {
-    window: { from: "2026-09-20T08:00:00.000Z", to: "2026-10-20T08:00:00.000Z", complete: true },
+    month: "2026-10",
+    current: true,
+    months: ["2026-10", "2026-09"],
     memberVisits: 99999,
     customersWonBack: 9999,
     quietHourVisits: 9999,
