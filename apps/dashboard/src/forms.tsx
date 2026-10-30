@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useId, useRef, useState, type Com
 import { ApiRequestError } from "./api.js";
 import { useApiText, useCommonT, useT } from "./i18n.js";
 import { SessionEndedContext } from "./session.js";
-import { saveStarted, useUnsavedChanges } from "./unsaved-changes.js";
+import { saveStarted, useUnsavedChanges, type UnsavedChanges } from "./unsaved-changes.js";
 
 interface FieldProps {
   /** Text, or text with a visually hidden part that tells repeated fields apart. */
@@ -13,8 +13,8 @@ interface FieldProps {
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;
-  /** Help shown under the field, such as a length rule. */
-  hint?: string;
+  /** Help shown under the field, such as a length rule (an example in another language marked with its `lang`). */
+  hint?: ReactNode;
   error?: string | undefined;
   minLength?: number;
   maxLength?: number;
@@ -35,11 +35,20 @@ const SubmitAttemptContext = createContext(0);
  * A form that checks its own fields: the browser's validation bubbles are off (they come in the browser's language,
  * not the page's, and vanish), so every problem shows as the field's own message, and after each attempt the first
  * control with one gets focus (useFocusWhenInvalid, which every input marked `aria-invalid` in a Form uses). Leaving the
- * page with unsaved changes in it asks first (useUnsavedChanges).
+ * page with unsaved changes in it asks first (useUnsavedChanges): its own, or `unsaved` when the caller needs to read
+ * or mark them (a button that changes the form, a page that replaces it).
  */
-export function Form({ onSubmit, onInput, onReset, children, ...props }: Omit<ComponentProps<"form">, "noValidate">) {
+export function Form({
+  onSubmit,
+  onInput,
+  onReset,
+  unsaved: given,
+  children,
+  ...props
+}: Omit<ComponentProps<"form">, "noValidate"> & { unsaved?: UnsavedChanges }) {
   const [attempt, setAttempt] = useState(0);
-  const unsaved = useUnsavedChanges();
+  const own = useUnsavedChanges();
+  const unsaved = given ?? own;
   return (
     <form
       {...props}
@@ -49,8 +58,11 @@ export function Form({ onSubmit, onInput, onReset, children, ...props }: Omit<Co
         onInput?.(event);
       }}
       onReset={(event) => {
-        unsaved.reset();
         onReset?.(event);
+        // A reset the caller cancelled keeps what was typed, and its warning.
+        if (!event.defaultPrevented) {
+          unsaved.reset();
+        }
       }}
       onSubmit={(event) => {
         setAttempt((count) => count + 1);

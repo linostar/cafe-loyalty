@@ -298,6 +298,9 @@ test("starts an ended campaign again from its settings, and picks days with a pr
   await page.goto("/campaigns");
   const form = page.getByRole("form", { name: "New campaign" });
   await expect(form.getByLabel("Name (Arabic)")).toHaveAccessibleDescription("Such as عصر هادئ.");
+  // The example is marked as Arabic inside the English hint, so it is spoken and laid out as Arabic.
+  await expect(form.getByText("عصر هادئ", { exact: true })).toHaveAttribute("lang", "ar");
+  await expect(form.getByText("عصر هادئ", { exact: true })).toHaveAttribute("dir", "rtl");
   // A short visible label, named after the campaign.
   const again = page.getByRole("button", { name: "Start again Quiet afternoons" });
   await expect(again).toHaveText("Start again");

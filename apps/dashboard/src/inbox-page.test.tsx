@@ -64,4 +64,23 @@ describe("InboxPage", () => {
     expect(screen.getAllByText(/^Fake message/).map((element) => element.textContent)).toEqual(["Fake message 4", "Fake message 3", "Fake message 2", "Fake message 1"]);
     expect(screen.queryByRole("button", { name: "Show older messages" })).not.toBeInTheDocument();
   });
+
+  it("shows a message once when the older page repeats one already shown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) =>
+        Promise.resolve(
+          path.includes("cursor=")
+            ? respond({ items: [message(3, false), message(2, false)], unread: 2, nextCursor: null })
+            : respond({ items: [message(4, true), message(3, false)], unread: 2, nextCursor: "fake-cursor" }),
+        ),
+      ),
+    );
+    render(<InboxPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show older messages" }));
+    await waitFor(() => {
+      expect(itemOf("Fake message 2")).toHaveFocus();
+    });
+    expect(screen.getAllByText(/^Fake message/).map((element) => element.textContent)).toEqual(["Fake message 4", "Fake message 3", "Fake message 2"]);
+  });
 });

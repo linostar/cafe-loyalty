@@ -46,10 +46,11 @@ test("lists held events a page at a time and accepts one in a tap, sent after 10
   expect(await shownText(first)).toBe("Accept");
   expect(await shownText(page.getByRole("button", { name: /^Discard Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ }))).toBe("Discard");
   await first.click();
-  const undo = page.getByRole("button", { name: /^Undo accepting Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ });
+  // Undo and its 10 seconds come first in its name, and the status does not repeat the item (D8).
+  const undo = page.getByRole("button", { name: /^Undo within 10 seconds: accepting Visit by Rami on Front counter at 8 Oct 2026, 01:15:00$/ });
   await expect(undo).toBeFocused();
   expect(await shownText(undo)).toBe("Undo");
-  await expect(page.getByRole("status")).toHaveText("Visit by Rami on Front counter at 8 Oct 2026, 01:15:00 will be accepted in 10 seconds. Undo stops it.");
+  await expect(page.getByRole("status")).toHaveText("");
   await page.clock.fastForward(10_000);
   await expect(page.getByRole("status")).toHaveText("Accepted: Visit by Rami on Front counter at 8 Oct 2026, 01:15:00.");
   // Only the decided item goes: the pages already loaded stay.
@@ -80,7 +81,7 @@ test("shows what a held visit holds, and Undo takes an accept back without sendi
   await page.getByRole("button", { name: /^Accept Visit by Rami/ }).click();
   await expect(page.getByText("Accepted in 10 seconds unless you undo it.")).toBeVisible();
   await page.clock.fastForward(9_000);
-  await page.getByRole("button", { name: /^Undo accepting Visit by Rami/ }).click();
+  await page.getByRole("button", { name: /^Undo within 10 seconds: accepting Visit by Rami/ }).click();
   await expect(page.getByRole("button", { name: /^Accept Visit by Rami/ })).toBeFocused();
   await expect(page.getByRole("status")).toHaveText(/^Not accepted: Visit by Rami/);
   await page.clock.fastForward(20_000);

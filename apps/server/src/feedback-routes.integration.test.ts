@@ -76,6 +76,28 @@ describe("the owner's inbox (AC 37)", () => {
     expect((await app.inject({ method: "POST", url: `/api/feedback/${oldest}/read`, headers: withCookie(other.session), payload: {} })).statusCode).toBe(404);
   });
 
+  it("pages messages received at the same moment by id, each exactly once across the page boundary", async () => {
+    const { app } = await harness();
+    const owner = await signUp(app);
+    const total = FEEDBACK_PAGE_SIZE + 2;
+    await messages(owner, total);
+    // Every message at one instant: only the id orders them.
+    await context.admin.query("UPDATE app.feedback SET created_at = '2026-10-01T10:00:00Z' WHERE cafe_id = $1", [owner.cafeId]);
+    const inbox = async (query = "") => {
+      const response = await app.inject({ method: "GET", url: `/api/feedback${query}`, headers: withCookie(owner.session) });
+      expect(response.statusCode).toBe(200);
+      return response.json<FeedbackInbox>();
+    };
+    const first = await inbox();
+    expect(first.items).toHaveLength(FEEDBACK_PAGE_SIZE);
+    const second = await inbox(`?cursor=${encodeURIComponent(first.nextCursor ?? "")}`);
+    expect(second.nextCursor).toBeNull();
+    const ids = [...first.items, ...second.items].map((item) => item.id);
+    expect(ids).toHaveLength(total);
+    expect(new Set(ids).size).toBe(total);
+    expect(ids).toEqual([...ids].sort().reverse());
+  });
+
   it("refuses a cursor that is not one, and anyone but the owner", async () => {
     const { app } = await harness();
     const owner = await signUp(app);

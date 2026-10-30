@@ -601,9 +601,13 @@ function SignupQr() {
   );
 }
 
-/** The Café page's sections, in order, as the in-page list links to them. */
+/**
+ * The Café page's sections, in order, as the in-page list links to them. The café's name is "Name", not "Café": the
+ * page's own region and heading are "Café", and a section of the same name would repeat it (nested landmarks and the
+ * list's first link).
+ */
 const SECTIONS = [
-  ["cafe", "Café"],
+  ["cafe", "Name"],
   ["program", "Program"],
   ["menu", "Menu"],
   ["offers", "Offers and welcome-back"],
@@ -651,7 +655,7 @@ export function CafePage() {
         </ul>
       </nav>
       {/* One section per part of the café, each card full width under the one before (never side by side). */}
-      <SettingsSection id="cafe" title="Café">
+      <SettingsSection id="cafe" title="Name">
         <CafeNameForm name={setup.cafe.name} save={save} />
       </SettingsSection>
       <SettingsSection id="program" title="Program">

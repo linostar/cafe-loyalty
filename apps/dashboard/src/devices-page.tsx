@@ -1,5 +1,5 @@
 import { devicesSchema, pairingCodeSchema, type Devices, type PairingCode } from "@cafe-loyalty/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest, isStale, noContent } from "./api.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
@@ -28,6 +28,7 @@ const AR = {
     "الهواتف والأجهزة اللوحية التي يسجّل عليها الباريستا الزيارات. اربط جهازاً جديداً برمز لمرة واحدة، وأزل أي جهاز مفقود.",
   "Counter phones": "هواتف الكاونتر",
   "No phones paired yet. Pair one above to start recording visits at the counter.": "لا هواتف مربوطة بعد. اربط هاتفاً أعلاه لتبدأ بتسجيل الزيارات على الكاونتر.",
+  "Every phone is removed: none can record visits. Pair one above to start again.": "أُزيلت كل الهواتف: لا يمكن لأي منها تسجيل الزيارات. اربط هاتفاً أعلاه لتبدأ من جديد.",
   removed: "أُزيل",
   "last seen {time}": "آخر ظهور {time}",
   "Remove {name}": "إزالة {name}",
@@ -79,6 +80,8 @@ export function NewCode({
   const now = useClockUntil(expiresAt);
   const expired = now >= expiresAt;
   const { pending, error, submit } = useSubmit();
+  /** Set by Done: a renewal answered after it is not shown, so a dismissed code never comes back. */
+  const dismissed = useRef(false);
   useEffect(() => {
     if (expired) {
       onExpired(code.deviceName);
@@ -119,7 +122,7 @@ export function NewCode({
             aria-disabled={pending || undefined}
             onClick={() => {
               void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName: code.deviceName })).then((result) => {
-                if (result.ok) {
+                if (result.ok && !dismissed.current) {
                   onRenewed(result.value);
                 }
               });
@@ -128,7 +131,14 @@ export function NewCode({
             {pending ? t("Creating…") : t("New code")}
           </button>
         ) : null}
-        <button type="button" className={expired ? undefined : "primary"} onClick={onDone}>
+        <button
+          type="button"
+          className={expired ? undefined : "primary"}
+          onClick={() => {
+            dismissed.current = true;
+            onDone();
+          }}
+        >
           {t("Done")}
         </button>
       </div>
@@ -269,7 +279,11 @@ export function DevicesPage() {
         <p className="empty">{t("No phones paired yet. Pair one above to start recording visits at the counter.")}</p>
       ) : (
         <>
-          {active.length === 0 ? null : <ul className="items">{active.map(deviceRow)}</ul>}
+          {active.length === 0 ? (
+            <p className="empty">{t("Every phone is removed: none can record visits. Pair one above to start again.")}</p>
+          ) : (
+            <ul className="items">{active.map(deviceRow)}</ul>
+          )}
           {/* Removed phones stay listed, out of the way: their queues may still be under Review. */}
           {removed.length === 0 ? null : (
             <details>

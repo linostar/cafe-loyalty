@@ -14,14 +14,38 @@ const ITEM = {
   receivedAt: "2026-10-08T12:00:00.000Z",
 };
 
+const SECOND = { ...ITEM, id: "5e1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", staffName: "Lina" };
+const THIRD = { ...ITEM, id: "5e1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f03", staffName: "Omar" };
+
 const respond = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
-function serve() {
-  const fetch = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>((path) =>
-    Promise.resolve(path === "/api/review-queue" ? respond({ items: [ITEM], nextCursor: null }) : respond({ outcome: "OK" })),
-  );
+/**
+ * Serves the queue (`items`, with a next page of THIRD when `more`); a request whose path ends with `slow` waits
+ * until the returned `release` is called. Returns the accepts and discards sent, and `release`.
+ */
+function serve({ items = [ITEM], more = false, slow }: { items?: unknown[]; more?: boolean; slow?: string } = {}) {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetch = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(async (path) => {
+    if (slow !== undefined && path.endsWith(slow)) {
+      await held;
+    }
+    if (path === "/api/review-queue") {
+      return respond({ items, nextCursor: more ? "next" : null });
+    }
+    return path.startsWith("/api/review-queue?cursor=") ? respond({ items: [THIRD], nextCursor: null }) : respond({ outcome: "OK" });
+  });
   vi.stubGlobal("fetch", fetch);
-  return () => fetch.mock.calls.filter(([path]) => path.endsWith("/accept"));
+  const sent = () => fetch.mock.calls.filter(([path]) => path.endsWith("/accept") || path.endsWith("/discard"));
+  const accepts = () => fetch.mock.calls.filter(([path]) => path.endsWith("/accept"));
+  return Object.assign(accepts, {
+    sent,
+    release: () => {
+      release();
+    },
+  });
 }
 
 afterEach(() => {
@@ -41,9 +65,10 @@ describe("Review", () => {
     const accepts = serve();
     render(<ReviewPage />);
     fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
-    const undo = screen.getByRole("button", { name: /^Undo accepting Visit by Rami/ });
+    // Focus says Undo and the 10 seconds first; the status does not repeat the item (D8).
+    const undo = screen.getByRole("button", { name: /^Undo within 10 seconds: accepting Visit by Rami/ });
     expect(undo).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent(/will be accepted in 10 seconds\. Undo stops it\.$/);
+    expect(screen.getByRole("status")).toHaveTextContent(/^$/);
     expect(screen.getByText("Accepted in 10 seconds unless you undo it.")).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(ACCEPT_DELAY_MS - 100));
     fireEvent.click(undo);
@@ -89,5 +114,93 @@ describe("Review", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
     unmount();
     expect(accepts()).toHaveLength(1);
+  });
+
+  it("sends two accepts whose requests overlap, one after the other", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const accepts = serve({ items: [ITEM, SECOND], slow: `${ITEM.id}/accept` });
+    render(<ReviewPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Accept Visit by Lina/ }));
+    // Rami's accept is on its way when Lina's wait ends: hers is sent next, not dropped.
+    await act(() => vi.advanceTimersByTimeAsync(ACCEPT_DELAY_MS + 100));
+    expect(accepts().map(([path]) => path)).toEqual([`/api/review-queue/${ITEM.id}/accept`]);
+    act(accepts.release);
+    await waitFor(() => {
+      expect(accepts().map(([path]) => path)).toEqual([`/api/review-queue/${ITEM.id}/accept`, `/api/review-queue/${SECOND.id}/accept`]);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /^Accept Visit by Lina/ })).toBeNull();
+    });
+  });
+
+  it("sends an accept whose wait ends while a Discard is on its way", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const accepts = serve({ items: [ITEM, SECOND], slow: "/discard" });
+    render(<ReviewPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Discard Visit by Lina/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Yes, discard Visit by Lina/ }));
+    await act(() => vi.advanceTimersByTimeAsync(ACCEPT_DELAY_MS + 100));
+    expect(accepts.sent().map(([path]) => path)).toEqual([`/api/review-queue/${SECOND.id}/discard`]);
+    act(accepts.release);
+    await waitFor(() => {
+      expect(accepts.sent().map(([path]) => path)).toEqual([`/api/review-queue/${SECOND.id}/discard`, `/api/review-queue/${ITEM.id}/accept`]);
+    });
+  });
+
+  it("sends an accept whose wait ends while Show more is loading", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const accepts = serve({ more: true, slow: "?cursor=next" });
+    render(<ReviewPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await act(() => vi.advanceTimersByTimeAsync(ACCEPT_DELAY_MS + 100));
+    expect(accepts()).toEqual([]);
+    act(accepts.release);
+    expect(await screen.findByRole("button", { name: /^Accept Visit by Omar/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(accepts().map(([path]) => path)).toEqual([`/api/review-queue/${ITEM.id}/accept`]);
+    });
+  });
+
+  it("sends an accept queued behind another request when the page is left, and never twice", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const accepts = serve({ items: [ITEM, SECOND], slow: `${ITEM.id}/accept` });
+    render(<ReviewPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Accept Visit by Lina/ }));
+    await act(() => vi.advanceTimersByTimeAsync(ACCEPT_DELAY_MS + 100));
+    // Rami's is on its way, sent with keepalive so the browser finishes it; Lina's waits behind it.
+    expect(accepts()).toEqual([[`/api/review-queue/${ITEM.id}/accept`, expect.objectContaining({ keepalive: true })]]);
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    expect(accepts().map(([path]) => path)).toEqual([`/api/review-queue/${ITEM.id}/accept`, `/api/review-queue/${SECOND.id}/accept`]);
+    // When Rami's answer comes, Lina's queued request finds hers sent and sends nothing more.
+    act(accepts.release);
+    await act(() => vi.advanceTimersByTimeAsync(ACCEPT_DELAY_MS));
+    expect(accepts()).toHaveLength(2);
+  });
+
+  it("loads the queue again when the page comes back from the back-forward cache", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const accepts = serve({ items: [ITEM, SECOND] });
+    const fetch = vi.mocked(globalThis.fetch);
+    render(<ReviewPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Accept Visit by Rami/ }));
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    expect(accepts()).toHaveLength(1);
+    // Rami's visit was accepted as the page left: the queue served on return no longer has it.
+    fetch.mockImplementation((path) => Promise.resolve(path === "/api/review-queue" ? respond({ items: [SECOND], nextCursor: null }) : respond({ outcome: "OK" })));
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /^Accept Visit by Rami/ })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: /^Accept Visit by Lina/ })).toBeInTheDocument();
   });
 });

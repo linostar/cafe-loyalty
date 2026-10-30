@@ -381,7 +381,7 @@ test.describe("Needs you: quiet counter phones (D15)", () => {
     await mockApi(page, {
       ...SIGNED_IN,
       "GET /api/feedback": reply(200, { items: [], unread: 0, nextCursor: null }),
-      "GET /api/devices": reply(200, { devices: [phone("Front counter", 3, false), phone("Back bar", 1, false), phone("Old phone", 9, true)], pairingCodes: [] }),
+      "GET /api/devices": reply(200, { devices: [phone("Front counter", 3, false), phone("Back bar", 1, false), phone("Old phone", 9, true), phone("Spare phone", 10, true)], pairingCodes: [] }),
     });
     await page.goto("/");
     const needs = page.getByRole("region", { name: "Needs you" });

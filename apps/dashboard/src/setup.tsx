@@ -1,11 +1,11 @@
-import { cafeSetupSchema, devicesSchema, joinLinkSchema, staffListSchema, type CafeSetup, type Devices, type PairingCode, type StaffMember } from "@cafe-loyalty/shared";
+import { cafeSetupSchema, joinLinkSchema, staffListSchema, type CafeSetup, type Devices, type PairingCode, type StaffMember } from "@cafe-loyalty/shared";
 import { useEffect, useRef, useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { OrderTypeForm, ProgramForm } from "./cafe-page.js";
 import { NewCode, PairForm } from "./devices-page.js";
 import { FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
-import { useApiText, useT } from "./i18n.js";
+import { useApiText, useCommonT, useT } from "./i18n.js";
 import { PageStatus, useApiData, type ApiData } from "./session.js";
 import { AddStaffForm } from "./staff-page.js";
 import "./setup.css";
@@ -55,6 +55,8 @@ const AR = {
   "The pairing code for {name} has expired.": "انتهت صلاحية رمز ربط {name}.",
   "Print the QR": "اطبع الرمز",
   "Could not check your setup: {message}": "تعذّر التحقق من تجهيز مقهاك: {message}",
+  "Could not check whether this step is done: {message}": "تعذّر التحقق مما إذا كانت هذه الخطوة منجزة: {message}",
+  "Could not record this print for the setup checklist: {message}": "تعذّر تسجيل هذه الطباعة في قائمة التجهيز: {message}",
 } as const;
 
 /** The five setup steps (D1), in the wizard's order; Home's checklist lists the same (D22), each with where to do it. */
@@ -90,7 +92,8 @@ export type SetupStep = (typeof STEPS)[number]["key"];
 export function setupProgress(setup: CafeSetup, staff: readonly StaffMember[], devices: Devices["devices"]): Record<SetupStep, boolean> {
   return {
     program: setup.program !== null,
-    orderType: setup.orderTypes.some((orderType) => orderType.active),
+    // One that earns stamps: a type on sale with none (a pastry) does not let baristas give any.
+    orderType: setup.orderTypes.some((orderType) => orderType.active && orderType.stampsEarned > 0),
     barista: staff.some((member) => !member.revoked),
     phone: devices.some((device) => !device.revoked),
     printed: setup.cafe.signupQrPrintedAt !== null,
@@ -102,11 +105,14 @@ const loaded = <T,>(state: ApiData<T>): T | null => (state.status === "loaded" ?
 /**
  * The signup QR as printed (D6): the café's name, the code at about 8 cm on paper and how to use it in Arabic and
  * English, with a Print button; print CSS (setup.css) leaves only the sheet on paper. Printing records the first
- * print (`beforeprint` also catches the browser's own Print command), and `onRecorded` gets the café's setup.
+ * print (`beforeprint` also catches the browser's own Print command), and `onRecorded` gets the café's setup; a
+ * failed record is said under the button (an ended session goes back to sign-in).
  */
 export function PrintQr({ cafeName, onRecorded }: { cafeName: string; onRecorded?: (setup: CafeSetup) => void }) {
   const t = useT(AR);
+  const api = useApiText();
   const [state, , retry] = useApiData("/api/cafe/join", joinLinkSchema);
+  const { error, submit } = useSubmit();
   const recorded = useRef(false);
   const ready = state.status === "loaded";
   useEffect(() => {
@@ -119,15 +125,19 @@ export function PrintQr({ cafeName, onRecorded }: { cafeName: string; onRecorded
       }
       recorded.current = true;
       // Printing goes ahead whatever the answer; a failed record is tried again on the next print.
-      void apiRequest("POST", "/api/cafe/join/printed", cafeSetupSchema).then(onRecorded, () => {
-        recorded.current = false;
+      void submit(() => apiRequest("POST", "/api/cafe/join/printed", cafeSetupSchema)).then((result) => {
+        if (result.ok) {
+          onRecorded?.(result.value);
+        } else {
+          recorded.current = false;
+        }
       });
     };
     window.addEventListener("beforeprint", record);
     return () => {
       window.removeEventListener("beforeprint", record);
     };
-  }, [ready, onRecorded]);
+  }, [ready, onRecorded, submit]);
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
   }
@@ -155,6 +165,11 @@ export function PrintQr({ cafeName, onRecorded }: { cafeName: string; onRecorded
           {t("Print")}
         </button>
       </p>
+      {error === null ? null : (
+        <p role="alert" className="form-error">
+          {t("Could not record this print for the setup checklist: {message}", { message: api(error) })}
+        </p>
+      )}
     </>
   );
 }
@@ -179,14 +194,27 @@ export function PrintQrPage({ cafeName }: { cafeName: string }) {
 /**
  * The first-run wizard (D1), shown on Home until the setup is finished: one step at a time, each done in place with the
  * page's own form or skipped. Finishing, or skipping the rest, records it on the server (`onSetup` then gets a setup
- * with `setupFinishedAt`), so no device or co-owner sees the wizard again. Focus goes to each step's heading.
+ * with `setupFinishedAt`), so no device or co-owner sees the wizard again. Focus goes to each step's heading. The
+ * counter phones are Home's own load (`devices`): `reloadDevices` loads them again quietly, `retryDevices` after a failure.
  */
-export function SetupWizard({ setup, onSetup }: { setup: CafeSetup; onSetup: (setup: CafeSetup) => void }) {
+export function SetupWizard({
+  setup,
+  onSetup,
+  devices,
+  reloadDevices,
+  retryDevices,
+}: {
+  setup: CafeSetup;
+  onSetup: (setup: CafeSetup) => void;
+  devices: ApiData<Devices>;
+  reloadDevices: () => void;
+  retryDevices: () => void;
+}) {
   const t = useT(AR);
+  const common = useCommonT();
+  const api = useApiText();
   const [index, setIndex] = useState(0);
-  const [staff, setStaff] = useApiData("/api/staff", staffListSchema);
-  const [devicesKey, setDevicesKey] = useState(0);
-  const [devices] = useApiData("/api/devices", devicesSchema, devicesKey);
+  const [staff, setStaff, retryStaff] = useApiData("/api/staff", staffListSchema);
   const [newCode, setNewCode] = useState<PairingCode | null>(null);
   /** The phone whose code ran out while shown, said once (the code's countdown is not announced). */
   const [expired, setExpired] = useState<string | null>(null);
@@ -197,6 +225,8 @@ export function SetupWizard({ setup, onSetup }: { setup: CafeSetup; onSetup: (se
   const step = STEPS[index] ?? STEPS[0];
   const last = index === STEPS.length - 1;
   const done = setupProgress(setup, loaded(staff)?.staff ?? [], loaded(devices)?.devices ?? [])[step.key];
+  // A list that did not load leaves its step looking not done: said, with Try again, rather than shown as empty.
+  const unchecked = step.key === "barista" && staff.status === "failed" ? { ...staff, retry: retryStaff } : step.key === "phone" && devices.status === "failed" ? { ...devices, retry: retryDevices } : null;
 
   const save = async (method: "PATCH" | "PUT" | "POST", path: string, body: unknown) => {
     onSetup(await apiRequest(method, path, cafeSetupSchema, body));
@@ -225,6 +255,16 @@ export function SetupWizard({ setup, onSetup }: { setup: CafeSetup; onSetup: (se
               <span className="badge badge-success">{t("Done")}</span>
             </p>
           ) : null}
+          {unchecked === null ? null : (
+            <>
+              <p role="alert" className="form-error">
+                {t("Could not check whether this step is done: {message}", { message: api(unchecked.message) })}
+              </p>
+              <button type="button" onClick={unchecked.retry}>
+                {common("Try again")}
+              </button>
+            </>
+          )}
         </div>
         {step.key === "program" ? (
           <ProgramForm program={setup.program} save={save} />
@@ -250,7 +290,7 @@ export function SetupWizard({ setup, onSetup }: { setup: CafeSetup; onSetup: (se
                   setNewCode(null);
                   setExpired(null);
                   // Paired on the phone meanwhile, perhaps: the list says.
-                  setDevicesKey((key) => key + 1);
+                  reloadDevices();
                 }}
                 onExpired={setExpired}
                 onRenewed={(code) => {
@@ -304,16 +344,34 @@ export function SetupWizard({ setup, onSetup }: { setup: CafeSetup; onSetup: (se
 
 /**
  * Home's setup checklist (D22), once the wizard is behind: the five steps, each done or with a link to do it, from the
- * café's data. Hidden once every step is done, and while the lists it needs are loading.
+ * café's data. Hidden once every step is done, and while the lists it needs are loading. `devices` is Home's own load,
+ * shared with Needs you (`retryDevices` loads it again); a list that failed offers Try again.
  */
-export function SetupChecklist({ setup }: { setup: CafeSetup }) {
+export function SetupChecklist({ setup, devices, retryDevices }: { setup: CafeSetup; devices: ApiData<Devices>; retryDevices: () => void }) {
   const t = useT(AR);
+  const common = useCommonT();
   const api = useApiText();
-  const [staff] = useApiData("/api/staff", staffListSchema);
-  const [devices] = useApiData("/api/devices", devicesSchema);
+  const [staff, , retryStaff] = useApiData("/api/staff", staffListSchema);
   const failed = staff.status === "failed" ? staff : devices.status === "failed" ? devices : null;
   if (failed !== null) {
-    return <p className="form-error">{t("Could not check your setup: {message}", { message: api(failed.message) })}</p>;
+    return (
+      <>
+        <p className="form-error">{t("Could not check your setup: {message}", { message: api(failed.message) })}</p>
+        <button
+          type="button"
+          onClick={() => {
+            if (staff.status === "failed") {
+              retryStaff();
+            }
+            if (devices.status === "failed") {
+              retryDevices();
+            }
+          }}
+        >
+          {common("Try again")}
+        </button>
+      </>
+    );
   }
   const staffList = loaded(staff);
   const deviceList = loaded(devices);

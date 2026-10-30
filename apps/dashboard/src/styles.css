@@ -132,8 +132,8 @@
   background: var(--color-surface-sunken);
 }
 
-/* The current page (or More, when it holds the current page): underlined and bold as well as tinted, not colour alone. */
-.sidenav a[aria-current="page"],
+/* The current page, or its page for a sub-page (or More, when it holds it): underlined and bold as well as tinted, not colour alone. */
+.sidenav a[aria-current],
 .nav-more.is-current {
   background: var(--color-accent-soft);
   color: var(--color-accent-strong);

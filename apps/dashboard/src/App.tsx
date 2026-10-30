@@ -12,6 +12,7 @@ import {
   visitHoursSchema,
   walletDeliveriesSchema,
   type OperatorSession,
+  type Devices,
   type OwnerSession,
   type ReviewQueue,
   type VisitHours as VisitHoursData,
@@ -25,14 +26,14 @@ import { CafePage } from "./cafe-page.js";
 import { CampaignsPage } from "./campaigns-page.js";
 import { DevicesPage } from "./devices-page.js";
 import { useFocusOnChange } from "./forms.js";
-import { LangProvider, LanguageSwitch, dateFormat, useApiText, useLang, useT } from "./i18n.js";
+import { LangProvider, LanguageSwitch, dateFormat, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { InboxPage } from "./inbox-page.js";
 import { ResultsPage } from "./results-page.js";
 import { ReviewPage } from "./review-page.js";
 import { PrintQrPage, SetupChecklist, SetupWizard } from "./setup.js";
 import { ProfileMenu } from "./profile-menu.js";
 import { ChangePasswordForm } from "./password-form.js";
-import { AttentionContext, PageStatus, SessionEndedContext, useApiData } from "./session.js";
+import { AttentionContext, PageStatus, SessionEndedContext, useApiData, type ApiData } from "./session.js";
 import { StaffPage } from "./staff-page.js";
 
 const AR = {
@@ -366,13 +367,15 @@ function ReviewCount({ queue }: { queue: ReviewQueue }) {
 const PHONE_QUIET_MS = 2 * 24 * 60 * 60 * 1000;
 const PHONES = { en: { one: "{n} phone", other: "{n} phones" }, ar: { one: "هاتف واحد", two: "هاتفان", few: "{n} هواتف", other: "{n} هاتف" } };
 
-/** What needs the owner now: held items, unread messages and quiet counter phones, each with its count and a link to act. */
-function NeedsYou() {
+/**
+ * What needs the owner now: held items, unread messages and quiet counter phones, each with its count and a link to act.
+ * `devices` is Home's own load, shared with the setup checklist.
+ */
+function NeedsYou({ devices }: { devices: ApiData<Devices> }) {
   const t = useT(AR);
   const api = useApiText();
   const lang = useLang();
   const { review, inbox } = useContext(AttentionContext);
-  const [devices] = useApiData("/api/devices", devicesSchema);
   // As Home opened: the page loads again when the owner comes back to it.
   const [openedAt] = useState(() => Date.now());
   const held = review.status === "loaded" ? review.data.items.length : 0;
@@ -467,8 +470,12 @@ function FirstMonth() {
  */
 function HomePage({ session }: { session: OwnerSession }) {
   const t = useT(AR);
+  const common = useCommonT();
   const api = useApiText();
   const [setup, setSetup, retry] = useApiData("/api/cafe", cafeSetupSchema);
+  // Loaded once, for the wizard, or the checklist and Needs you.
+  const [devicesKey, setDevicesKey] = useState(0);
+  const [devices, , retryDevices] = useApiData("/api/devices", devicesSchema, devicesKey);
   // Set when the wizard closes on this page: focus goes from its last button to Home's heading.
   const [wizardClosed, setWizardClosed] = useState(false);
   const home = useFocusOnChange<HTMLElement>(wizardClosed);
@@ -479,6 +486,11 @@ function HomePage({ session }: { session: OwnerSession }) {
     return (
       <SetupWizard
         setup={setup.data}
+        devices={devices}
+        reloadDevices={() => {
+          setDevicesKey((key) => key + 1);
+        }}
+        retryDevices={retryDevices}
         onSetup={(next) => {
           setSetup(next);
           setWizardClosed(next.cafe.setupFinishedAt !== null);
@@ -495,12 +507,18 @@ function HomePage({ session }: { session: OwnerSession }) {
       <PlanNotice />
       <WalletDeliveryNotice />
       {setup.status === "failed" ? (
-        <p className="form-error">{t("Could not check your café's setup: {message}", { message: api(setup.message) })}</p>
+        <>
+          <p className="form-error">{t("Could not check your café's setup: {message}", { message: api(setup.message) })}</p>
+          {/* Loads it again in place: a new café's wizard comes back without reloading the page. */}
+          <button type="button" className="primary" onClick={retry}>
+            {common("Try again")}
+          </button>
+        </>
       ) : // A server from before the wizard sends no setupFinishedAt: no checklist then.
       setup.data.cafe.setupFinishedAt === undefined ? null : (
-        <SetupChecklist setup={setup.data} />
+        <SetupChecklist setup={setup.data} devices={devices} retryDevices={retryDevices} />
       )}
-      <NeedsYou />
+      <NeedsYou devices={devices} />
       <div className="home-columns">
         <FirstMonth />
         <VisitHours />
@@ -524,8 +542,10 @@ function AccountPage({ session, onSignedOut }: { session: OwnerSession; onSigned
   );
 }
 
-function OwnerNav({ path }: { path: OwnerPath | null }) {
+function OwnerNav({ path: shownPath }: { path: OwnerPath | null }) {
   const t = useT(AR);
+  // A sub-page is shown as its page's (the signup QR's sheet as the Café page's), so a link is always current.
+  const path = shownPath === "/cafe/print-qr" ? "/cafe" : shownPath;
   const { review, inbox } = useContext(AttentionContext);
   const [open, setOpen] = useState(false);
   const moreId = useId();
@@ -536,7 +556,7 @@ review.status === "loaded" && review.data.items.length > 0 ? <ReviewCount queue=
   };
   const link = (page: { path: OwnerPath; label: (typeof OWNER_PAGES)[number]["label"] }) => (
     <li key={page.path}>
-      <a href={page.path} aria-current={page.path === path ? "page" : undefined}>
+      <a href={page.path} aria-current={page.path === shownPath ? "page" : page.path === path ? "true" : undefined}>
         <span>{t(page.label)}</span>
         {counts[page.path]}
       </a>

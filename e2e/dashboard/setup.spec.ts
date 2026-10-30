@@ -381,6 +381,8 @@ function setupServer(start: { program: typeof PROGRAM | null; setupFinishedAt: s
         offers: { winBack: { visits: 0, costCents: 0, revenueCents: 0 }, quietHour: { visits: 0, costCents: 0, revenueCents: 0 } },
       }),
       "PUT /api/cafe/program": async (route: Route) => {
+        // What the wizard's form sent, as typed.
+        expect(json(route)).toEqual(PROGRAM);
         setup = { ...setup, program: PROGRAM };
         await route.fulfill({ json: setup });
       },
@@ -493,14 +495,28 @@ test.describe("setup wizard (D1)", () => {
 test.describe("setup checklist (D22)", () => {
   test("is gone once every step is done", async ({ page }) => {
     const done = "2026-10-19T09:00:00.000Z";
+    // The phones are answered only after the staff: Needs you's "Nothing needs you" (which waits for the phones) then
+    // shows only once the checklist has both lists.
+    let staffServed: () => void = () => undefined;
+    const staff = new Promise<void>((resolve) => {
+      staffServed = resolve;
+    });
     await mockApi(page, {
       ...setupServer({ program: PROGRAM, setupFinishedAt: done }).routes,
       "GET /api/cafe": reply(200, { cafe: { ...CAFE, setupFinishedAt: done, signupQrPrintedAt: done }, program: PROGRAM, orderTypes: [ESPRESSO] }),
-      "GET /api/staff": reply(200, { staff: [RAMI] }),
-      "GET /api/devices": reply(200, { devices: [{ id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f43", name: "Front counter", pairedAt: done, lastSeenAt: done, revoked: false }], pairingCodes: [] }),
+      "GET /api/staff": async (route) => {
+        await route.fulfill({ json: { staff: [RAMI] } });
+        staffServed();
+      },
+      "GET /api/devices": async (route) => {
+        await staff;
+        await route.fulfill({
+          json: { devices: [{ id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f43", name: "Front counter", pairedAt: done, lastSeenAt: new Date().toISOString(), revoked: false }], pairingCodes: [] },
+        });
+      },
     });
     await page.goto("/");
-    await expect(page.getByRole("region", { name: "Needs you" })).toBeVisible();
+    await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
     await expect(page.getByRole("region", { name: "Finish setting up" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Set up your café" })).toHaveCount(0);
   });

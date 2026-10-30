@@ -155,19 +155,40 @@ describe("results by month (AC 38)", () => {
     expect(await report("2026-02")).toMatchObject({ month: "2026-02", memberVisits: 1, customersWonBack: 0, rewardRedemptions: 1, offers: EMPTY });
   });
 
+  it("counts a customer won back in the month they came back only, not in later months", async () => {
+    const { owner, report } = await ownerApp();
+    const card = await issueCard(owner.cafeId);
+    await visit(owner.cafeId, card.cardId, "2026-01-10T10:00:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
+    await lapse(owner.cafeId, card.cardId, "2026-01-10T10:00:00Z");
+    // A held visit in February is not the return; March's member visit is, and April's is a regular visit.
+    await visit(owner.cafeId, card.cardId, "2026-02-10T10:00:00Z", [{ quantity: 1, unitPriceCents: 300 }], "held");
+    await visit(owner.cafeId, card.cardId, "2026-03-10T10:00:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
+    await visit(owner.cafeId, card.cardId, "2026-03-20T10:00:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
+    await visit(owner.cafeId, card.cardId, "2026-04-10T10:00:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
+    expect(await report("2026-02")).toMatchObject({ customersWonBack: 0 });
+    expect(await report("2026-03")).toMatchObject({ memberVisits: 2, customersWonBack: 1 });
+    expect(await report("2026-04")).toMatchObject({ memberVisits: 1, customersWonBack: 0 });
+    // Lapsing again from April and coming back in June counts once more, in June.
+    await lapse(owner.cafeId, card.cardId, "2026-04-10T10:00:00Z");
+    await visit(owner.cafeId, card.cardId, "2026-06-01T10:00:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
+    expect(await report("2026-05")).toMatchObject({ customersWonBack: 0 });
+    expect(await report("2026-06")).toMatchObject({ memberVisits: 1, customersWonBack: 1 });
+  });
+
   it("buckets by the café's own calendar month, not UTC's", async () => {
     const { owner, report } = await ownerApp();
     const card = await issueCard(owner.cafeId);
     await context.admin.query("UPDATE app.cafes SET time_zone = 'America/New_York' WHERE id = $1", [owner.cafeId]);
-    // 22:30 on 31 March in New York, already 1 April in UTC: March's.
+    // 22:30 on 31 March in New York, already 1 April in UTC: March's, and the card's return from its lapse.
+    await lapse(owner.cafeId, card.cardId, "2026-01-05T15:00:00Z");
     await visit(owner.cafeId, card.cardId, "2026-04-01T02:30:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
     await redemption(owner.cafeId, card.cardId, "2026-04-01T02:40:00Z");
     // 00:30 on 1 April in New York: April's.
     await visit(owner.cafeId, card.cardId, "2026-04-01T04:30:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
     // 23:00 on 28 February in New York, already 1 March in UTC: February's, which starts the months.
     await visit(owner.cafeId, null, "2026-03-01T04:00:00Z", [{ quantity: 1, unitPriceCents: 300 }]);
-    expect(await report("2026-03")).toMatchObject({ memberVisits: 1, rewardRedemptions: 1 });
-    expect(await report("2026-04")).toMatchObject({ memberVisits: 1, rewardRedemptions: 0 });
+    expect(await report("2026-03")).toMatchObject({ memberVisits: 1, customersWonBack: 1, rewardRedemptions: 1 });
+    expect(await report("2026-04")).toMatchObject({ memberVisits: 1, customersWonBack: 0, rewardRedemptions: 0 });
     expect(await report("2026-02")).toMatchObject({ memberVisits: 1, rewardRedemptions: 0 });
     expect((await report()).months).toEqual(monthsBack(await currentMonth(owner.cafeId), "2026-02"));
   });
@@ -191,7 +212,8 @@ describe("results by month (AC 38)", () => {
   it("adds up discounts beyond 32-bit integers", async () => {
     const { owner, report } = await ownerApp();
     // The largest line the database takes: 50 at $1,000,000, all of it off (5,000,000,000 cents, past 2^31).
-    await visit(owner.cafeId, null, new Date().toISOString(), [{ quantity: 50, unitPriceCents: 100_000_000, unitDiscountCents: 100_000_000, campaign: true }]);
-    expect(await report()).toMatchObject({ offers: { quietHour: { visits: 1, costCents: 5_000_000_000, revenueCents: 0 } } });
+    // A fixed month, so a month boundary passing during the test cannot move the visit out of the one reported.
+    await visit(owner.cafeId, null, "2026-03-15T10:00:00Z", [{ quantity: 50, unitPriceCents: 100_000_000, unitDiscountCents: 100_000_000, campaign: true }]);
+    expect(await report("2026-03")).toMatchObject({ offers: { quietHour: { visits: 1, costCents: 5_000_000_000, revenueCents: 0 } } });
   });
 });

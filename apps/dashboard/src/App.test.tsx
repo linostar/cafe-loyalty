@@ -108,7 +108,7 @@ describe("Dashboard App", () => {
       lastSeenAt: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString(),
       revoked,
     });
-    const devices = [phone("Front counter", 3), phone("Back bar", 1), phone("Old phone", 9, true)];
+    const devices = [phone("Front counter", 3), phone("Back bar", 1), phone("Old phone", 9, true), phone("Spare phone", 10, true)];
     vi.stubGlobal(
       "fetch",
       vi.fn((path: string) =>

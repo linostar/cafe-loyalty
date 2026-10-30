@@ -65,4 +65,31 @@ describe("CampaignsPage", () => {
     fireEvent.click(form.getByRole("button", { name: "Saturday and Sunday" }));
     expect(form.getByLabelText("Monday")).not.toBeChecked();
   });
+
+  it("marks the form unsaved when a preset picks the days, and asks before Start again replaces a draft", async () => {
+    vi.stubGlobal("fetch", vi.fn((path: string) => Promise.resolve(respond(path === "/api/cafe" ? SETUP : { running: [], ended: [ENDED] }))));
+    render(<CampaignsPage />);
+    const form = within(await screen.findByRole("form", { name: "New campaign" }));
+    expect(leavingAsks()).toBe(false);
+    // A button, not an input event: still an unsaved change.
+    fireEvent.click(form.getByRole("button", { name: "Every day" }));
+    expect(leavingAsks()).toBe(true);
+    fireEvent.input(form.getByLabelText("Name (English)"), { target: { value: "Rainy mornings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start again Quiet afternoons" }));
+    // The draft stays until the owner confirms.
+    expect(form.getByLabelText("Name (English)")).toHaveValue("Rainy mornings");
+    fireEvent.click(screen.getByRole("button", { name: "Yes, replace the draft with Quiet afternoons" }));
+    const fresh = within(screen.getByRole("form", { name: "New campaign" }));
+    expect(fresh.getByLabelText("Name (English)")).toHaveValue("Quiet afternoons");
+    expect(leavingAsks()).toBe(false);
+    // With nothing typed, Start again replaces the form at once.
+    expect(screen.getByRole("button", { name: "Start again Quiet afternoons" })).toHaveTextContent(/^Start again$/);
+  });
 });
+
+/** Whether leaving the page now would ask first. */
+function leavingAsks(): boolean {
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}

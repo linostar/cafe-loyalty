@@ -10,12 +10,17 @@ function leavingAsks(): boolean {
   return event.defaultPrevented;
 }
 
-/** A form whose save waits for `finish` and fails when `fail` is set. */
-function NameForm({ control }: { control: { finish?: () => void; fail: boolean } }) {
+/** A form whose save waits for `finish` and fails when `fail` is set; `keepOnReset` cancels its reset. */
+function NameForm({ control, keepOnReset = false }: { control: { finish?: () => void; fail: boolean }; keepOnReset?: boolean }) {
   const [name, setName] = useState("");
   const { submit } = useSubmit();
   return (
     <Form
+      onReset={(event) => {
+        if (keepOnReset) {
+          event.preventDefault();
+        }
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(
@@ -83,6 +88,13 @@ describe("unsaved changes in a Form", () => {
     expect(leavingAsks()).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     expect(leavingAsks()).toBe(false);
+  });
+
+  it("keeps asking when the reset is cancelled", () => {
+    render(<NameForm control={{ fail: false }} keepOnReset />);
+    fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Café" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(leavingAsks()).toBe(true);
   });
 
   it("stops asking once the form is gone", () => {

@@ -359,7 +359,7 @@ for (const { lang, locale } of LANGS) {
         await page.goto("/review");
         await expect(page.getByText(lang === "ar" ? /الطلب: / : /^Order: 2 × Espresso, 1 × Latte\. Total \$8\.50, for 2 stamps\.$/)).toBeVisible();
         await page.getByRole("button", { name: /^Accept Visit by |^قبول .*Rami/ }).first().click();
-        await expect(page.getByRole("button", { name: /^Undo accepting |^تراجع عن قبول / })).toBeFocused();
+        await expect(page.getByRole("button", { name: /^Undo within 10 seconds: accepting |^تراجع خلال 10 ثوانٍ: قبول / })).toBeFocused();
         await capture(page, testInfo, `dashboard-review-undo${suffix}`);
         await check(page);
       });
@@ -412,8 +412,8 @@ for (const { lang, locale } of LANGS) {
 
 /** The Café page's sections, the Review page's short labels and the admin café page's layout (redesign AC 8, 9, 10), in both languages. */
 const LAYOUT_TEXT = {
-  en: { sections: "Sections of this page", names: ["Café", "Program", "Menu", "Offers and welcome-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
-  ar: { sections: "أقسام هذه الصفحة", names: ["المقهى", "البرنامج", "القائمة", "العروض وعرض العودة", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
+  en: { sections: "Sections of this page", names: ["Name", "Program", "Menu", "Offers and welcome-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
+  ar: { sections: "أقسام هذه الصفحة", names: ["الاسم", "البرنامج", "القائمة", "العروض وعرض العودة", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
 } as const;
 
 for (const { lang, locale } of LANGS) {
@@ -428,7 +428,7 @@ for (const { lang, locale } of LANGS) {
         const links = page.getByRole("navigation", { name: text.sections }).getByRole("link");
         await expect(links).toHaveText([...text.names]);
         for (const [index, name] of text.names.entries()) {
-          // Found by the link's target: the first section, Café, shares its name with the page's own region.
+          // Found by the link's target; no section shares its name with the page's own region, Café.
           const section = page.locator(`section${(await links.nth(index).getAttribute("href")) ?? ""}`);
           await expect(section).toHaveRole("region");
           await expect(section).toHaveAccessibleName(name);
@@ -453,8 +453,9 @@ for (const { lang, locale } of LANGS) {
         await links.nth(2).click();
         await expect(page).toHaveURL(/#menu$/);
         await expect(page.getByRole("heading", { level: 3, name: text.names[2], exact: true })).toBeInViewport();
-        // The café's name is in the first section, Café.
+        // The café's name is in the first section, Name, and only the page's own region is named Café.
         await expect(page.locator("section#cafe").getByRole("form", { name: lang === "ar" ? "اسم المقهى" : "Café name" })).toBeVisible();
+        await expect(page.getByRole("region", { name: lang === "ar" ? "المقهى" : "Café", exact: true })).toHaveCount(1);
       });
 
       test("Review shows short labels, and the buttons' names still say which item", async ({ page }) => {

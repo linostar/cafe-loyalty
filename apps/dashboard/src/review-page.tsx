@@ -37,8 +37,7 @@ const AR = {
   "Accept {what}": "قبول {what}",
   "Accepted in 10 seconds unless you undo it.": "يُقبل بعد 10 ثوانٍ ما لم تتراجع عنه.",
   Undo: "تراجع",
-  "Undo accepting {what}": "تراجع عن قبول {what}",
-  "{what} will be accepted in 10 seconds. Undo stops it.": "سيُقبل {what} بعد 10 ثوانٍ. زر التراجع يوقفه.",
+  "Undo within 10 seconds: accepting {what}": "تراجع خلال 10 ثوانٍ: قبول {what}",
   "Not accepted: {what}.": "لم يُقبل: {what}.",
   "Discard {what}": "إهمال {what}",
   "Yes, discard {what}": "نعم، أهمل {what}",
@@ -115,7 +114,11 @@ const STAMPS = {
   ar: { zero: "بلا أختام", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختماً", other: "{n} ختم" },
 };
 
-/** Sends an accept still waiting as the page goes, with keepalive, so the browser finishes it after the page has gone. */
+/**
+ * Sends an accept not sent yet as the page goes, with keepalive, so the browser finishes it after the page has gone. No
+ * code runs after that to say a failure: an accept that did not go through leaves the item held, still counted in the
+ * navigation's Review count and Home's Needs you, and listed here on the next visit.
+ */
 function sendOnLeaving(id: string) {
   void fetch(`/api/review-queue/${id}/accept`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", keepalive: true }).catch(() => undefined);
 }
@@ -183,7 +186,7 @@ function ReviewEntry({
         {waiting ? (
           <button
             type="button"
-            aria-label={t("Undo accepting {what}", { what })}
+            aria-label={t("Undo within 10 seconds: accepting {what}", { what })}
             onClick={() => {
               focusNext.current = true;
               onUndo();
@@ -240,9 +243,14 @@ export function ReviewPage() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const { pending, error, submit } = useSubmit();
-  /** Accepted items waiting to be sent (ACCEPT_DELAY_MS), and their timers. */
+  /** Accepted items waiting to be sent (ACCEPT_DELAY_MS). */
   const [waiting, setWaiting] = useState<ReadonlySet<string>>(new Set());
-  const timers = useRef(new Map<string, number>());
+  /**
+   * Every accept not sent yet, by id: its timer while it waits, null once the wait is over and it is queued behind
+   * another request. Taken out as its request starts (sent with keepalive, so leaving never drops it) or as it is
+   * sent on leaving, so none is sent twice.
+   */
+  const unsent = useRef(new Map<string, number | null>());
   /** Requests one after another: an accept whose wait ends while another request is on its way is sent next, not dropped. */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -252,15 +260,16 @@ export function ReviewPage() {
     }
   }, [focusId]);
 
-  // An accept still waiting when the owner leaves (another page, a closed tab) is sent, never silently dropped.
+  // An accept not sent yet when the owner leaves (another page, a closed tab), waiting or queued, is sent then; one
+  // already on its way was sent with keepalive.
   useEffect(() => {
-    const waitingTimers = timers.current;
+    const accepts = unsent.current;
     const sendWaiting = () => {
-      for (const [id, timer] of waitingTimers) {
-        window.clearTimeout(timer);
+      for (const [id, timer] of accepts) {
+        window.clearTimeout(timer ?? undefined);
         sendOnLeaving(id);
       }
-      waitingTimers.clear();
+      accepts.clear();
     };
     const onPageHide = () => {
       sendWaiting();
@@ -272,6 +281,24 @@ export function ReviewPage() {
       sendWaiting();
     };
   }, []);
+
+  // A page brought back from the back-forward cache loads the queue and the counts again: what was sent as it left may
+  // be decided by now.
+  const reloadAttention = attention.reload;
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        setNotice(null);
+        setItems(null);
+        setReload((value) => value + 1);
+        reloadAttention();
+      }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [reloadAttention]);
 
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
@@ -287,8 +314,12 @@ export function ReviewPage() {
   };
   const decide = (item: ReviewItem, decision: "accept" | "discard") => {
     inTurn(async () => {
+      // An accept sent on leaving while it was queued is not sent again.
+      if (decision === "accept" && !unsent.current.delete(item.id)) {
+        return;
+      }
       setNotice(null);
-      const result = await submit(() => apiRequest("POST", `/api/review-queue/${item.id}/${decision}`, reviewDecisionSchema));
+      const result = await submit(() => apiRequest("POST", `/api/review-queue/${item.id}/${decision}`, reviewDecisionSchema, {}, { keepalive: decision === "accept" }));
       if (result.ok) {
         // Taken off the list in place, so the owner keeps every page already loaded.
         setDecidedIds((current) => new Set(current).add(item.id));
@@ -302,27 +333,28 @@ export function ReviewPage() {
     });
   };
   const stopWaiting = (id: string) => {
-    window.clearTimeout(timers.current.get(id));
-    timers.current.delete(id);
     setWaiting((current) => new Set([...current].filter((entry) => entry !== id)));
   };
   const accept = (item: ReviewItem) => {
     setWaiting((current) => new Set(current).add(item.id));
-    timers.current.set(
+    unsent.current.set(
       item.id,
       window.setTimeout(() => {
         // Focus on the item's Undo goes to the heading, which stays as the item goes.
         if (list.current?.querySelector(`[data-review-id="${item.id}"]`)?.contains(document.activeElement) === true) {
           document.getElementById("review-page-title")?.focus();
         }
+        unsent.current.set(item.id, null);
         stopWaiting(item.id);
         decide(item, "accept");
       }, ACCEPT_DELAY_MS),
     );
-    // Said once, in the page's status; the item says it too, without counting down.
-    setNotice(() => (say: T, shownIn: Lang) => say("{what} will be accepted in 10 seconds. Undo stops it.", { what: describe(say, dateFormat(shownIn, TIME_OPTIONS), item) }));
+    // Focus goes to Undo, whose name says it first, with the 10 seconds; the status does not repeat it.
+    setNotice(null);
   };
   const undo = (item: ReviewItem) => {
+    window.clearTimeout(unsent.current.get(item.id) ?? undefined);
+    unsent.current.delete(item.id);
     stopWaiting(item.id);
     setNotice(() => (say: T, shownIn: Lang) => say("Not accepted: {what}.", { what: describe(say, dateFormat(shownIn, TIME_OPTIONS), item) }));
   };

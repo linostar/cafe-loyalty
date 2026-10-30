@@ -195,20 +195,24 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
    */
   const milestone = (column: "setup_finished_at" | "signup_qr_printed_at", action: string) => async (request: FastifyRequest) => {
     const owner = ownerOf(request);
-    return withCafe(db, owner.cafeId, async (trx) => {
-      const first = await trx
+    const { first, setup } = await withCafe(db, owner.cafeId, async (trx) => {
+      const updated = await trx
         .updateTable("cafes")
         .set({ [column]: sql<Date>`now()` })
         .where("id", "=", owner.cafeId)
         .where(column, "is", null)
         .returning("id")
         .executeTakeFirst();
-      if (first !== undefined) {
+      if (updated !== undefined) {
         await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action, entityType: "cafe", entityId: owner.cafeId });
-        request.log.info({ cafeId: owner.cafeId }, action);
       }
-      return loadSetup(trx, owner.cafeId);
+      return { first: updated !== undefined, setup: await loadSetup(trx, owner.cafeId) };
     });
+    // Logged once committed: a rolled-back milestone is never reported.
+    if (first) {
+      request.log.info({ cafeId: owner.cafeId }, action);
+    }
+    return setup;
   };
   app.post("/cafe/setup/finish", { config: { access: "owner" } }, milestone("setup_finished_at", "cafe.setup_finished"));
   app.post("/cafe/join/printed", { config: { access: "owner" } }, milestone("signup_qr_printed_at", "cafe.signup_qr_printed"));

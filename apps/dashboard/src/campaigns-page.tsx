@@ -17,6 +17,7 @@ import { ConfirmButton, Field, Form, FormError, Notice, useFocusWhenInvalid, use
 import { dateFormat, useLang, useT, type Translate, type Later, useSay } from "./i18n.js";
 import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
+import { useUnsavedChanges, type UnsavedChanges } from "./unsaved-changes.js";
 
 const AR = {
   "{value}% off": "خصم {value}%",
@@ -31,8 +32,7 @@ const AR = {
   "Enter an amount in dollars, such as 0.50.": "أدخل مبلغاً بالدولار، مثل 0.50.",
   "Pick at least one order type.": "اختر نوع طلب واحداً على الأقل.",
   "New campaign": "حملة جديدة",
-  "Such as Quiet afternoons.": "مثل Quiet afternoons.",
-  "Such as عصر هادئ.": "مثل عصر هادئ.",
+  "Such as {example}.": "مثل {example}.",
   Days: "الأيام",
   "Every day": "كل يوم",
   "Monday to Friday": "من الاثنين إلى الجمعة",
@@ -70,9 +70,25 @@ const AR = {
   ended: "منتهية",
   "Start again": "البدء من جديد",
   "Start again {name}": "البدء من جديد {name}",
+  "Yes, replace the draft": "نعم، استبدل المسودة",
+  "Yes, replace the draft with {name}": "نعم، استبدل المسودة بـ {name}",
 } as const;
 
 type T = Translate<typeof AR>;
+
+/** "Such as …" with the example a name in one language, marked as such, so it is spoken and laid out in it. */
+function suchAs(t: T, example: string, lang: "ar" | "en"): ReactNode {
+  const [before = "", after = ""] = t("Such as {example}.").split("{example}");
+  return (
+    <>
+      {before}
+      <span lang={lang} dir={lang === "ar" ? "rtl" : "ltr"}>
+        {example}
+      </span>
+      {after}
+    </>
+  );
+}
 
 /** Monday to Sunday (5 to 11 January 2026), for the days' names in each language. */
 const WEEK = Array.from({ length: 7 }, (_, index) => new Date(Date.UTC(2026, 0, 5 + index)));
@@ -202,9 +218,21 @@ function TimeField({ label, value, onChange, hint, error }: { label: string; val
 /**
  * A new campaign (AC 35), empty or filled in from an ended one (`from`: Start again; campaigns are never edited). Each
  * order type shows its price after the discount against its margin floor, so the owner sees what the server would
- * refuse before sending it.
+ * refuse before sending it. `unsaved` is the page's, which asks before Start again replaces a draft.
  */
-function NewCampaignForm({ orderTypes, minMarginPercent, change, from }: { orderTypes: readonly OrderType[]; minMarginPercent: number; change: Change; from: Campaign | null }) {
+function NewCampaignForm({
+  orderTypes,
+  minMarginPercent,
+  change,
+  from,
+  unsaved,
+}: {
+  orderTypes: readonly OrderType[];
+  minMarginPercent: number;
+  change: Change;
+  from: Campaign | null;
+  unsaved: UnsavedChanges;
+}) {
   const t = useT(AR);
   const say = useSay(AR);
   const lang = useLang();
@@ -233,6 +261,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change, from }: { order
     <Form
       aria-labelledby="new-campaign-title"
       className="card"
+      unsaved={unsaved}
       onChange={clearDone}
       onSubmit={(event) => {
         event.preventDefault();
@@ -280,7 +309,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change, from }: { order
           value={nameEn}
           onChange={setNameEn}
           maxLength={60}
-          hint={t("Such as Quiet afternoons.")}
+          hint={suchAs(t, "Quiet afternoons", "en")}
           error={fieldErrors.nameEn}
         />
         <Field
@@ -291,7 +320,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change, from }: { order
           value={nameAr}
           onChange={setNameAr}
           maxLength={60}
-          hint={t("Such as عصر هادئ.")}
+          hint={suchAs(t, "عصر هادئ", "ar")}
           error={fieldErrors.nameAr}
         />
       </div>
@@ -304,6 +333,8 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change, from }: { order
               type="button"
               onClick={() => {
                 clearDone();
+                // No input event: marked edited here, so leaving asks first.
+                unsaved.edited();
                 setWeekdays([...days]);
               }}
             >
@@ -439,6 +470,8 @@ export function CampaignsPage() {
   const ending = useSubmit();
   /** The ended campaign the new campaign form was last filled in from, and a count that makes a fresh form each time. */
   const [startAgain, setStartAgain] = useState<{ from: Campaign | null; count: number }>({ from: null, count: 0 });
+  /** The new campaign form's unsaved changes, kept here so Start again asks before replacing a draft. */
+  const draft = useUnsavedChanges();
   useEffect(() => {
     // The form is filled in afresh: focus moves to its heading, so the owner reads on from there.
     if (startAgain.count > 0) {
@@ -501,7 +534,7 @@ export function CampaignsPage() {
           ))}
         </ul>
       )}
-      <NewCampaignForm key={startAgain.count} from={startAgain.from} orderTypes={orderTypes} minMarginPercent={cafe.minMarginPercent} change={change} />
+      <NewCampaignForm key={startAgain.count} from={startAgain.from} orderTypes={orderTypes} minMarginPercent={cafe.minMarginPercent} change={change} unsaved={draft} />
       {campaigns === null || campaigns.ended.length === 0 ? null : (
         <>
           <h3>{t("Ended")}</h3>
@@ -511,16 +544,31 @@ export function CampaignsPage() {
                 <span className="row-main">
                   <strong>{nameOf(lang, campaign)}</strong>: {describe(t, lang, campaign, orderTypes)} <span className="badge">{t("ended")}</span>
                 </span>
-                {/* A short visible label; the name adds the campaign (WCAG 2.5.3: it starts with what is shown). */}
-                <button
-                  type="button"
-                  aria-label={t("Start again {name}", { name: nameOf(lang, campaign) })}
-                  onClick={() => {
-                    setStartAgain(({ count }) => ({ from: campaign, count: count + 1 }));
-                  }}
-                >
-                  {t("Start again")}
-                </button>
+                {/* A short visible label; the name adds the campaign (WCAG 2.5.3: it starts with what is shown). A draft in
+                    the form is replaced only once the owner confirms. */}
+                {draft.dirty ? (
+                  <ConfirmButton
+                    label={t("Start again")}
+                    confirmLabel={t("Yes, replace the draft")}
+                    name={t("Start again {name}", { name: nameOf(lang, campaign) })}
+                    confirmName={t("Yes, replace the draft with {name}", { name: nameOf(lang, campaign) })}
+                    pending={false}
+                    onConfirm={() => {
+                      draft.reset();
+                      setStartAgain(({ count }) => ({ from: campaign, count: count + 1 }));
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={t("Start again {name}", { name: nameOf(lang, campaign) })}
+                    onClick={() => {
+                      setStartAgain(({ count }) => ({ from: campaign, count: count + 1 }));
+                    }}
+                  >
+                    {t("Start again")}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

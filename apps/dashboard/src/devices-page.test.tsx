@@ -69,4 +69,40 @@ describe("Devices", () => {
     expect(group).toHaveTextContent("Old phone");
     expect(group).not.toHaveTextContent("Front counter");
   });
+
+  it("says no phone can record visits when every one is removed", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(respond({ devices: [phone("Old phone", true)], pairingCodes: [] }))));
+    render(<DevicesPage />);
+    expect(await screen.findByText("Every phone is removed: none can record visits. Pair one above to start again.")).toBeInTheDocument();
+    expect(screen.getByText("Removed (1)")).toBeInTheDocument();
+  });
+
+  it("does not bring a dismissed code back when its renewal is answered after Done", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let answer: (response: Response) => void = () => undefined;
+    let posts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) => {
+        if (path === "/api/devices") {
+          return Promise.resolve(respond({ devices: [], pairingCodes: [] }));
+        }
+        posts += 1;
+        // The first code expires at once; its renewal waits until the test answers it.
+        return posts === 1 ? Promise.resolve(respond(code(1_000), 201)) : new Promise<Response>((resolve) => (answer = resolve));
+      }),
+    );
+    render(<DevicesPage />);
+    fireEvent.change(await screen.findByLabelText("Phone name"), { target: { value: "Back bar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create pairing code" }));
+    await screen.findByText("Expires in 0:01.");
+    await act(() => vi.advanceTimersByTimeAsync(1_500));
+    fireEvent.click(screen.getByRole("button", { name: "New code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await act(async () => {
+      answer(respond(code(600_000), 201));
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(screen.queryByRole("heading", { name: "Pair Back bar" })).toBeNull();
+  });
 });

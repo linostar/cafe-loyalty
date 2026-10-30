@@ -14,9 +14,18 @@ export function saveStarted(): () => void {
 /**
  * A Form's unsaved changes: once something is typed or picked in it, leaving the page (every dashboard link is a full
  * page load) asks first, until a save started from its submit succeeds with nothing edited meanwhile, or it is reset.
- * ponytail: only edits by the owner count (input events); a form filled in by code (a campaign started again) does not.
+ * Input events count as edits; a control that changes the form without one (a button that picks days) calls `edited`.
+ * ponytail: a form filled in by code (a campaign started again) does not count as edited.
  */
-export function useUnsavedChanges(): { edited: () => void; reset: () => void; submit: (handler: () => void) => void } {
+export interface UnsavedChanges {
+  /** Something is typed or picked that is not saved. */
+  dirty: boolean;
+  edited: () => void;
+  reset: () => void;
+  submit: (handler: () => void) => void;
+}
+
+export function useUnsavedChanges(): UnsavedChanges {
   // The listener is there only while there is something to lose (one can keep a page out of the back-forward cache), and
   // reads the ref, set at once: a page that leaves right after a save (signup) must not ask before React re-renders.
   const [dirty, setDirtyState] = useState(false);
@@ -41,6 +50,7 @@ export function useUnsavedChanges(): { edited: () => void; reset: () => void; su
     };
   }, [dirty]);
   return {
+    dirty,
     edited: () => {
       edits.current += 1;
       setDirty(true);
