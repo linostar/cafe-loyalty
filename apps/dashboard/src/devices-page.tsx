@@ -28,7 +28,7 @@ const AR = {
     "الهواتف والأجهزة اللوحية التي يسجّل عليها الباريستا الزيارات. اربط جهازاً جديداً برمز لمرة واحدة، وأزل أي جهاز مفقود.",
   "Counter phones": "هواتف الكاونتر",
   "No phones paired yet. Pair one above to start recording visits at the counter.": "لا هواتف مربوطة بعد. اربط هاتفاً أعلاه لتبدأ بتسجيل الزيارات على الكاونتر.",
-  "Every phone is removed: none can record visits. Pair one above to start again.": "أُزيلت كل الهواتف: لا يمكن لأي منها تسجيل الزيارات. اربط هاتفاً أعلاه لتبدأ من جديد.",
+  "Every phone is removed. Each stops working the next time it connects. Pair one above to start again.": "أُزيلت كل الهواتف. يتوقف كل منها عن العمل عند اتصاله التالي. اربط هاتفاً أعلاه لتبدأ من جديد.",
   removed: "أُزيل",
   "last seen {time}": "آخر ظهور {time}",
   "Remove {name}": "إزالة {name}",
@@ -156,7 +156,7 @@ export function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName })).then((result) => {
+        void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName }), { clearsForm: true }).then((result) => {
           if (result.ok) {
             setDeviceName("");
             onCreated(result.value);
@@ -280,7 +280,7 @@ export function DevicesPage() {
       ) : (
         <>
           {active.length === 0 ? (
-            <p className="empty">{t("Every phone is removed: none can record visits. Pair one above to start again.")}</p>
+            <p className="empty">{t("Every phone is removed. Each stops working the next time it connects. Pair one above to start again.")}</p>
           ) : (
             <ul className="items">{active.map(deviceRow)}</ul>
           )}

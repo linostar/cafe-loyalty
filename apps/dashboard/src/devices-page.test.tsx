@@ -70,10 +70,10 @@ describe("Devices", () => {
     expect(group).not.toHaveTextContent("Front counter");
   });
 
-  it("says no phone can record visits when every one is removed", async () => {
+  it("says when every phone is removed", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(respond({ devices: [phone("Old phone", true)], pairingCodes: [] }))));
     render(<DevicesPage />);
-    expect(await screen.findByText("Every phone is removed: none can record visits. Pair one above to start again.")).toBeInTheDocument();
+    expect(await screen.findByText("Every phone is removed. Each stops working the next time it connects. Pair one above to start again.")).toBeInTheDocument();
     expect(screen.getByText("Removed (1)")).toBeInTheDocument();
   });
 

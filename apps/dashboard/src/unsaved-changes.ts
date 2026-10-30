@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 
 /** While a Form's submit handler runs: what a save it starts calls, to be told when that save succeeds. */
-let submitting: (() => () => void) | null = null;
+let submitting: (() => (cleared: boolean) => void) | null = null;
 
 /**
  * For useSubmit, as a request starts: returns what to call once it succeeded, which clears the unsaved changes of the
- * Form whose submit handler started it (nothing for a request started anywhere else).
+ * Form whose submit handler started it (nothing for a request started anywhere else). `cleared`: the form is emptied
+ * after its save, so an edit made while it was on its way is gone too.
  */
-export function saveStarted(): () => void {
+export function saveStarted(): (cleared: boolean) => void {
   return submitting?.() ?? (() => undefined);
 }
 
 /**
  * A Form's unsaved changes: once something is typed or picked in it, leaving the page (every dashboard link is a full
- * page load) asks first, until a save started from its submit succeeds with nothing edited meanwhile, or it is reset.
+ * page load) asks first, until a save started from its submit succeeds with nothing edited meanwhile (or empties the
+ * form), or it is reset.
  * Input events count as edits; a control that changes the form without one (a button that picks days) calls `edited`.
  * ponytail: a form filled in by code (a campaign started again) does not count as edited.
  */
@@ -62,8 +64,8 @@ export function useUnsavedChanges(): UnsavedChanges {
     submit: (handler) => {
       submitting = () => {
         const editsAtStart = edits.current;
-        return () => {
-          if (edits.current === editsAtStart) {
+        return (cleared) => {
+          if (cleared || edits.current === editsAtStart) {
             setDirty(false);
           }
         };
