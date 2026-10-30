@@ -10,8 +10,8 @@ function leavingAsks(): boolean {
   return event.defaultPrevented;
 }
 
-/** A form whose save waits for `finish` and fails when `fail` is set; `keepOnReset` cancels its reset; `clears` empties it once saved. */
-function NameForm({ control, keepOnReset = false, clears = false }: { control: { finish?: () => void; fail: boolean }; keepOnReset?: boolean; clears?: boolean }) {
+/** A form whose save waits for `finish` and fails when `fail` is set; `keepOnReset` cancels its reset. */
+function NameForm({ control, keepOnReset = false }: { control: { finish?: () => void; fail: boolean }; keepOnReset?: boolean }) {
   const [name, setName] = useState("");
   const { submit } = useSubmit();
   return (
@@ -34,12 +34,7 @@ function NameForm({ control, keepOnReset = false, clears = false }: { control: {
                 }
               };
             }),
-          { clearsForm: clears },
-        ).then((result) => {
-          if (result.ok && clears) {
-            setName("");
-          }
-        });
+        );
       }}
     >
       <label htmlFor="name">Name</label>
@@ -92,20 +87,6 @@ describe("unsaved changes in a Form", () => {
     await finish(control);
     expect(leavingAsks()).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    expect(leavingAsks()).toBe(false);
-  });
-
-  it("stops asking when a save empties the form, though it was edited while the save was on its way", async () => {
-    const control: { finish?: () => void; fail: boolean } = { fail: false };
-    render(<NameForm control={control} clears />);
-    const input = screen.getByLabelText("Name");
-    fireEvent.input(input, { target: { value: "Café" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    fireEvent.input(input, { target: { value: "Café Najjar" } });
-    await finish(control);
-    await waitFor(() => {
-      expect(input).toHaveValue("");
-    });
     expect(leavingAsks()).toBe(false);
   });
 

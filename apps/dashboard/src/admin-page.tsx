@@ -230,7 +230,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
           return;
         }
         setProblems({});
-        void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/payments`, adminCafeSchema, { paymentId, amountCents, paidOn, method, reference }), { clearsForm: true }).then((result) => {
+        void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/payments`, adminCafeSchema, { paymentId, amountCents, paidOn, method, reference })).then((result) => {
           if (result.ok) {
             setAmount("");
             setReference("");
@@ -347,7 +347,7 @@ function NewCafeForm({ onCreated }: { onCreated: (invite: AdminInvite) => void }
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(() => apiRequest("POST", "/api/admin/cafes", adminInviteSchema, { cafeId, name }), { clearsForm: true }).then((result) => {
+        void submit(() => apiRequest("POST", "/api/admin/cafes", adminInviteSchema, { cafeId, name })).then((result) => {
           if (result.ok) {
             setName("");
             setCafeId(crypto.randomUUID());

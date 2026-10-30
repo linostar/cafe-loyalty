@@ -50,7 +50,7 @@ export function AddStaffForm({ change }: { change: Change }) {
       onChange={clearDone}
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(() => change("POST", "/api/staff", { name, pin: toLatinDigits(pin) }), { clearsForm: true }).then((result) => {
+        void submit(() => change("POST", "/api/staff", { name, pin: toLatinDigits(pin) })).then((result) => {
           if (result.ok) {
             setName("");
             setPin("");

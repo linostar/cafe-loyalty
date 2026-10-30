@@ -186,11 +186,8 @@ export interface SubmitState {
   /** The last request succeeded, until the next one starts or `clearDone`: the form shows "Saved." next to its button. */
   done: boolean;
   clearDone: () => void;
-  /**
-   * Runs `action`, tracking pending and errors; while one is pending, another is not run (a failed result, nothing shown).
-   * `clearsForm`: the caller empties the form once it succeeds, so its unsaved changes end then, even with an edit made meanwhile.
-   */
-  submit: <T>(action: () => Promise<T>, options?: { clearsForm?: boolean }) => Promise<SubmitResult<T>>;
+  /** Runs `action`, tracking pending and errors; while one is pending, another is not run (a failed result, nothing shown). */
+  submit: <T>(action: () => Promise<T>) => Promise<SubmitResult<T>>;
 }
 
 export type SubmitResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -215,7 +212,7 @@ export function useSubmit(): SubmitState {
   // form shows, so it does not say "Saved.".
   const edits = useRef(0);
 
-  async function submit<T>(action: () => Promise<T>, options: { clearsForm?: boolean } = {}): Promise<SubmitResult<T>> {
+  async function submit<T>(action: () => Promise<T>): Promise<SubmitResult<T>> {
     if (inFlight.current) {
       return { ok: false, error: new StillPendingError() };
     }
@@ -228,7 +225,7 @@ export function useSubmit(): SubmitState {
     setDone(false);
     try {
       const value = await action();
-      saved(options.clearsForm === true);
+      saved();
       if (edits.current === editsAtStart) {
         setDone(true);
       }

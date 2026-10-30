@@ -285,7 +285,7 @@ function NewCampaignForm({
           return;
         }
         const body: CampaignCreate = { nameEn, nameAr, weekdays, startsMinute, endsMinute, discount, orderTypeIds: chosen };
-        void submit(() => change("POST", "/api/campaigns", body), { clearsForm: true }).then((result) => {
+        void submit(() => change("POST", "/api/campaigns", body)).then((result) => {
           if (result.ok) {
             setNameEn("");
             setNameAr("");

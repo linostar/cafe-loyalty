@@ -156,7 +156,7 @@ export function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void
       className="card"
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName }), { clearsForm: true }).then((result) => {
+        void submit(() => apiRequest("POST", "/api/devices/pairing-codes", pairingCodeSchema, { deviceName })).then((result) => {
           if (result.ok) {
             setDeviceName("");
             onCreated(result.value);
