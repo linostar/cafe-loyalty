@@ -1,0 +1,61 @@
+/* The setup wizard and the signup QR's printed sheet (setup.tsx). Logical properties only (styles.test.ts). */
+.setup-step-count {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+}
+
+/* The sheet as printed (D6): the café's name, the code at about 8 cm and both languages' instructions. */
+.print-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+  text-align: center;
+}
+
+.print-sheet p {
+  margin: 0;
+}
+
+.print-cafe {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+}
+
+.print-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.print-qr {
+  display: block;
+  inline-size: min(8cm, 100%);
+  block-size: auto;
+}
+
+/* On paper only the sheet: everything beside it goes, and so do its ancestors' own boxes. */
+@media print {
+  body:has(.print-sheet) :not(:has(.print-sheet), .print-sheet, .print-sheet *) {
+    display: none;
+  }
+
+  body:has(.print-sheet) :has(.print-sheet) {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .print-sheet {
+    border: 0;
+    box-shadow: none;
+  }
+
+  .print-qr {
+    inline-size: 8cm;
+  }
+}

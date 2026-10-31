@@ -1,8 +1,9 @@
 import { apiText, linkTokenSchema } from "@cafe-loyalty/shared";
 import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ApiRequestError } from "./api.js";
-import { useApiText, useCommonT } from "./i18n.js";
+import { useApiText, useCommonT, useT } from "./i18n.js";
 import { SessionEndedContext } from "./session.js";
+import { saveStarted, useUnsavedChanges, type UnsavedChanges } from "./unsaved-changes.js";
 
 interface FieldProps {
   /** Text, or text with a visually hidden part that tells repeated fields apart. */
@@ -12,8 +13,8 @@ interface FieldProps {
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;
-  /** Help shown under the field, such as a length rule. */
-  hint?: string;
+  /** Help shown under the field, such as a length rule (an example in another language marked with its `lang`). */
+  hint?: ReactNode;
   error?: string | undefined;
   minLength?: number;
   maxLength?: number;
@@ -33,17 +34,41 @@ const SubmitAttemptContext = createContext(0);
 /**
  * A form that checks its own fields: the browser's validation bubbles are off (they come in the browser's language,
  * not the page's, and vanish), so every problem shows as the field's own message, and after each attempt the first
- * control with one gets focus (useFocusWhenInvalid, which every input marked `aria-invalid` in a Form uses).
+ * control with one gets focus (useFocusWhenInvalid, which every input marked `aria-invalid` in a Form uses). Leaving the
+ * page with unsaved changes in it asks first (useUnsavedChanges): its own, or `unsaved` when the caller needs to read
+ * or mark them (a button that changes the form, a page that replaces it).
  */
-export function Form({ onSubmit, children, ...props }: Omit<ComponentProps<"form">, "noValidate">) {
+export function Form({
+  onSubmit,
+  onInput,
+  onReset,
+  unsaved: given,
+  children,
+  ...props
+}: Omit<ComponentProps<"form">, "noValidate"> & { unsaved?: UnsavedChanges | undefined }) {
   const [attempt, setAttempt] = useState(0);
+  const own = useUnsavedChanges();
+  const unsaved = given ?? own;
   return (
     <form
       {...props}
       noValidate
+      onInput={(event) => {
+        unsaved.edited();
+        onInput?.(event);
+      }}
+      onReset={(event) => {
+        onReset?.(event);
+        // A reset the caller cancelled keeps what was typed, and its warning.
+        if (!event.defaultPrevented) {
+          unsaved.reset();
+        }
+      }}
       onSubmit={(event) => {
         setAttempt((count) => count + 1);
-        onSubmit?.(event);
+        unsaved.submit(() => {
+          onSubmit?.(event);
+        });
       }}
     >
       <SubmitAttemptContext.Provider value={attempt}>{children}</SubmitAttemptContext.Provider>
@@ -73,37 +98,67 @@ export function useFocusWhenInvalid<T extends HTMLInputElement>(reported: boolea
   return input;
 }
 
-/** A labelled input whose hint and error are announced with it, and which takes focus after a failed send (useFocusWhenInvalid). */
+const FIELD_AR = { Show: "إظهار" } as const;
+
+/**
+ * A labelled input whose hint and error are announced with it, and which takes focus after a failed send (useFocusWhenInvalid).
+ * A password or PIN has a Show toggle (aria-pressed; named only "Show", so the field's label still finds just the input,
+ * and described by that label, so repeated fields' toggles differ).
+ */
 export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
+  const t = useT(FIELD_AR);
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [hint === undefined ? null : hintId, error === undefined ? null : errorId].filter((part) => part !== null).join(" ");
   const api = useApiText();
   const input = useFocusWhenInvalid(error !== undefined);
+  const [shown, setShown] = useState(false);
+  const control = (
+    <input
+      ref={input}
+      id={id}
+      name={name}
+      type={type === "password" && shown ? "text" : type}
+      autoComplete={autoComplete}
+      required={!optional}
+      minLength={minLength}
+      maxLength={maxLength}
+      inputMode={inputMode}
+      lang={lang}
+      dir={lang === undefined ? undefined : lang === "ar" ? "rtl" : "ltr"}
+      value={value}
+      onChange={(event) => {
+        onChange(event.target.value);
+      }}
+      onKeyDown={onKeyDown}
+      aria-invalid={error === undefined ? undefined : true}
+      aria-describedby={describedBy === "" ? undefined : describedBy}
+    />
+  );
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <input
-        ref={input}
-        id={id}
-        name={name}
-        type={type}
-        autoComplete={autoComplete}
-        required={!optional}
-        minLength={minLength}
-        maxLength={maxLength}
-        inputMode={inputMode}
-        lang={lang}
-        dir={lang === undefined ? undefined : lang === "ar" ? "rtl" : "ltr"}
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-        }}
-        onKeyDown={onKeyDown}
-        aria-invalid={error === undefined ? undefined : true}
-        aria-describedby={describedBy === "" ? undefined : describedBy}
-      />
+      <label id={`${id}-label`} htmlFor={id}>
+        {label}
+      </label>
+      {type === "password" ? (
+        <div className="field-control">
+          {control}
+          <button
+            type="button"
+            aria-describedby={`${id}-label`}
+            aria-controls={id}
+            aria-pressed={shown}
+            onClick={() => {
+              setShown((value) => !value);
+            }}
+          >
+            {t("Show")}
+          </button>
+        </div>
+      ) : (
+        control
+      )}
       {hint === undefined ? null : (
         <p id={hintId} className="hint">
           {hint}
@@ -163,12 +218,14 @@ export function useSubmit(): SubmitState {
     }
     inFlight.current = true;
     const editsAtStart = edits.current;
+    const saved = saveStarted();
     setPending(true);
     setError(null);
     setFieldErrors({});
     setDone(false);
     try {
       const value = await action();
+      saved();
       if (edits.current === editsAtStart) {
         setDone(true);
       }
@@ -264,6 +321,7 @@ export function ConfirmButton({
   confirmName,
   pending,
   onConfirm,
+  className,
 }: {
   label: string;
   confirmLabel: string;
@@ -271,6 +329,8 @@ export function ConfirmButton({
   confirmName?: string;
   pending: boolean;
   onConfirm: () => void;
+  /** The class of the button that asks, such as `primary`. */
+  className?: string | undefined;
 }) {
   const t = useCommonT();
   const [asking, setAsking] = useState(false);
@@ -326,6 +386,7 @@ export function ConfirmButton({
       ) : (
         <button
           type="button"
+          className={className}
           aria-label={name}
           aria-disabled={pending || undefined}
           onClick={() => {

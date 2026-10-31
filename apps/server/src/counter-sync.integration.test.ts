@@ -225,6 +225,19 @@ describe("sync", () => {
     }
   });
 
+  // The device token check (access.ts) records it, so Home can tell a phone that stopped syncing (D15).
+  it("moves the phone's last seen on a sync, at most once a minute (D15)", async () => {
+    const { app, device, staffId } = await counterApp();
+    const lastSeen = async () =>
+      (await context.admin.query<{ seen: Date }>("SELECT last_seen_at AS seen FROM app.devices WHERE id = $1", [device.deviceId])).rows[0]?.seen.getTime() ?? 0;
+    await context.admin.query("UPDATE app.devices SET last_seen_at = now() - interval '2 days' WHERE id = $1", [device.deviceId]);
+    await sync(app, device.accessToken, [await visit(device, staffId)]);
+    expect(Date.now() - (await lastSeen())).toBeLessThan(60 * 1000);
+    const within = await lastSeen();
+    await sync(app, device.accessToken, [await visit(device, staffId)]);
+    expect(await lastSeen()).toBe(within);
+  });
+
   it("only uses staff of the device's own café", async () => {
     const first = await counterApp();
     const second = await counterApp();
@@ -239,6 +252,8 @@ describe("review queue", () => {
     expect(await sync(app, device.accessToken, [await visit(device, staffId)])).toEqual([{ status: "applied", code: "HELD_FOR_REVIEW" }]);
     const queue = reviewQueueSchema.parse((await as("GET", "/api/review-queue")).json());
     expect(queue).toMatchObject({ items: [{ type: "visit.recorded", deviceName: "Counter 1", staffName: "Rami", reason: "staff_revoked" }], nextCursor: null });
+    // What the visit holds, so the owner can judge it (D8).
+    expect(queue.items[0]?.visit).toEqual({ stamps: 0, totalCents: 700, items: [{ nameEn: "Espresso", nameAr: "إسبريسو", quantity: 2 }] });
     const id = queue.items[0]?.id ?? "missing";
     // A visit whose items earn no stamps: accepted, and it says so.
     expect((await as("POST", `/api/review-queue/${id}/accept`)).json()).toEqual({ outcome: "OK" });

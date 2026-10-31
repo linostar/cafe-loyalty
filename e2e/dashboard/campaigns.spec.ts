@@ -279,3 +279,86 @@ for (const answer of ["the list as it was", "a failure"] as const) {
     await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 }
+
+test("starts an ended campaign again from its settings, and picks days with a preset", async ({ page }) => {
+  const ended = {
+    ...QUIET,
+    weekdays: [6, 7],
+    endsMinute: 1440,
+    discount: { kind: "amount", value: 50 },
+    // The second order type was removed since.
+    orderTypeIds: [ESPRESSO.id, "6a4f4d85-af88-4d3b-8d8b-3a7f4e5d6c74"],
+    endedAt: "2026-10-10T09:00:00.000Z",
+  };
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [ended] }),
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await expect(form.getByLabel("Name (Arabic)")).toHaveAccessibleDescription("Such as عصر هادئ.");
+  // The example is marked as Arabic inside the English hint, so it is spoken and laid out as Arabic.
+  await expect(form.getByText("عصر هادئ", { exact: true })).toHaveAttribute("lang", "ar");
+  await expect(form.getByText("عصر هادئ", { exact: true })).toHaveAttribute("dir", "rtl");
+  // A short visible label, named after the campaign.
+  const again = page.getByRole("button", { name: "Start again Quiet afternoons" });
+  await expect(again).toHaveText("Start again");
+  await again.click();
+  await expect(form.getByRole("heading", { name: "New campaign" })).toBeFocused();
+  await expect(form.getByLabel("Name (English)")).toHaveValue("Quiet afternoons");
+  await expect(form.getByLabel("Name (Arabic)")).toHaveValue("عصر هادئ");
+  await expect(form.getByLabel("Saturday")).toBeChecked();
+  await expect(form.getByLabel("Sunday")).toBeChecked();
+  await expect(form.getByLabel("Monday")).not.toBeChecked();
+  await expect(form.getByLabel("Starts at")).toHaveValue("15:00");
+  await expect(form.getByLabel("Ends at")).toHaveValue("00:00");
+  await expect(form.getByLabel("Amount off each item")).toBeChecked();
+  await expect(form.getByRole("textbox", { name: "Amount off (USD)" })).toHaveValue("0.50");
+  await expect(form.getByRole("checkbox", { name: /^Espresso/ })).toBeChecked();
+  await expect(form.getByRole("checkbox", { name: /^Latte/ })).not.toBeChecked();
+
+  await form.getByRole("button", { name: "Monday to Friday" }).click();
+  for (const day of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) {
+    await expect(form.getByLabel(day)).toBeChecked();
+  }
+  await expect(form.getByLabel("Saturday")).not.toBeChecked();
+  await form.getByRole("button", { name: "Every day" }).click();
+  await expect(form.getByLabel("Sunday")).toBeChecked();
+  await form.getByRole("button", { name: "Saturday and Sunday" }).click();
+  await expect(form.getByLabel("Monday")).not.toBeChecked();
+  await expect(form.getByLabel("Saturday")).toBeChecked();
+});
+
+test("asks before leaving a new campaign being typed, and no more once it is started", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": reply(200, { cafe: CAFE, program: null, orderTypes: [ESPRESSO, LATTE] }),
+    "GET /api/campaigns": reply(200, { running: [], ended: [] }),
+    "POST /api/campaigns": reply(201, { running: [QUIET], ended: [] }),
+    "GET /api/review-queue": reply(200, { items: [], nextCursor: null }),
+    "GET /api/feedback": reply(200, { items: [], unread: 0, nextCursor: null }),
+  });
+  await page.goto("/campaigns");
+  const form = page.getByRole("form", { name: "New campaign" });
+  await form.getByLabel("Name (English)").fill("Quiet afternoons");
+  const asked: string[] = [];
+  page.on("dialog", (dialog) => {
+    asked.push(dialog.type());
+    void dialog.dismiss();
+  });
+  // Dismissed: the page stays, with what was typed.
+  await page.getByRole("navigation").getByRole("link", { name: "Inbox" }).click();
+  await expect.poll(() => asked).toEqual(["beforeunload"]);
+  await expect(form.getByLabel("Name (English)")).toHaveValue("Quiet afternoons");
+
+  await form.getByLabel("Name (Arabic)").fill("عصر هادئ");
+  await form.getByRole("button", { name: "Monday to Friday" }).click();
+  await form.getByRole("textbox", { name: "Percent off" }).fill("20");
+  await form.getByRole("checkbox", { name: /^Espresso/ }).check();
+  await form.getByRole("button", { name: "Start campaign" }).click();
+  await expect(page.getByRole("button", { name: "End Quiet afternoons" })).toBeVisible();
+  await page.getByRole("navigation").getByRole("link", { name: "Review" }).click();
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  expect(asked).toEqual(["beforeunload"]);
+});

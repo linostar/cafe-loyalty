@@ -93,6 +93,8 @@ export const API_MESSAGES_AR = {
   "Pick at least one order type.": "اختر نوع طلب واحداً على الأقل.",
   "Pick each order type once.": "اختر كل نوع طلب مرة واحدة.",
   "End after the start, on the same day.": "اجعل النهاية بعد البداية، في اليوم نفسه.",
+  // Results.
+  "Choose a month as YYYY-MM, such as 2026-10.": "اختر شهراً بصيغة YYYY-MM، مثل 2026-10.",
   // Devices and pairing.
   "This counter app is out of date. Keep the phone online: it sends its waiting stamps, then updates itself.":
     "تطبيق الكاونتر هذا قديم. أبقِ الهاتف متصلاً بالإنترنت: سيرسل الأختام المنتظرة ثم يحدّث نفسه.",

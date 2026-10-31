@@ -37,13 +37,15 @@ const homeData = (path: string): Response | undefined =>
       ? respond(200, visitHours())
       : path === "/api/cafe"
         ? respond(200, CAFE_SETUP)
-        : // What the layout and Home also load: the navigation's counts and the first month.
+        : // What the layout and Home also load: the navigation's counts and this month's results.
           path === "/api/review-queue"
           ? respond(200, { items: [], nextCursor: null })
           : path === "/api/feedback"
-            ? respond(200, { items: [], unread: 0, more: false })
-            : path === "/api/results"
-              ? respond(200, { window: null, memberVisits: 0, customersWonBack: 0, quietHourVisits: 0, rewardRedemptions: 0, offers: { winBack: { visits: 0, costCents: 0, revenueCents: 0 }, quietHour: { visits: 0, costCents: 0, revenueCents: 0 } } })
+            ? respond(200, { items: [], unread: 0, nextCursor: null })
+            : path === "/api/devices"
+              ? respond(200, { devices: [], pairingCodes: [] })
+              : path === "/api/results"
+              ? respond(200, { month: "2026-10", current: true, months: ["2026-10"], memberVisits: 0, customersWonBack: 0, quietHourVisits: 0, rewardRedemptions: 0, offers: { winBack: { visits: 0, costCents: 0, revenueCents: 0 }, quietHour: { visits: 0, costCents: 0, revenueCents: 0 } } })
               : undefined;
 
 afterEach(() => {
@@ -96,6 +98,34 @@ describe("Dashboard App", () => {
     expect(warning).toHaveTextContent("Some customers' wallet cards are not showing their latest stamps");
     expect(warning).toHaveTextContent("Apple Wallet: 1 card, last failure");
     expect(warning).toHaveTextContent("apns_503_ServiceUnavailable");
+  });
+
+  it("flags counter phones not seen for 2 days, not removed ones, and links to Devices (D15)", async () => {
+    const phone = (name: string, daysAgo: number, revoked = false) => ({
+      id: crypto.randomUUID(),
+      name,
+      pairedAt: "2026-09-01T08:00:00.000Z",
+      lastSeenAt: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString(),
+      revoked,
+    });
+    const devices = [phone("Front counter", 3), phone("Back bar", 1), phone("Old phone", 9, true), phone("Spare phone", 10, true)];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) =>
+        Promise.resolve(
+          path === "/api/auth/session"
+            ? respond(200, SESSION)
+            : path === "/api/devices"
+              ? respond(200, { devices, pairingCodes: [] })
+              : (homeData(path) ?? unauthenticated()),
+        ),
+      ),
+    );
+    render(<App />);
+    const needsYou = await screen.findByRole("region", { name: "Needs you" });
+    const item = await within(needsYou).findByText("Counter phones not seen for 2 days");
+    expect(item.closest("li")).toHaveTextContent("1 phone");
+    expect(within(needsYou).getByRole("link", { name: "Check them" })).toHaveAttribute("href", "/devices");
   });
 
   it("shows members' visits by hour and weekday from the first to the last busy hour, and loads them again every hour (AC 34)", async () => {

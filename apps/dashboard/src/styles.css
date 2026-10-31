@@ -132,8 +132,8 @@
   background: var(--color-surface-sunken);
 }
 
-/* The current page (or More, when it holds the current page): underlined and bold as well as tinted, not colour alone. */
-.sidenav a[aria-current="page"],
+/* The current page, or its page for a sub-page (or More, when it holds it): underlined and bold as well as tinted, not colour alone. */
+.sidenav a[aria-current],
 .nav-more.is-current {
   background: var(--color-accent-soft);
   color: var(--color-accent-strong);
@@ -393,6 +393,22 @@
   margin-block-end: var(--space-4);
 }
 
+/* A password or PIN with its Show toggle beside it; pressed, the toggle looks selected, like a chosen chip. */
+.field-control {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.field-control input {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.field-control button[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
 /* A form's fields in columns where they fit; anything else (headings, errors, buttons) on a row of its own. */
 .form-grid {
   display: grid;
@@ -497,7 +513,7 @@ form > .actions {
   margin-block-start: var(--space-3);
 }
 
-/* Home: what needs the owner first, then the first month and the busy and quiet hours side by side on wide screens. */
+/* Home: what needs the owner first, then this month and the busy and quiet hours side by side on wide screens. */
 .home-columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));

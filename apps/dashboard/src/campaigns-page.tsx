@@ -11,12 +11,13 @@ import {
   type Lang,
   type OrderType,
 } from "@cafe-loyalty/shared";
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { dateFormat, useLang, useT, type Translate, type Later, useSay } from "./i18n.js";
-import { parseUsdInput, parseWholeNumberInput } from "./money-input.js";
+import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
+import { useUnsavedChanges, type UnsavedChanges } from "./unsaved-changes.js";
 
 const AR = {
   "{value}% off": "خصم {value}%",
@@ -31,8 +32,11 @@ const AR = {
   "Enter an amount in dollars, such as 0.50.": "أدخل مبلغاً بالدولار، مثل 0.50.",
   "Pick at least one order type.": "اختر نوع طلب واحداً على الأقل.",
   "New campaign": "حملة جديدة",
-  "Such as Quiet afternoons.": "مثل Quiet afternoons.",
+  "Such as {example}.": "مثل {example}.",
   Days: "الأيام",
+  "Every day": "كل يوم",
+  "Monday to Friday": "من الاثنين إلى الجمعة",
+  "Saturday and Sunday": "السبت والأحد",
   "Starts at": "يبدأ عند",
   "Ends at": "ينتهي عند",
   "Café time. Use 00:00 to run until midnight.": "بتوقيت المقهى. استخدم 00:00 لتستمر حتى منتصف الليل.",
@@ -64,14 +68,39 @@ const AR = {
   "Yes, end {name}": "نعم، أنهِ {name}",
   Ended: "منتهية",
   ended: "منتهية",
+  "Start again": "البدء من جديد",
+  "Start again {name}": "البدء من جديد {name}",
+  "Yes, replace the draft": "نعم، استبدل المسودة",
+  "Yes, replace the draft with {name}": "نعم، استبدل المسودة بـ {name}",
 } as const;
 
 type T = Translate<typeof AR>;
+
+/** "Such as …" with the example a name in one language, marked as such, so it is spoken and laid out in it. */
+function suchAs(t: T, example: string, lang: "ar" | "en"): ReactNode {
+  const [before = "", after = ""] = t("Such as {example}.").split("{example}");
+  return (
+    <>
+      {before}
+      <span lang={lang} dir={lang === "ar" ? "rtl" : "ltr"}>
+        {example}
+      </span>
+      {after}
+    </>
+  );
+}
 
 /** Monday to Sunday (5 to 11 January 2026), for the days' names in each language. */
 const WEEK = Array.from({ length: 7 }, (_, index) => new Date(Date.UTC(2026, 0, 5 + index)));
 
 type Change = (method: "POST", path: string, body?: unknown) => Promise<void>;
+
+/** Quick picks for the days, Monday (1) to Sunday (7). */
+const DAY_PRESETS = [
+  ["Every day", [1, 2, 3, 4, 5, 6, 7]],
+  ["Monday to Friday", [1, 2, 3, 4, 5]],
+  ["Saturday and Sunday", [6, 7]],
+] as const;
 
 /** "15:00" -> 900; "00:00" as an end means midnight, the end of the day. */
 const minuteOf = (time: string, end: boolean): number | null => {
@@ -187,24 +216,38 @@ function TimeField({ label, value, onChange, hint, error }: { label: string; val
 }
 
 /**
- * A new campaign (AC 35). Each order type shows its price after the discount against its margin floor, so the owner
- * sees what the server would refuse before sending it.
+ * A new campaign (AC 35), empty or filled in from an ended one (`from`: Start again; campaigns are never edited). Each
+ * order type shows its price after the discount against its margin floor, so the owner sees what the server would
+ * refuse before sending it. `unsaved` is the page's, which asks before Start again replaces a draft.
  */
-function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes: readonly OrderType[]; minMarginPercent: number; change: Change }) {
+function NewCampaignForm({
+  orderTypes,
+  minMarginPercent,
+  change,
+  from,
+  unsaved,
+}: {
+  orderTypes: readonly OrderType[];
+  minMarginPercent: number;
+  change: Change;
+  from: Campaign | null;
+  unsaved: UnsavedChanges;
+}) {
   const t = useT(AR);
   const say = useSay(AR);
   const lang = useLang();
-  const [nameEn, setNameEn] = useState("");
-  const [nameAr, setNameAr] = useState("");
-  const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [starts, setStarts] = useState("15:00");
-  const [ends, setEnds] = useState("17:00");
-  const [kind, setKind] = useState<DiscountKind>("percent");
-  const [value, setValue] = useState("");
-  const [chosen, setChosen] = useState<string[]>([]);
+  const onSale = orderTypes.filter((type) => type.active);
+  const [nameEn, setNameEn] = useState(from?.nameEn ?? "");
+  const [nameAr, setNameAr] = useState(from?.nameAr ?? "");
+  const [weekdays, setWeekdays] = useState<number[]>(from === null ? [] : [...from.weekdays]);
+  const [starts, setStarts] = useState(from === null ? "15:00" : timeOf(from.startsMinute));
+  const [ends, setEnds] = useState(from === null ? "17:00" : timeOf(from.endsMinute));
+  const [kind, setKind] = useState<DiscountKind>(from?.discount.kind ?? "percent");
+  const [value, setValue] = useState(from === null ? "" : from.discount.kind === "percent" ? String(from.discount.value) : centsToInput(from.discount.value));
+  // Only the order types still on sale: one removed since is left out.
+  const [chosen, setChosen] = useState<string[]>(from === null ? [] : from.orderTypeIds.filter((id) => onSale.some((type) => type.id === id)));
   const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
   const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
-  const onSale = orderTypes.filter((type) => type.active);
   const discountValue = kind === "percent" ? parseWholeNumberInput(value) : parseUsdInput(value);
   const discount = discountValue === null || discountValue < 1 ? null : { kind, value: discountValue };
   const longDay = dateFormat(lang, { weekday: "long", timeZone: "UTC" });
@@ -218,6 +261,7 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
     <Form
       aria-labelledby="new-campaign-title"
       className="card"
+      unsaved={unsaved}
       onChange={clearDone}
       onSubmit={(event) => {
         event.preventDefault();
@@ -252,7 +296,9 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
         });
       }}
     >
-      <h3 id="new-campaign-title">{t("New campaign")}</h3>
+      <h3 id="new-campaign-title" tabIndex={-1}>
+        {t("New campaign")}
+      </h3>
       <FormError message={error} />
       <div className="form-grid">
         <Field
@@ -263,13 +309,39 @@ function NewCampaignForm({ orderTypes, minMarginPercent, change }: { orderTypes:
           value={nameEn}
           onChange={setNameEn}
           maxLength={60}
-          hint={t("Such as Quiet afternoons.")}
+          hint={suchAs(t, "Quiet afternoons", "en")}
           error={fieldErrors.nameEn}
         />
-        <Field label={t("Name (Arabic)")} name="nameAr" type="text" lang="ar" value={nameAr} onChange={setNameAr} maxLength={60} error={fieldErrors.nameAr} />
+        <Field
+          label={t("Name (Arabic)")}
+          name="nameAr"
+          type="text"
+          lang="ar"
+          value={nameAr}
+          onChange={setNameAr}
+          maxLength={60}
+          hint={suchAs(t, "عصر هادئ", "ar")}
+          error={fieldErrors.nameAr}
+        />
       </div>
       <fieldset aria-describedby={problems.weekdays === undefined ? undefined : "campaign-days-error"}>
         <legend>{t("Days")}</legend>
+        <div className="actions">
+          {DAY_PRESETS.map(([label, days]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                clearDone();
+                // No input event: marked edited here, so leaving asks first.
+                unsaved.edited();
+                setWeekdays([...days]);
+              }}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
         <div className="choices">
           {WEEK.map((day, index) => (
             <Choice
@@ -396,6 +468,16 @@ export function CampaignsPage() {
   const [setup, , retrySetup] = useApiData("/api/cafe", cafeSetupSchema);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const ending = useSubmit();
+  /** The ended campaign the new campaign form was last filled in from, and a count that makes a fresh form each time. */
+  const [startAgain, setStartAgain] = useState<{ from: Campaign | null; count: number }>({ from: null, count: 0 });
+  /** The new campaign form's unsaved changes, kept here so Start again asks before replacing a draft. */
+  const draft = useUnsavedChanges();
+  useEffect(() => {
+    // The form is filled in afresh: focus moves to its heading, so the owner reads on from there.
+    if (startAgain.count > 0) {
+      document.getElementById("new-campaign-title")?.focus();
+    }
+  }, [startAgain]);
   // Only the café's setup holds the page back. The campaigns' own load (and a reload after a stale end) shows its state
   // in place of the lists, so the new campaign form, and anything typed into it, stays.
   if (setup.status !== "loaded") {
@@ -452,7 +534,7 @@ export function CampaignsPage() {
           ))}
         </ul>
       )}
-      <NewCampaignForm orderTypes={orderTypes} minMarginPercent={cafe.minMarginPercent} change={change} />
+      <NewCampaignForm key={startAgain.count} from={startAgain.from} orderTypes={orderTypes} minMarginPercent={cafe.minMarginPercent} change={change} unsaved={draft} />
       {campaigns === null || campaigns.ended.length === 0 ? null : (
         <>
           <h3>{t("Ended")}</h3>
@@ -462,6 +544,31 @@ export function CampaignsPage() {
                 <span className="row-main">
                   <strong>{nameOf(lang, campaign)}</strong>: {describe(t, lang, campaign, orderTypes)} <span className="badge">{t("ended")}</span>
                 </span>
+                {/* A short visible label; the name adds the campaign (WCAG 2.5.3: it starts with what is shown). A draft in
+                    the form is replaced only once the owner confirms. */}
+                {draft.dirty ? (
+                  <ConfirmButton
+                    label={t("Start again")}
+                    confirmLabel={t("Yes, replace the draft")}
+                    name={t("Start again {name}", { name: nameOf(lang, campaign) })}
+                    confirmName={t("Yes, replace the draft with {name}", { name: nameOf(lang, campaign) })}
+                    pending={false}
+                    onConfirm={() => {
+                      draft.reset();
+                      setStartAgain(({ count }) => ({ from: campaign, count: count + 1 }));
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={t("Start again {name}", { name: nameOf(lang, campaign) })}
+                    onClick={() => {
+                      setStartAgain(({ count }) => ({ from: campaign, count: count + 1 }));
+                    }}
+                  >
+                    {t("Start again")}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
