@@ -187,6 +187,43 @@ describe("the setup wizard (D1)", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Step 1 of 5 Your loyalty program" })).toBeInTheDocument();
   });
 
+  it("keeps asking for a step's edits when Skip the rest fails", async () => {
+    serve({ cafe: CAFE, program: null, orderTypes: [] }, {}, (method, path) => (method === "POST" && path === "/api/cafe/setup/finish" ? unreachable() : undefined));
+    render(<App />);
+    await screen.findByRole("heading", { level: 2, name: "Set up your café" });
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    const input = screen.getByRole("form", { name: "Add an order type" }).querySelector("input");
+    if (input === null) {
+      throw new Error("The order type form has no input");
+    }
+    fireEvent.input(input, { target: { value: "Espresso" } });
+    fireEvent.click(screen.getByRole("button", { name: "Skip the rest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, discard my changes" }));
+    expect(await screen.findByText(UNREACHABLE)).toBeInTheDocument();
+    // Still on the step, with its edits: leaving it asks again.
+    expect(input).toHaveValue("Espresso");
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: "Yes, discard my changes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "Step 2 of 5 Your first order type" })).toBeInTheDocument();
+  });
+
+  it("loads the phones again when it leaves the phone step, for one paired there without Done", async () => {
+    const { gets } = serve({ cafe: CAFE, program: null, orderTypes: [] });
+    render(<App />);
+    await screen.findByRole("heading", { level: 2, name: "Set up your café" });
+    for (const label of ["Skip this step", "Skip this step", "Skip this step"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+    }
+    expect(screen.getByRole("heading", { level: 3, name: "Step 4 of 5 Your counter phone" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(gets("/api/devices")).toBe(1);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    await waitFor(() => {
+      expect(gets("/api/devices")).toBe(2);
+    });
+  });
+
   it("stays finished when a print is recorded only after Finish", async () => {
     const held: { answer?: (response: Response) => void } = {};
     const { writes } = serve({ cafe: CAFE, program: null, orderTypes: [] }, {}, (method, path) =>

@@ -12,11 +12,11 @@ import { useUnsavedChanges } from "./unsaved-changes.js";
 import "./setup.css";
 
 /** What the printed sheet says to customers, always in both languages whatever the dashboard's (D6). */
-const SHEET_TEXT = ["Get your loyalty card", "Scan this code with your phone's camera and open the link. Your purchases earn stamps."] as const;
+const SHEET_TEXT = ["Get your loyalty card", "Scan this code with your phone's camera and open the link. Eligible purchases earn stamps."] as const;
 
 const AR = {
   [SHEET_TEXT[0]]: "احصل على بطاقة الولاء",
-  [SHEET_TEXT[1]]: "امسح هذا الرمز بكاميرا هاتفك وافتح الرابط. مشترياتك تكسبك أختاماً.",
+  [SHEET_TEXT[1]]: "امسح هذا الرمز بكاميرا هاتفك وافتح الرابط. المشتريات المؤهلة تكسبك أختاماً.",
   "QR code customers scan to get a loyalty card": "رمز QR يمسحه الزبائن للحصول على بطاقة ولاء",
   Print: "طباعة",
   "Print the signup QR": "طباعة رمز QR للتسجيل",
@@ -237,9 +237,23 @@ export function SetupWizard({
     onSetup(await apiRequest(method, path, cafeSetupSchema, body));
     return true;
   };
+  /** Leaving the phone step: a phone paired there (without Done) shows in Home's list. */
+  const leavingStep = () => {
+    if (step.key === "phone") {
+      reloadDevices();
+    }
+  };
+  const goTo = (next: number) => {
+    leavingStep();
+    draft.reset();
+    setIndex(next);
+  };
   const finish = () => {
+    leavingStep();
     void submit(() => apiRequest("POST", "/api/cafe/setup/finish", cafeSetupSchema)).then((result) => {
       if (result.ok) {
+        // Not before: a failed Finish keeps the step, its edits and their warning.
+        draft.reset();
         onSetup(result.value);
       }
     });
@@ -252,10 +266,7 @@ export function SetupWizard({
         confirmLabel={t("Yes, discard my changes")}
         className={className}
         pending={busy}
-        onConfirm={() => {
-          draft.reset();
-          go();
-        }}
+        onConfirm={go}
       />
     ) : (
       <button type="button" className={className} aria-disabled={busy || undefined} onClick={busy ? undefined : go}>
@@ -332,7 +343,7 @@ export function SetupWizard({
         <div className="actions">
           {index > 0
             ? leave(t("Back"), () => {
-                setIndex(index - 1);
+                goTo(index - 1);
               })
             : null}
           {last ? (
@@ -342,7 +353,7 @@ export function SetupWizard({
               {leave(
                 done ? t("Next") : t("Skip this step"),
                 () => {
-                  setIndex(index + 1);
+                  goTo(index + 1);
                 },
                 { className: "primary" },
               )}
