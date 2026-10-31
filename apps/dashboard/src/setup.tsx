@@ -4,18 +4,19 @@ import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { OrderTypeForm, ProgramForm } from "./cafe-page.js";
 import { NewCode, PairForm } from "./devices-page.js";
-import { FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import { ConfirmButton, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import { useApiText, useCommonT, useT } from "./i18n.js";
 import { PageStatus, useApiData, type ApiData } from "./session.js";
 import { AddStaffForm } from "./staff-page.js";
+import { useUnsavedChanges } from "./unsaved-changes.js";
 import "./setup.css";
 
 /** What the printed sheet says to customers, always in both languages whatever the dashboard's (D6). */
-const SHEET_TEXT = ["Get your loyalty card", "Scan this code with your phone's camera and open the link. Every visit earns you a stamp."] as const;
+const SHEET_TEXT = ["Get your loyalty card", "Scan this code with your phone's camera and open the link. Your purchases earn stamps."] as const;
 
 const AR = {
   [SHEET_TEXT[0]]: "احصل على بطاقة الولاء",
-  [SHEET_TEXT[1]]: "امسح هذا الرمز بكاميرا هاتفك وافتح الرابط. كل زيارة تكسبك ختماً.",
+  [SHEET_TEXT[1]]: "امسح هذا الرمز بكاميرا هاتفك وافتح الرابط. مشترياتك تكسبك أختاماً.",
   "QR code customers scan to get a loyalty card": "رمز QR يمسحه الزبائن للحصول على بطاقة ولاء",
   Print: "طباعة",
   "Print the signup QR": "طباعة رمز QR للتسجيل",
@@ -46,6 +47,7 @@ const AR = {
   "Skip this step": "تخطَّ هذه الخطوة",
   "Skip the rest": "تخطَّ البقية",
   "Finish setup": "إنهاء التجهيز",
+  "Yes, discard my changes": "نعم، أهمل تعديلاتي",
   "Finish setting up": "أكمل التجهيز",
   "{done} of {total} done.": "أُنجز {done} من {total}.",
   "Set the program": "اضبط البرنامج",
@@ -196,6 +198,7 @@ export function PrintQrPage({ cafeName }: { cafeName: string }) {
  * page's own form or skipped. Finishing, or skipping the rest, records it on the server (`onSetup` then gets a setup
  * with `setupFinishedAt`), so no device or co-owner sees the wizard again. Focus goes to each step's heading. The
  * counter phones are Home's own load (`devices`): `reloadDevices` loads them again quietly, `retryDevices` after a failure.
+ * Leaving a step whose form has unsaved edits (Back, Next, Skip the rest) asks first: the step's form goes with it.
  */
 export function SetupWizard({
   setup,
@@ -219,6 +222,8 @@ export function SetupWizard({
   /** The phone whose code ran out while shown, said once (the code's countdown is not announced). */
   const [expired, setExpired] = useState<string | null>(null);
   const { pending, error, submit } = useSubmit();
+  /** The current step's form: its unsaved edits, which leaving the step drops. */
+  const draft = useUnsavedChanges();
   const wizard = useFocusOnChange<HTMLElement>(index);
   // By the code's id: a renewed code (New code) takes focus too, as on the Devices page.
   const pairing = useFocusOnChange<HTMLDivElement>(newCode?.id ?? null);
@@ -239,6 +244,24 @@ export function SetupWizard({
       }
     });
   };
+  /** A button that leaves the step: while its form has unsaved edits, it asks before dropping them. */
+  const leave = (label: string, go: () => void, { className, busy = false }: { className?: string; busy?: boolean } = {}) =>
+    draft.dirty ? (
+      <ConfirmButton
+        label={label}
+        confirmLabel={t("Yes, discard my changes")}
+        className={className}
+        pending={busy}
+        onConfirm={() => {
+          draft.reset();
+          go();
+        }}
+      />
+    ) : (
+      <button type="button" className={className} aria-disabled={busy || undefined} onClick={busy ? undefined : go}>
+        {label}
+      </button>
+    );
 
   return (
     <section ref={wizard} aria-labelledby="setup-title" className="setup-wizard">
@@ -267,13 +290,14 @@ export function SetupWizard({
           )}
         </div>
         {step.key === "program" ? (
-          <ProgramForm program={setup.program} save={save} />
+          <ProgramForm program={setup.program} save={save} unsaved={draft} />
         ) : step.key === "orderType" ? (
           <div className="card">
-            <OrderTypeForm save={save} />
+            <OrderTypeForm save={save} unsaved={draft} />
           </div>
         ) : step.key === "barista" ? (
           <AddStaffForm
+            unsaved={draft}
             change={async (method, path, body) => {
               setStaff(await apiRequest(method, path, staffListSchema, body));
             }}
@@ -281,7 +305,7 @@ export function SetupWizard({
         ) : step.key === "phone" ? (
           <div ref={pairing}>
             {newCode === null ? (
-              <PairForm onCreated={setNewCode} />
+              <PairForm onCreated={setNewCode} unsaved={draft} />
             ) : (
               <NewCode
                 key={newCode.id}
@@ -306,34 +330,23 @@ export function SetupWizard({
         )}
         <FormError message={error} />
         <div className="actions">
-          {index > 0 ? (
-            <button
-              type="button"
-              onClick={() => {
+          {index > 0
+            ? leave(t("Back"), () => {
                 setIndex(index - 1);
-              }}
-            >
-              {t("Back")}
-            </button>
-          ) : null}
+              })
+            : null}
           {last ? (
-            <button type="button" className="primary" aria-disabled={pending || undefined} onClick={finish}>
-              {t("Finish setup")}
-            </button>
+            leave(t("Finish setup"), finish, { className: "primary", busy: pending })
           ) : (
             <>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
+              {leave(
+                done ? t("Next") : t("Skip this step"),
+                () => {
                   setIndex(index + 1);
-                }}
-              >
-                {done ? t("Next") : t("Skip this step")}
-              </button>
-              <button type="button" aria-disabled={pending || undefined} onClick={finish}>
-                {t("Skip the rest")}
-              </button>
+                },
+                { className: "primary" },
+              )}
+              {leave(t("Skip the rest"), finish, { busy: pending })}
             </>
           )}
         </div>

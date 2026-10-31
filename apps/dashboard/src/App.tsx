@@ -492,8 +492,13 @@ function HomePage({ session }: { session: OwnerSession }) {
         }}
         retryDevices={retryDevices}
         onSetup={(next) => {
-          setSetup(next);
-          setWizardClosed(next.cafe.setupFinishedAt !== null);
+          // A step's save or a print answered after Finish carries the setup from before it: the finish stays.
+          setSetup((current) =>
+            next.cafe.setupFinishedAt === null && typeof current.cafe.setupFinishedAt === "string"
+              ? { ...next, cafe: { ...next.cafe, setupFinishedAt: current.cafe.setupFinishedAt } }
+              : next,
+          );
+          setWizardClosed((closed) => closed || next.cafe.setupFinishedAt !== null);
         }}
       />
     );

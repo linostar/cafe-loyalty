@@ -2,6 +2,7 @@ import { STAFF_PIN_MAX_LENGTH, staffListSchema, type StaffMember, toLatinDigits 
 import { useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import type { UnsavedChanges } from "./unsaved-changes.js";
 import { useT, type Later, useLang, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -38,7 +39,7 @@ const reloadIfStale = (reload: () => void) => (result: { ok: boolean; error?: un
   }
 };
 
-export function AddStaffForm({ change }: { change: Change }) {
+export function AddStaffForm({ change, unsaved }: { change: Change; unsaved?: UnsavedChanges }) {
   const t = useT(AR);
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
@@ -46,6 +47,7 @@ export function AddStaffForm({ change }: { change: Change }) {
   return (
     <Form
       aria-labelledby="add-staff-title"
+      unsaved={unsaved}
       className="card form-grid"
       onChange={clearDone}
       onSubmit={(event) => {

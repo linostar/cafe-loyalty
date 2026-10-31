@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest, isStale, noContent } from "./api.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import type { UnsavedChanges } from "./unsaved-changes.js";
 import { dateFormat, useLang, useT, type Later, type Translate } from "./i18n.js";
 import { PageStatus, useApiData } from "./session.js";
 
@@ -146,13 +147,14 @@ export function NewCode({
   );
 }
 
-export function PairForm({ onCreated }: { onCreated: (code: PairingCode) => void }) {
+export function PairForm({ onCreated, unsaved }: { onCreated: (code: PairingCode) => void; unsaved?: UnsavedChanges }) {
   const t = useT(AR);
   const [deviceName, setDeviceName] = useState("");
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
     <Form
       aria-labelledby="pair-title"
+      unsaved={unsaved}
       className="card"
       onSubmit={(event) => {
         event.preventDefault();

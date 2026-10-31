@@ -13,6 +13,7 @@ import { useState, type ReactNode } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
+import type { UnsavedChanges } from "./unsaved-changes.js";
 import { useLang, useT, type Later, type Translate } from "./i18n.js";
 import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-input.js";
 import { PageStatus, useApiData } from "./session.js";
@@ -164,7 +165,7 @@ function ReviewLinkForm({ googleReviewUrl, save }: { googleReviewUrl: string | n
   );
 }
 
-export function ProgramForm({ program, save }: { program: CafeSetup["program"]; save: Save }) {
+export function ProgramForm({ program, save, unsaved }: { program: CafeSetup["program"]; save: Save; unsaved?: UnsavedChanges }) {
   const t = useT(AR);
   const lang = useLang();
   const [stamps, setStamps] = useState(program === null ? "" : String(program.stampsRequired));
@@ -175,6 +176,7 @@ export function ProgramForm({ program, save }: { program: CafeSetup["program"]; 
   return (
     <Form
       aria-labelledby="program-title"
+      unsaved={unsaved}
       onChange={clearDone}
       className="card form-grid"
       onSubmit={(event) => {
@@ -363,7 +365,17 @@ function WinBackForm({ winBack, save }: { winBack: WinBackSettings; save: Save }
 }
 
 /** Adds an order type, or edits one when `orderType` is given; `onDone` closes the edit, saying whether it was saved. */
-export function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderType; save: Save; onDone?: (saved: boolean) => void }) {
+export function OrderTypeForm({
+  orderType,
+  save,
+  onDone,
+  unsaved,
+}: {
+  orderType?: OrderType;
+  save: Save;
+  onDone?: (saved: boolean) => void;
+  unsaved?: UnsavedChanges;
+}) {
   const t = useT(AR);
   const lang = useLang();
   const [nameEn, setNameEn] = useState(orderType?.nameEn ?? "");
@@ -379,6 +391,7 @@ export function OrderTypeForm({ orderType, save, onDone }: { orderType?: OrderTy
   return (
     <Form
       aria-labelledby={titleId}
+      unsaved={unsaved}
       onChange={clearDone}
       className={orderType === undefined ? "form-grid add-form" : "form-grid"}
       onSubmit={(event) => {

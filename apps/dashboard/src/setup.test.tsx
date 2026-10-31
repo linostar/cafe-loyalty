@@ -162,6 +162,57 @@ describe("the setup wizard (D1)", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "Café Najjar" })).toBeInTheDocument();
     expect(writes).toEqual(["/api/cafe/join/printed", "/api/cafe/setup/finish"]);
   });
+
+  it("asks before leaving a step whose form has unsaved edits, and keeps them on Cancel", async () => {
+    serve({ cafe: CAFE, program: null, orderTypes: [] });
+    render(<App />);
+    await screen.findByRole("heading", { level: 2, name: "Set up your café" });
+    const input = screen.getByRole("form", { name: "Loyalty program" }).querySelector("input");
+    if (input === null) {
+      throw new Error("The program form has no input");
+    }
+    fireEvent.input(input, { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    expect(screen.getByRole("heading", { level: 3, name: "Step 1 of 5 Your loyalty program" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(input).toHaveValue("8");
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, discard my changes" }));
+    expect(screen.getByRole("heading", { level: 3, name: "Step 2 of 5 Your first order type" })).toBeInTheDocument();
+    // The edits went with their step: the next one leaves without asking.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("heading", { level: 3, name: "Step 1 of 5 Your loyalty program" })).toBeInTheDocument();
+  });
+
+  it("stays finished when a print is recorded only after Finish", async () => {
+    const held: { answer?: (response: Response) => void } = {};
+    const { writes } = serve({ cafe: CAFE, program: null, orderTypes: [] }, {}, (method, path) =>
+      method === "POST" && path === "/api/cafe/join/printed" ? new Promise<Response>((resolve) => (held.answer = resolve)) : undefined,
+    );
+    render(<App />);
+    await screen.findByRole("heading", { level: 2, name: "Set up your café" });
+    for (const label of ["Skip this step", "Skip this step", "Skip this step", "Skip this step"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+    }
+    await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" });
+    vi.stubGlobal("print", () => window.dispatchEvent(new Event("beforeprint")));
+    // Pressed again until the page listens for printing (an effect, which may run just after the code shows).
+    await waitFor(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Print" }));
+      expect(held.answer).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Café Najjar" })).toBeInTheDocument();
+    expect(writes).toEqual(["/api/cafe/setup/finish"]);
+    // Answered with the setup from before Finish.
+    held.answer?.(respond(200, { cafe: { ...CAFE, signupQrPrintedAt: PRINTED_AT }, program: null, orderTypes: [] }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("heading", { level: 2, name: "Set up your café" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 2, name: "Café Najjar" })).toBeInTheDocument();
+  });
 });
 
 describe("Home's setup checklist (D22)", () => {

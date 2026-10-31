@@ -45,7 +45,7 @@ export function Form({
   unsaved: given,
   children,
   ...props
-}: Omit<ComponentProps<"form">, "noValidate"> & { unsaved?: UnsavedChanges }) {
+}: Omit<ComponentProps<"form">, "noValidate"> & { unsaved?: UnsavedChanges | undefined }) {
   const [attempt, setAttempt] = useState(0);
   const own = useUnsavedChanges();
   const unsaved = given ?? own;
@@ -321,6 +321,7 @@ export function ConfirmButton({
   confirmName,
   pending,
   onConfirm,
+  className,
 }: {
   label: string;
   confirmLabel: string;
@@ -328,6 +329,8 @@ export function ConfirmButton({
   confirmName?: string;
   pending: boolean;
   onConfirm: () => void;
+  /** The class of the button that asks, such as `primary`. */
+  className?: string | undefined;
 }) {
   const t = useCommonT();
   const [asking, setAsking] = useState(false);
@@ -383,6 +386,7 @@ export function ConfirmButton({
       ) : (
         <button
           type="button"
+          className={className}
           aria-label={name}
           aria-disabled={pending || undefined}
           onClick={() => {
