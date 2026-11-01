@@ -421,7 +421,9 @@ describe("web card", () => {
       expect(full).toContain('<h2 class="ready-heading">Reward ready: show this code to the barista</h2>');
       expect(full).not.toContain("to go for");
     }
-    expect(page).not.toContain("is-ready");
+    // Not the inlined stylesheet's selector: the class on the reward line.
+    expect(page).not.toContain('class="reward is-ready"');
+    expect(page).not.toContain("ready-heading\">");
   });
 
   it("sets and removes a recovery email, and opts in and out of offers", async () => {
