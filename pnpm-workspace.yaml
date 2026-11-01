@@ -4,5 +4,6 @@ packages:
 allowBuilds:
   esbuild: true
 overrides:
-  # passkit-generator 3.6.1 pins joi 17.13.4, which has a known denial-of-service flaw (the image scan refuses it).
-  passkit-generator>joi: 17.13.8
+  # passkit-generator 3.6.1 (and 3.7.0) pins joi 17.13.4; joi before 17.13.9 has known denial-of-service flaws (the
+  # image scan refuses them: CVE-2026-118772 was fixed in 17.13.9).
+  passkit-generator>joi: 17.13.9
