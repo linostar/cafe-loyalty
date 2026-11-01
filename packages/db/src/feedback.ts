@@ -63,7 +63,10 @@ export function verifyFeedbackToken(secrets: { cardQr: Keyring }, token: string)
 export const feedbackUrl = (publicUrl: string, secrets: { cardQr: Keyring }, request: { cafeId: string; requestId: string }): string =>
   new URL(`${FEEDBACK_PATH}${signFeedbackToken(secrets, request)}`, publicUrl).toString();
 
-/** The card's latest feedback request, which its passes and web card link to, inside withCafe for its café; or undefined. */
+/**
+ * The card's latest feedback request, which its passes link to, inside withCafe for its café; or undefined. The web
+ * card links to it only while it still takes a message (customer-pages.ts, openFeedbackRequest).
+ */
 export async function loadFeedbackRequest(trx: Transaction<Database>, cardId: string): Promise<{ cafeId: string; requestId: string } | undefined> {
   const request = await trx
     .selectFrom("feedback_requests")

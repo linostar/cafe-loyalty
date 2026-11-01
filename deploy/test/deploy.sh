@@ -141,7 +141,7 @@ vps "set -e
   PRODUCTION_DASHBOARD_DOMAIN=dashboard.example.test PRODUCTION_COUNTER_DOMAIN=counter.example.test \
     PRODUCTION_PUBLIC_DOMAIN=card.example.test STAGING_DASHBOARD_DOMAIN=dashboard.staging.example.test \
     STAGING_COUNTER_DOMAIN=counter.staging.example.test STAGING_PUBLIC_DOMAIN=card.staging.example.test \
-    bash /deploy/provision.sh env-files $ENV_DIR >/dev/null
+    OPERATOR_NAME='Test Operator' bash /deploy/provision.sh env-files $ENV_DIR >/dev/null
   sed -i -e 's/^SMTP_HOST=.*/SMTP_HOST=smtp.example.test/' -e 's/^SMTP_USER=.*/SMTP_USER=fake-user/' \
     -e 's/^SMTP_PASSWORD=.*/SMTP_PASSWORD=fake-smtp-password/' -e 's/^EMAIL_FROM=.*/EMAIL_FROM=test@example.test/' $ENV_DIR/app.env
   age-keygen -o /root/identity.txt 2>/dev/null
@@ -240,7 +240,7 @@ check "no backup is made before the first deploy" "$(vps "ls $ENV_DIR/backups | 
 run "mkdir -p /root/lost && cp $ENV_DIR/.env /root/lost/ && PRODUCTION_DASHBOARD_DOMAIN=dashboard.example.test \
   PRODUCTION_COUNTER_DOMAIN=counter.example.test PRODUCTION_PUBLIC_DOMAIN=card.example.test \
   STAGING_DASHBOARD_DOMAIN=dashboard.staging.example.test STAGING_COUNTER_DOMAIN=counter.staging.example.test \
-  STAGING_PUBLIC_DOMAIN=card.staging.example.test bash /deploy/provision.sh env-files /root/lost"
+  STAGING_PUBLIC_DOMAIN=card.staging.example.test OPERATOR_NAME='Test Operator' bash /deploy/provision.sh env-files /root/lost"
 check "provision.sh makes no new passwords over a database volume" "$status" 1
 check "it says to restore them" "$(said "the production database volume is there; restore both from a backup")" said
 check "and writes nothing" "$(vps 'ls /root/lost')" ""

@@ -78,7 +78,7 @@ check_input() {
 
   local missing=() name
   for name in DEPLOY_USER {PRODUCTION,STAGING}_DEPLOY_SSH_PUBLIC_KEY IMAGE_REPOSITORY {PRODUCTION,STAGING}_{DASHBOARD,COUNTER,PUBLIC}_DOMAIN \
-    BACKUP_AGE_RECIPIENT BACKUP_REMOTE ALERT_URL; do
+    OPERATOR_NAME BACKUP_AGE_RECIPIENT BACKUP_REMOTE ALERT_URL; do
     [[ -n ${!name:-} ]] || missing+=("$name")
   done
   ((${#missing[@]} == 0)) || fail "set ${missing[*]} (see deploy/provision.conf.example)."
@@ -87,6 +87,7 @@ check_input() {
   check_deploy_keys
   check_image_repository
   check_domains
+  check_operator_name
   check_backup_settings
 
   # Password logins end below, so whoever runs this must already be able to log in with a key.
@@ -141,6 +142,22 @@ check_domains() {
   done
   [[ $(printf '%s\n' "${domains[@]}" | sort -u | wc -l) -eq ${#domains[@]} ]] ||
     fail "the six *_DOMAIN settings must all differ: each app of each environment has its own domain."
+}
+
+# Written unquoted into app.env, which Compose and the server read: one line of at most 100 characters, with nothing
+# Compose would take as a quote, a comment or a variable.
+# U+2028 and U+2029 (line and paragraph separators) count as new lines on the server too. It must also hold a Latin or
+# Arabic letter or digit (matched as bytes, whatever the locale), which no trim removes and the server takes as visible,
+# so a name made only of spaces of any kind or of invisible characters never stops the server at startup.
+check_operator_name() {
+  # Characters, as the server counts them, whatever the locale: every UTF-8 byte but continuation bytes starts one.
+  local characters
+  characters=$(printf '%s' "${OPERATOR_NAME:-}" | LC_ALL=C tr -d '\200-\277' | wc -c)
+  if ! [[ -n ${OPERATOR_NAME:-} && $characters -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* &&
+    $OPERATOR_NAME != *$'\xe2\x80\xa8'* && $OPERATOR_NAME != *$'\xe2\x80\xa9'* ]] ||
+    ! LC_ALL=C grep -qE $'[A-Za-z0-9]|\xd8[\xa1-\xba]|\xd9[\x81-\x8a\xa0-\xa9]' <<<"$OPERATOR_NAME"; then
+    fail "OPERATOR_NAME must be who runs the service, as the privacy notice names them: one line of at most 100 characters, with a Latin or Arabic letter or digit, without quotes, #, \$ or backslashes."
+  fi
 }
 
 # Written to backup.conf and alert.curlrc: plain values only (no quotes, backslashes or spaces).
@@ -414,11 +431,13 @@ EMAIL_FROM=
 # GOOGLE_WALLET_ISSUER_ID=
 # GOOGLE_WALLET_SERVICE_ACCOUNT=" || true
   fi
-  # The addresses follow the domains given to this run.
+  # The addresses follow the domains given to this run, and the operator's name its OPERATOR_NAME (after PUBLIC_URL; awk
+  # prints it as it is, where sed would read & and backslashes in it).
   # Read in full first: a failed read must stop the run, never leave app.env (and its keys) empty.
   local updated
   updated=$(sed -e "s|^DASHBOARD_URL=.*|DASHBOARD_URL=https://${!dashboard}|" -e "s|^COUNTER_URL=.*|COUNTER_URL=https://${!counter}|" \
-    -e "s|^PUBLIC_URL=.*|PUBLIC_URL=https://${!public}|" "$dir/app.env") || fail "cannot read $dir/app.env."
+    -e "s|^PUBLIC_URL=.*|PUBLIC_URL=https://${!public}|" "$dir/app.env" |
+    awk '/^OPERATOR_NAME=/ { next } { print } /^PUBLIC_URL=/ { print "OPERATOR_NAME=" ENVIRON["OPERATOR_NAME"] }') || fail "cannot read $dir/app.env."
   [[ -n $updated ]] || fail "$dir/app.env is empty; restore it from a backup of the VPS."
   put_file "$dir/app.env" 600 <<<"$updated" || true
 }
@@ -776,7 +795,7 @@ main() {
 case ${1:-} in
 "") main ;;
 caddyfile) check_domains && caddyfile_text ;;
-env-files) [[ -d ${2:-} ]] || fail "usage: $0 env-files <existing directory>"; check_domains && write_env_files "$2" production ;;
+env-files) [[ -d ${2:-} ]] || fail "usage: $0 env-files <existing directory>"; check_domains && check_operator_name && write_env_files "$2" production ;;
 units) [[ -d ${2:-} ]] || fail "usage: $0 units <existing directory>"; check_backup_settings && write_units "$2" && write_alert_config "$2" ;;
 authorized-keys) check_deploy_keys && authorized_keys_text ;;
 sudoers) check_deploy_user && sudoers_text ;;

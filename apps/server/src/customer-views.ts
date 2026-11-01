@@ -25,11 +25,13 @@ export interface ProgramView {
 export interface JoinView {
   path: string;
   cafeName: string;
+  /** Who runs the service, named in the privacy notice as keeping the data. */
+  operatorName: string;
   program: ProgramView | undefined;
   /** The form's one-time value, which makes sending it twice land on one card. */
   formToken: string;
   values: Readonly<Record<string, string | undefined>>;
-  errors: { phone?: string; privacy?: string };
+  errors: { phone?: string; email?: string; privacy?: string };
   otherLangHref: string;
 }
 
@@ -51,11 +53,17 @@ ${program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: c
 <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" required value="${values.phone ?? ""}" aria-describedby="phone-hint${errors.phone === undefined ? "" : " phone-error"}"${errors.phone === undefined ? "" : html` aria-invalid="true"`}>
 <p id="phone-hint" class="hint">${t(lang, "phoneHint")}</p>
 ${errorBlock(errors.phone, "phone-error")}
-<div class="privacy" id="privacy-text"><strong>${t(lang, "privacyTitle")}</strong><p>${t(lang, "privacyText", { cafe: cafeName })}</p></div>
+<label for="email">${t(lang, "joinEmailLabel")}</label>
+<input id="email" name="email" type="email" autocomplete="email" dir="ltr" value="${values.email ?? ""}" aria-describedby="email-hint${errors.email === undefined ? "" : " email-error"}"${errors.email === undefined ? "" : html` aria-invalid="true"`}>
+<p id="email-hint" class="hint">${t(lang, "joinEmailHint")}</p>
+${errorBlock(errors.email, "email-error")}
+<div class="privacy" id="privacy-text"><strong>${t(lang, "privacyTitle")}</strong><p>${t(lang, "privacyText", { cafe: cafeName, operator: view.operatorName })}</p></div>
 <label class="check"><input type="checkbox" name="privacy" value="yes" required aria-describedby="privacy-text${errors.privacy === undefined ? "" : " privacy-error"}"${errors.privacy === undefined ? "" : html` aria-invalid="true"`}${values.privacy === "yes" ? html` checked` : ""}> ${t(lang, "privacyAccept")}</label>
 ${errorBlock(errors.privacy, "privacy-error")}
+<label class="check"><input type="checkbox" name="offers" value="yes"${values.offers === "yes" ? html` checked` : ""}> ${t(lang, "offersLabel", { cafe: cafeName })}</label>
 <button type="submit">${t(lang, "joinButton")}</button>
 </form>
+<p class="aside">${t(lang, "alreadyHaveCard")}</p>
 <p class="aside"><a href="/recover?lang=${lang}">${t(lang, "lostCard")}</a></p>`,
     view.otherLangHref,
   );
@@ -73,8 +81,10 @@ export interface CardView {
   qr: string;
   /** The offer the card holds now (offerText), if any. */
   offer: { headline: string; details: string } | undefined;
-  /** The feedback page of the card's latest visit (AC 37), if it was asked about one. */
+  /** The feedback page of the card's latest visit (AC 37), while it still takes a message (open, unanswered). */
   feedbackHref: string | undefined;
+  /** Whether the card has a recovery email; without one, the card asks for one (AC 8). */
+  hasEmail: boolean;
   wallet: WalletLink;
   otherLangHref: string;
 }
@@ -96,6 +106,7 @@ const chevron = (direction: "forward" | "back"): SafeHtml =>
 export function cardView(lang: Lang, view: CardView): string {
   const { program, stamps } = view;
   const left = program === undefined ? 0 : program.stampsRequired - stamps;
+  const ready = program !== undefined && left <= 0;
   return page(
     lang,
     t(lang, "cardTitle", { cafe: view.cafeName }),
@@ -107,9 +118,12 @@ export function cardView(lang: Lang, view: CardView): string {
 ${program === undefined ? null : stampGrid(stamps, program.stampsRequired)}
 ${program === undefined
   ? null
-  : html`<p class="reward">${left > 0 ? t(lang, "stampsToGo", { stamps: count(lang, "stamps", left), reward: program.reward }) : t(lang, "rewardReady", { reward: program.reward })}</p>`}
+  : ready
+    ? html`<p class="reward is-ready">${t(lang, "rewardReady", { reward: program.reward })}</p>`
+    : html`<p class="reward">${t(lang, "stampsToGo", { stamps: count(lang, "stamps", left), reward: program.reward })}</p>`}
 </div>
 <div class="card-qr">
+${ready ? html`<h2 class="ready-heading">${t(lang, "rewardReadyHeading")}</h2>` : null}
 <img class="qr" src="${view.qr}" alt="${t(lang, "qrAlt")}" width="288" height="288">
 </div>
 </article>
@@ -125,7 +139,15 @@ ${view.wallet === null
   : view.wallet.kind === "apple"
     ? html`<p class="wallet-row"><a class="wallet" href="${view.wallet.href}">${t(lang, "addToAppleWallet")}</a></p>`
     : html`<p class="wallet-row"><a class="google-wallet" href="${view.wallet.href}"><img src="${view.wallet.badge}" alt="${t(lang, "addToGoogleWallet")}" width="199" height="55"></a></p>`}
+${view.wallet === null ? null : html`<p class="aside">${t(lang, "walletHint")}</p>`}
 <p class="aside">${t(lang, "keepLink")}</p>
+${view.hasEmail
+  ? null
+  : html`<section aria-labelledby="email-nudge-title" class="card">
+<h2 id="email-nudge-title">${t(lang, "emailNudgeTitle")}</h2>
+<p>${t(lang, "emailNudgeText")}</p>
+<p class="link-row"><a class="link-button next" href="${view.path}/settings?lang=${lang}#email-title"><span>${t(lang, "emailNudgeLink")}</span>${chevron("forward")}</a></p>
+</section>`}
 ${view.feedbackHref === undefined
   ? null
   : html`<section aria-labelledby="feedback-title" class="card">
@@ -340,7 +362,7 @@ export function feedbackView(lang: Lang, view: FeedbackView): string {
       : html`<section aria-labelledby="review-title" class="card">
 <h2 id="review-title">${t(lang, "reviewTitle", { cafe: view.cafeName })}</h2>
 <p>${t(lang, "reviewText")}</p>
-<p class="wallet-row"><a class="wallet" href="${view.reviewUrl}" rel="noreferrer">${t(lang, "reviewButton")}</a></p>
+<p class="link-row"><a class="link-button" href="${view.reviewUrl}" rel="noreferrer">${t(lang, "reviewButton")}</a></p>
 </section>`;
   const body =
     view.state === "form"

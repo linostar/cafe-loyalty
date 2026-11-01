@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ const DOMAINS = {
   STAGING_DASHBOARD_DOMAIN: "dashboard.staging.example.test",
   STAGING_COUNTER_DOMAIN: "counter.staging.example.test",
   STAGING_PUBLIC_DOMAIN: "card.staging.example.test",
+  OPERATOR_NAME: "Najjar & Co (SAL)",
 };
 const dir = mkdtempSync(join(tmpdir(), "provision-env-"));
 afterAll(() => {
@@ -36,6 +37,48 @@ describe("the server settings provisioning generates (deploy/provision.sh)", () 
     });
     expect(config.NODE_ENV).toBe("production");
     expect(config.DASHBOARD_URL).toBe("https://dashboard.example.test");
+    expect(config.OPERATOR_NAME).toBe("Najjar & Co (SAL)");
     expect(config.DATABASE_URL).toContain(`:${database.APP_PASSWORD ?? "missing"}@`);
+  });
+
+  /** Runs env-files in `target` with `name` as OPERATOR_NAME. */
+  const envFiles = (target: string, name: string) =>
+    execFileSync("bash", [PROVISION, "env-files", target], { env: { PATH: process.env.PATH, ...DOMAINS, OPERATOR_NAME: name }, stdio: "pipe" });
+  const operatorLines = (target: string) => readFileSync(join(target, "app.env"), "utf8").split("\n").filter((line) => line.startsWith("OPERATOR_NAME="));
+
+  it("refuse an operator name Compose or the server would not read as one line of text, writing nothing", () => {
+    const invisible = ["  ﻿", "​", "​‍", "..."];
+    const wrongs = ["", "   ", ...invisible, 'Say "hi"', "Rana's", "No #1", "Cost $5", "back\\slash", "tick`", "two\nlines", "two lines", "two paragraphs", "x".repeat(101)];
+    for (const wrong of wrongs) {
+      const target = mkdtempSync(join(dir, "refused-"));
+      expect(() => envFiles(target, wrong), JSON.stringify(wrong)).toThrow(/OPERATOR_NAME must be who runs the service/);
+      expect(readdirSync(target)).toEqual([]);
+    }
+  });
+
+  it("take an operator name in Arabic, counted in characters as the server counts them, not bytes", () => {
+    const target = mkdtempSync(join(dir, "arabic-"));
+    envFiles(target, "شركة الولاء ٢٠٢٦");
+    expect(operatorLines(target)).toEqual(["OPERATOR_NAME=شركة الولاء ٢٠٢٦"]);
+    // 100 Arabic letters (200 bytes) pass, as on the server (config.test.ts); 101 do not.
+    const longest = mkdtempSync(join(dir, "arabic-"));
+    envFiles(longest, "ش".repeat(100));
+    expect(operatorLines(longest)).toEqual([`OPERATOR_NAME=${"ش".repeat(100)}`]);
+    expect(() => envFiles(mkdtempSync(join(dir, "arabic-")), "ش".repeat(101))).toThrow(/OPERATOR_NAME must be who runs the service/);
+  });
+
+  it("keep one operator name line after PUBLIC_URL on every run, and add it to an app.env from before it existed", () => {
+    const target = mkdtempSync(join(dir, "rerun-"));
+    envFiles(target, "First Operator");
+    envFiles(target, "Second Operator");
+    expect(operatorLines(target)).toEqual(["OPERATOR_NAME=Second Operator"]);
+    // An app.env written before OPERATOR_NAME existed: the next run adds it, right after PUBLIC_URL.
+    const appEnv = join(target, "app.env");
+    writeFileSync(appEnv, readFileSync(appEnv, "utf8").replace("OPERATOR_NAME=Second Operator\n", ""));
+    expect(operatorLines(target)).toEqual([]);
+    envFiles(target, "Najjar & Co (SAL)");
+    const lines = readFileSync(appEnv, "utf8").split("\n");
+    expect(operatorLines(target)).toEqual(["OPERATOR_NAME=Najjar & Co (SAL)"]);
+    expect(lines[lines.indexOf("OPERATOR_NAME=Najjar & Co (SAL)") - 1]).toBe("PUBLIC_URL=https://card.example.test");
   });
 });

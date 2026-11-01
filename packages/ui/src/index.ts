@@ -63,3 +63,6 @@ export function tokenValue(name: string): string {
 
 /** The path of the logo mark (SVG), for favicons and headers. */
 export const LOGO_SVG_PATH = ownFile("assets/logo.svg");
+
+/** The app icon (PNG, 192 px), for a home-screen icon where SVG is not taken (iOS's apple-touch-icon). */
+export const ICON_PNG_PATH = ownFile("assets/icon-192.png");

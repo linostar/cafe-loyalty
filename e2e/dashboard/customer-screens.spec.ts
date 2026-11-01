@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
+import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { renderSVG } from "uqr";
-import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, t, type Lang } from "../../apps/server/src/customer-html.js";
+import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, t, type Lang } from "../../apps/server/src/customer-html.js";
 import {
   cardSettingsView,
   cardView,
@@ -50,6 +50,7 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     wallet: { kind: "google", href: "/c/fake/google-pass", badge: GOOGLE_WALLET_BADGES[lang] },
     otherLangHref: `/c/fake?lang=${other(lang)}`,
     feedbackHref: "/f/fake?lang=en",
+    hasEmail: true,
     ...overrides,
   });
 
@@ -66,13 +67,14 @@ const settings = (lang: Lang, overrides: Partial<CardSettingsView> = {}): string
     ...overrides,
   });
 
-const join = (lang: Lang, errors: { phone?: string; privacy?: string } = {}) =>
+const join = (lang: Lang, errors: { phone?: string; email?: string; privacy?: string } = {}) =>
   joinView(lang, {
     path: "/join/fake",
     cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
+    operatorName: "Loyalty Everywhere",
     program: PROGRAM[lang],
     formToken: "fake-form-token",
-    values: errors.phone === undefined ? {} : { phone: "70 12" },
+    values: errors.phone === undefined ? {} : { phone: "70 12", email: "rana@example", offers: "yes" },
     errors,
     otherLangHref: `/join/fake?lang=${other(lang)}`,
   });
@@ -92,12 +94,14 @@ const feedback = (lang: Lang, overrides: Partial<FeedbackView> = {}) =>
 /** Every customer page and state, each rendered in both languages (named `<view>-<lang>`), messages from the real catalog. */
 const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ["join", (lang) => join(lang)],
-  ["join-errors", (lang) => join(lang, { phone: t(lang, "phoneInvalid"), privacy: t(lang, "privacyRequired") })],
+  ["join-errors", (lang) => join(lang, { phone: t(lang, "phoneInvalid"), email: t(lang, "emailInvalid"), privacy: t(lang, "privacyRequired") })],
   ["card", (lang) => card(lang)],
   [
     "card-full",
     (lang) => card(lang, { wallet: { kind: "apple", href: "/c/fake/apple-pass" }, stamps: 9, offer: undefined }),
   ],
+  ["card-ready-no-wallet", (lang) => card(lang, { stamps: 9, offer: undefined, wallet: null, feedbackHref: undefined })],
+  ["card-no-email", (lang) => card(lang, { hasEmail: false, feedbackHref: undefined })],
   ["card-no-program", (lang) => card(lang, { program: undefined, stamps: 2, offer: undefined, wallet: null, feedbackHref: undefined })],
   ["card-settings", (lang) => settings(lang)],
   ["card-settings-saved", (lang) => settings(lang, { maskedEmail: "r•••@example.com", offersOptedIn: false, saved: "offers" })],
@@ -119,7 +123,7 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
         { href: "/c/two", label: "Bean There" },
       ]),
   ],
-  ["deleted", (lang) => deletedView(lang, `/recover?lang=${other(lang)}`)],
+  ["deleted", (lang) => deletedView(lang, `/deleted?lang=${other(lang)}`)],
   ["feedback", (lang) => feedback(lang)],
   ["feedback-no-review", (lang) => feedback(lang, { reviewUrl: null, message: "", error: t(lang, "feedbackEmpty") })],
   ["feedback-sent", (lang) => feedback(lang, { state: "sent" })],
@@ -146,6 +150,8 @@ async function serve(page: Page, html: string): Promise<{ blocked: string[] }> {
         : route.fulfill({ status: 200, contentType: file.endsWith(".woff2") ? "font/woff2" : "font/woff", body: await readFile(file) }));
     } else if (pathname === LOGO_PATH) {
       await route.fulfill({ status: 200, contentType: "image/svg+xml", body: await readFile(LOGO_SVG_PATH) });
+    } else if (pathname === ICON_PATH) {
+      await route.fulfill({ status: 200, contentType: "image/png", body: await readFile(ICON_PNG_PATH) });
     } else {
       await route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", headers: { "content-security-policy": CUSTOMER_CSP }, body: html });
     }
@@ -183,3 +189,31 @@ for (const width of [1440, 1024, 390, 320] as const) {
     }
   });
 }
+
+test.describe("customer page details", () => {
+  test("signup leaves offers unticked, names the operator and takes an optional recovery email", async ({ page }) => {
+    await serve(page, join("en"));
+    await page.goto(`${ORIGIN}/`);
+    await expect(page.getByRole("checkbox", { name: t("en", "offersLabel", { cafe: "Café Najjar" }) })).not.toBeChecked();
+    await expect(page.locator("#privacy-text")).toContainText("Loyalty Everywhere");
+    await expect(page.getByLabel(t("en", "joinEmailLabel"))).not.toHaveAttribute("required");
+    await expect(page.getByText(t("en", "alreadyHaveCard"))).toBeVisible();
+  });
+
+  test("a ready reward stands out, and a card without an email asks for one", async ({ page }) => {
+    await serve(page, card("en", { stamps: 9, hasEmail: false }));
+    await page.goto(`${ORIGIN}/`);
+    await expect(page.locator(".reward.is-ready")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: t("en", "rewardReadyHeading") })).toBeVisible();
+    await expect(page.getByRole("link", { name: t("en", "emailNudgeLink") })).toHaveAttribute("href", "/c/fake/settings?lang=en#email-title");
+    await expect(page.getByText(t("en", "walletHint"))).toBeVisible();
+  });
+
+  // Which language switch each page gets is the routes' choice, tested with them (customer-pages.integration.test.ts).
+  test("every page offers a home-screen icon and a theme colour", async ({ page }) => {
+    await serve(page, deletedView("ar", "/deleted?lang=en"));
+    await page.goto(`${ORIGIN}/`);
+    await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", ICON_PATH);
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", /^#[0-9a-f]{6}$/i);
+  });
+});

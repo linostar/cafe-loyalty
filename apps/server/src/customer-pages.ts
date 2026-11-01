@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, feedbackUrl, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
-import { LOGO_SVG_PATH } from "@cafe-loyalty/ui";
+import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { renderSVG } from "uqr";
@@ -10,8 +10,8 @@ import { APPLE_PASS_LAYOUT_VERSION, applePassToken, buildApplePass, type ApplePa
 import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
-import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
-import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView, type NextStep, type SettingsSection } from "./customer-views.js";
+import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
+import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView, type JoinView, type NextStep, type SettingsSection } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
@@ -52,6 +52,8 @@ export interface CustomerPagesOptions {
   background: BackgroundTasks;
   /** This server's public address: recovery links point at it. */
   publicUrl: string;
+  /** Who runs the service, as the signup page's privacy notice names them (OPERATOR_NAME). */
+  operatorName: string;
   secrets: CustomerSecrets;
   /** The job queue, for pass updates after a recovery. */
   jobs: PgBoss | undefined;
@@ -122,12 +124,13 @@ function errorPage(lang: Lang, key: MessageKey, message: string, request: Fastif
   return errorView(lang, message, otherLang(path, lang), nextStep(lang, key, request.method, path));
 }
 
-/** Fonts and the logo change only with a release, and hold no secret: browsers keep them for a week. */
+/** Fonts, the logo and the icon change only with a release, and hold no secret: browsers keep them for a week. */
 const ASSET_CACHE = "public, max-age=604800";
 
 /** Read once at startup, so a missing file stops the server instead of failing a request (about 0.5 MB in all). */
 const FONT_BYTES = new Map([...FONT_FILES].map(([file, path]) => [file, readFileSync(path)]));
 const LOGO_SVG = readFileSync(LOGO_SVG_PATH);
+const ICON_PNG = readFileSync(ICON_PNG_PATH);
 
 export function recoveryEmail(to: string, link: string): EmailMessage {
   return {
@@ -269,10 +272,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     return card;
   }
 
-  function joinPage(lang: Lang, path: string, cafeName: string, program: Awaited<ReturnType<typeof programOf>>, values: Form, errors: { phone?: string; privacy?: string }): string {
+  function joinPage(lang: Lang, path: string, cafeName: string, program: Awaited<ReturnType<typeof programOf>>, values: Form, errors: JoinView["errors"]): string {
     return joinView(lang, {
       path,
       cafeName,
+      operatorName: options.operatorName,
       program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
       formToken: values.form !== undefined && isToken(values.form) ? values.form : newToken(),
       values,
@@ -348,6 +352,17 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   });
 
   app.get(LOGO_PATH, async (_request, reply) => reply.code(200).header("content-type", "image/svg+xml").header("cache-control", ASSET_CACHE).send(LOGO_SVG));
+  /** The home-screen icon (the pages' apple-touch-icon): iOS takes no SVG there. */
+  app.get(ICON_PATH, async (_request, reply) => reply.code(200).header("content-type", "image/png").header("cache-control", ASSET_CACHE).send(ICON_PNG));
+
+  /**
+   * The "Card deleted" page again, for its language switch: deleting answers its form directly, and this page says only
+   * what that answer said, about no card in particular.
+   */
+  app.get("/deleted", async (request, reply) => {
+    const lang = langOf(request);
+    return sendPage(reply, 200, deletedView(lang, otherLang("/deleted", lang)));
+  });
 
   // Bare or truncated paths get a page in the visitor's language rather than the API's JSON 404.
   for (const bare of ["/join", "/c", "/r", "/u"]) {
@@ -384,11 +399,15 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
     const form = formOf(request);
     const phone = normalizePhoneInput(form.phone ?? "");
+    // The recovery email is optional (AC 8): left empty, the card has none until its settings page adds one.
+    const typedEmail = form.email?.trim() ?? "";
+    const parsedEmail = typedEmail === "" ? null : ownerEmailSchema.safeParse(typedEmail);
     const errors = {
       ...(phone === null ? { phone: t(lang, "phoneInvalid") } : {}),
+      ...(parsedEmail === null || parsedEmail.success ? {} : { email: t(lang, "emailInvalid") }),
       ...(form.privacy === "yes" ? {} : { privacy: t(lang, "privacyRequired") }),
     };
-    if (phone === null || form.privacy !== "yes") {
+    if (phone === null || form.privacy !== "yes" || (parsedEmail !== null && !parsedEmail.success)) {
       return sendPage(reply, 400, joinPage(lang, `/join/${code}`, cafe.name, await programOf(cafe.id), form, errors));
     }
     // Keyed by the café found, not the code sent, so random codes cannot fill the limiter and crowd a café out.
@@ -403,6 +422,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const formValue = form.form !== undefined && isToken(form.form) ? form.form : newToken();
     const webSecret = createHmac("sha256", secrets.phoneLookupPepper).update(`web-secret:v2:${cafe.id}:${formValue}:${lookup.toString("base64url")}`).digest("base64url");
     const webSecretHash = hashToken(webSecret);
+    const email = parsedEmail === null ? null : parsedEmail.data;
+    const offers = form.offers === "yes";
     await withCafe(db, cafe.id, async (trx) => {
       if ((await trx.selectFrom("cards").select("id").where("web_secret_hash", "=", webSecretHash).executeTakeFirst()) !== undefined) {
         return;
@@ -415,9 +436,16 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         .returning("id")
         .executeTakeFirst();
       const customer = inserted ?? (await trx.selectFrom("customers").select("id").where("phone_lookup", "=", lookup).executeTakeFirstOrThrow());
-      // Consent times from the database clock, like every other time. Offers are on for every new card (the signup page
-      // asks nothing; a form from before, with or without its offers box, is treated the same); the card page turns them off.
-      const card = { cafe_id: cafe.id, web_secret_hash: webSecretHash, privacy_accepted_at: now(), offers_opt_in_at: now() };
+      // Consent times from the database clock, like every other time. Offers only when the box was ticked (AC 4); the
+      // card's settings page turns them on and off later. The email is stored as the settings page stores it.
+      const card = {
+        cafe_id: cafe.id,
+        web_secret_hash: webSecretHash,
+        privacy_accepted_at: now(),
+        offers_opt_in_at: offers ? now() : null,
+        email,
+        email_lookup: email === null ? null : emailLookup(secrets, email),
+      };
       // DO NOTHING on any conflict: this café's linked card for the number, or the same form sent concurrently.
       const linked = await trx
         .insertInto("cards")
@@ -440,7 +468,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           .where("customer_id", "=", customer.id)
           .execute();
       }
-      await audit(trx, { cafeId: cafe.id, actorType: "system", actorId: null, action: "card.created", entityType: "card", entityId: created.id, changes: { source: "customer", offers: "on_by_default" } });
+      await audit(trx, { cafeId: cafe.id, actorType: "system", actorId: null, action: "card.created", entityType: "card", entityId: created.id, changes: { source: "customer", offers: offers ? "opted_in" : "not_opted_in" } });
     });
     request.log.info({ cafeId: cafe.id }, "customer card created");
     await atLeast(started, MIN_SIGNUP_MS);
@@ -494,7 +522,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, card.id),
-      feedback: await loadFeedbackRequest(trx, card.id),
+      feedback: await openFeedbackRequest(trx, card.id),
     }));
     // Medium error correction, so a cracked or smudged phone screen still scans at the counter.
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4, ecc: "M" }))}`;
@@ -508,8 +536,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       qr,
       // The offer its passes show (AC 14), for a card opted in to offers.
       offer: offers.offer === undefined ? undefined : offerText(lang, offers.offer),
-      // The latest visit's feedback page, as on its passes (AC 37).
+      // The latest visit's feedback page, as on its passes (AC 37), while it still takes a message.
       feedbackHref: feedback === undefined ? undefined : `${FEEDBACK_PATH}${signFeedbackToken(secrets, feedback)}?lang=${lang}`,
+      hasEmail: card.email !== null,
       wallet:
         apple && options.apple !== undefined
           ? { kind: "apple", href: `${path}/apple-pass?lang=${lang}` }
@@ -712,6 +741,22 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
    */
   // The clock as each statement runs (not now(), the transaction's start), so the insert below checks it as it writes.
   const feedbackOpen = sql<boolean>`created_at > clock_timestamp() - make_interval(days => ${FEEDBACK_OPEN_DAYS})`;
+
+  /** The card's latest feedback request while it still takes a message (open, unanswered), for the web card's link. */
+  async function openFeedbackRequest(trx: Transaction<Database>, cardId: string) {
+    const latest = await loadFeedbackRequest(trx, cardId);
+    if (latest === undefined) {
+      return undefined;
+    }
+    const open = await trx
+      .selectFrom("feedback_requests")
+      .select("id")
+      .where("id", "=", latest.requestId)
+      .where(feedbackOpen)
+      .where((outer) => outer.not(outer.exists(outer.selectFrom("feedback").select("feedback.id").whereRef("feedback.request_id", "=", "feedback_requests.id"))))
+      .executeTakeFirst();
+    return open === undefined ? undefined : latest;
+  }
   async function feedbackRequest(token: string) {
     const ids = verifyFeedbackToken(secrets, token);
     const found =
@@ -805,7 +850,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     await withCafe(db, card.cafe_id, (trx) => deleteCard(trx, card));
     request.log.info({ cafeId: card.cafe_id }, "customer card deleted");
     await atLeast(started, MIN_DELETE_MS);
-    return sendPage(reply, 200, deletedView(lang, otherLang("/recover", lang)));
+    return sendPage(reply, 200, deletedView(lang, otherLang("/deleted", lang)));
   });
 
   function recoverPage(lang: Lang, sent: boolean, error?: string, email?: string): string {
@@ -960,7 +1005,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     );
     request.log.info({ cafeIds: restored.cafeIds, action }, action === "delete" ? "customer cards deleted by recovery link" : "customer cards restored");
     if (action === "delete") {
-      return sendPage(reply, 200, deletedView(lang, otherLang("/recover", lang)));
+      return sendPage(reply, 200, deletedView(lang, otherLang("/deleted", lang)));
     }
     const [only] = restored.results;
     if (restored.results.length === 1 && only !== undefined) {

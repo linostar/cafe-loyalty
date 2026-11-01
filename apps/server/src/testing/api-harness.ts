@@ -29,6 +29,8 @@ export const DASHBOARD_URL = "https://dashboard.example.test";
 export const COUNTER_URL = "https://counter.example.test";
 export const PASSWORD = "correct horse battery";
 export const PUBLIC_URL = "https://card.example.test";
+/** The privacy notice's operator in tests. */
+export const OPERATOR_NAME = "Test Operator SAL";
 
 /** Test-only secrets, fresh per test file. */
 export const TEST_SECRETS: CustomerSecrets = {
@@ -255,6 +257,7 @@ export function useApiHarness() {
         mailer,
         background,
         publicUrl: PUBLIC_URL,
+        operatorName: OPERATOR_NAME,
         secrets: overrides.secrets ?? TEST_SECRETS,
         jobs: overrides.jobs === null ? undefined : context.jobs,
         apple,
