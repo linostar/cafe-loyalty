@@ -342,9 +342,14 @@ export function SetupWizard({
         <FormError message={error} />
         <div className="actions">
           {index > 0
-            ? leave(t("Back"), () => {
-                goTo(index - 1);
-              })
+            ? // While Finish is on its way, as below: a step left meanwhile would close with its edits unasked.
+              leave(
+                t("Back"),
+                () => {
+                  goTo(index - 1);
+                },
+                { busy: pending },
+              )
             : null}
           {last ? (
             leave(t("Finish setup"), finish, { className: "primary", busy: pending })
@@ -355,7 +360,7 @@ export function SetupWizard({
                 () => {
                   goTo(index + 1);
                 },
-                { className: "primary" },
+                { className: "primary", busy: pending },
               )}
               {leave(t("Skip the rest"), finish, { busy: pending })}
             </>

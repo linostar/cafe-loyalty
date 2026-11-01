@@ -207,6 +207,28 @@ describe("the setup wizard (D1)", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Step 2 of 5 Your first order type" })).toBeInTheDocument();
   });
 
+  it("does not change steps while Skip the rest is on its way", async () => {
+    const held: { answer?: (response: Response) => void } = {};
+    serve({ cafe: CAFE, program: null, orderTypes: [] }, {}, (method, path) =>
+      method === "POST" && path === "/api/cafe/setup/finish" ? new Promise<Response>((resolve) => (held.answer = resolve)) : undefined,
+    );
+    render(<App />);
+    await screen.findByRole("heading", { level: 2, name: "Set up your café" });
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip the rest" }));
+    await waitFor(() => {
+      expect(held.answer).toBeDefined();
+    });
+    for (const name of ["Back", "Skip this step"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(button);
+      expect(screen.getByRole("heading", { level: 3, name: "Step 2 of 5 Your first order type" })).toBeInTheDocument();
+    }
+    held.answer?.(respond(200, { cafe: { ...CAFE, setupFinishedAt: PRINTED_AT }, program: null, orderTypes: [] }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Café Najjar" })).toBeInTheDocument();
+  });
+
   it("loads the phones again when it leaves the phone step, for one paired there without Done", async () => {
     const { gets } = serve({ cafe: CAFE, program: null, orderTypes: [] });
     render(<App />);
