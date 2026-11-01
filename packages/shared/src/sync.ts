@@ -448,6 +448,16 @@ export const reviewItemSchema = z.object({
   /** A visit whose discount its campaign did not allow at that time (AC 35), whatever it was held for. */
   // Defaults for a server from before Step 12 (a rollback), which sends none.
   discountRefused: z.boolean().default(false),
+  /** A held visit's stamps (as recorded, before any cooldown or cap), lines and total; null for any other event. */
+  // Defaults for a server from before Phase 3 (a rollback), which sends none.
+  visit: z
+    .object({
+      stamps: z.number().int().nonnegative(),
+      totalCents: z.number().int().nonnegative(),
+      items: z.array(z.object({ nameEn: z.string(), nameAr: z.string(), quantity: z.number().int().positive() })),
+    })
+    .nullable()
+    .default(null),
   occurredAt: timestamp,
   receivedAt: timestamp,
 });

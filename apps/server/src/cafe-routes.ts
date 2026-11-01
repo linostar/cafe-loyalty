@@ -14,7 +14,7 @@ import {
   type WalletDeliveries,
   apiText,
 } from "@cafe-loyalty/shared";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { ownerOf } from "./access.js";
@@ -38,7 +38,19 @@ export const winBackDiscountOf = (cafe: { win_back_discount_kind: "percent" | "a
 async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<CafeSetup> {
   const cafe = await trx
     .selectFrom("cafes")
-    .select(["id", "name", "catalog_version", "min_margin_percent", "win_back_discount_kind", "win_back_discount_value", "win_back_cooldown_days", "google_review_url", "plan"])
+    .select([
+      "id",
+      "name",
+      "catalog_version",
+      "min_margin_percent",
+      "win_back_discount_kind",
+      "win_back_discount_value",
+      "win_back_cooldown_days",
+      "google_review_url",
+      "plan",
+      "setup_finished_at",
+      "signup_qr_printed_at",
+    ])
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
@@ -57,6 +69,8 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       winBack: { discount: winBackDiscountOf(cafe), cooldownDays: cafe.win_back_cooldown_days },
       googleReviewUrl: cafe.google_review_url,
       plan: cafe.plan,
+      setupFinishedAt: cafe.setup_finished_at?.toISOString() ?? null,
+      signupQrPrintedAt: cafe.signup_qr_printed_at?.toISOString() ?? null,
     },
     program:
       program === undefined
@@ -174,6 +188,34 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     request.log.info({ cafeId: owner.cafeId }, "cafe join code rotated");
     return joinLink(cafe.join_code);
   });
+
+  /**
+   * Records a first-run setup milestone (D1, D22): the wizard finished or skipped (shown on no device again), or the
+   * signup QR printed. Idempotent: the first time is kept, and only it is audited.
+   */
+  const milestone = (column: "setup_finished_at" | "signup_qr_printed_at", action: string) => async (request: FastifyRequest) => {
+    const owner = ownerOf(request);
+    const { first, setup } = await withCafe(db, owner.cafeId, async (trx) => {
+      const updated = await trx
+        .updateTable("cafes")
+        .set({ [column]: sql<Date>`now()` })
+        .where("id", "=", owner.cafeId)
+        .where(column, "is", null)
+        .returning("id")
+        .executeTakeFirst();
+      if (updated !== undefined) {
+        await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action, entityType: "cafe", entityId: owner.cafeId });
+      }
+      return { first: updated !== undefined, setup: await loadSetup(trx, owner.cafeId) };
+    });
+    // Logged once committed: a rolled-back milestone is never reported.
+    if (first) {
+      request.log.info({ cafeId: owner.cafeId }, action);
+    }
+    return setup;
+  };
+  app.post("/cafe/setup/finish", { config: { access: "owner" } }, milestone("setup_finished_at", "cafe.setup_finished"));
+  app.post("/cafe/join/printed", { config: { access: "owner" } }, milestone("signup_qr_printed_at", "cafe.signup_qr_printed"));
 
   app.patch("/cafe", { config: { access: "owner" } }, async (request) => {
     const owner = ownerOf(request);

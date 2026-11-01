@@ -38,6 +38,8 @@ const DEFAULTS: Readonly<Record<string, Handler>> = {
   }),
   "GET /api/cafe/wallet-deliveries": reply(200, { failing: [] }),
   "GET /api/cafe/visit-hours": reply(200, visitHours()),
+  // Home's Needs you checks for quiet counter phones.
+  "GET /api/devices": reply(200, { devices: [], pairingCodes: [] }),
 };
 
 /**

@@ -1066,8 +1066,8 @@ describe("feedback", () => {
 
     const inbox = await as("GET", "/api/feedback");
     expect(inbox.statusCode).toBe(200);
-    const body = inbox.json<{ items: { id: string; message: string; read: boolean; visitedAt: string }[]; unread: number; more: boolean }>();
-    expect(body).toMatchObject({ unread: 1, more: false, items: [{ message: "The croissant was cold.\nThe latte was great <3", read: false }] });
+    const body = inbox.json<{ items: { id: string; message: string; read: boolean; visitedAt: string }[]; unread: number; nextCursor: string | null }>();
+    expect(body).toMatchObject({ unread: 1, nextCursor: null, items: [{ message: "The croissant was cold.\nThe latte was great <3", read: false }] });
     const [item] = body.items;
     expect(new Date(item?.visitedAt ?? 0).getTime()).toBeLessThan(Date.now() - 2 * 60 * 60 * 1000);
     // The visit's hour only, so the message cannot be matched to who came in when.

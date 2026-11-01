@@ -85,7 +85,7 @@ describe("café setup", () => {
     const { as, owner } = await ownerApp();
     const setup = await as("GET", "/api/cafe");
     expect(setup.statusCode).toBe(200);
-    expect(setup.json()).toEqual({ cafe: { id: owner.cafeId, name: "Café Test", catalogVersion: 1, minMarginPercent: 0, winBack: { discount: null, cooldownDays: 30 }, googleReviewUrl: null, plan: "pilot" }, program: null, orderTypes: [] });
+    expect(setup.json()).toEqual({ cafe: { id: owner.cafeId, name: "Café Test", catalogVersion: 1, minMarginPercent: 0, winBack: { discount: null, cooldownDays: 30 }, googleReviewUrl: null, plan: "pilot", setupFinishedAt: null, signupQrPrintedAt: null }, program: null, orderTypes: [] });
   });
 
   it("renames the café and saves the loyalty program, audit-logged", async () => {
@@ -138,6 +138,35 @@ describe("café setup", () => {
     const response = await second.as("PATCH", `/api/cafe/order-types/${id}`, { priceCents: 1 });
     expect(response.statusCode).toBe(404);
     expect((await first.as("GET", "/api/cafe")).json()).toMatchObject({ orderTypes: [{ priceCents: 250 }] });
+  });
+});
+
+describe("first-run setup (D1, D22)", () => {
+  const MILESTONES = [
+    ["/api/cafe/setup/finish", "setupFinishedAt", "cafe.setup_finished"],
+    ["/api/cafe/join/printed", "signupQrPrintedAt", "cafe.signup_qr_printed"],
+  ] as const;
+
+  it.each(MILESTONES)("%s records the first time only, audited once without personal data", async (url, field, action) => {
+    const { as, owner } = await ownerApp();
+    const first = await as("POST", url);
+    expect(first.statusCode).toBe(200);
+    const at = first.json<{ cafe: Record<string, string | null> }>().cafe[field];
+    expect(at).toEqual(expect.any(String));
+    const again = await as("POST", url);
+    expect(again.json<{ cafe: Record<string, string | null> }>().cafe[field]).toBe(at);
+    expect((await as("GET", "/api/cafe")).json<{ cafe: Record<string, string | null> }>().cafe[field]).toBe(at);
+    const { rows } = await context.admin.query<{ changes: unknown }>("SELECT changes FROM app.audit_log WHERE cafe_id = $1 AND action = $2", [owner.cafeId, action]);
+    expect(rows).toEqual([{ changes: {} }]);
+  });
+
+  it.each(MILESTONES)("%s is the owner's only, and changes only their café", async (url, field) => {
+    const first = await ownerApp();
+    const second = await ownerApp();
+    expect((await first.app.inject({ method: "POST", url, payload: {} })).statusCode).toBe(401);
+    // A device token gets 403 on it with every other owner route (AC 20, above).
+    expect((await first.as("POST", url)).statusCode).toBe(200);
+    expect((await second.as("GET", "/api/cafe")).json<{ cafe: Record<string, string | null> }>().cafe[field]).toBeNull();
   });
 });
 

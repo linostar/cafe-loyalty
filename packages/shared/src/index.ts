@@ -194,7 +194,7 @@ export {
   type DiscountKind,
 } from "./campaigns.js";
 export { PRODUCT_NAME } from "./brand.js";
-export { FEEDBACK_INBOX_LIMIT, feedbackInboxSchema, feedbackItemSchema, feedbackReadSchema, type FeedbackInbox, type FeedbackItem } from "./feedback.js";
+export { FEEDBACK_PAGE_SIZE, feedbackInboxSchema, feedbackItemSchema, feedbackReadSchema, type FeedbackInbox, type FeedbackItem } from "./feedback.js";
 export {
   ADMIN_PAYMENTS_SHOWN,
   CAFE_PLANS,
@@ -218,7 +218,7 @@ export {
   type PaymentRecord,
   type PaymentVoid,
 } from "./admin.js";
-export { RESULTS_WINDOW_DAYS, offerResultSchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";
+export { offerResultSchema, resultsMonthSchema, resultsQuerySchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";
 export {
   API_MESSAGES_AR,
   apiMessage,

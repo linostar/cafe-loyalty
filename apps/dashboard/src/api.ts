@@ -33,9 +33,16 @@ function detailsOf(body: string): ErrorDetail[] {
 
 /**
  * Calls the API on this site. Resolves with the parsed body (undefined for 204); rejects with ApiRequestError
- * for an error response, an unreadable response or a network failure.
+ * for an error response, an unreadable response or a network failure. `keepalive` lets the browser finish a write
+ * after the page has gone.
  */
-export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, schema: T, body?: unknown): Promise<z.output<T>> {
+export async function apiRequest<T extends z.ZodType>(
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  path: string,
+  schema: T,
+  body?: unknown,
+  { keepalive = false }: { keepalive?: boolean } = {},
+): Promise<z.output<T>> {
   let response: Response;
   try {
     // Every write sends a JSON body, {} when there is nothing to send: the API refuses writes without one (CSRF).
@@ -45,6 +52,7 @@ export async function apiRequest<T extends z.ZodType>(method: "GET" | "POST" | "
       headers: payload === undefined ? {} : { "content-type": "application/json" },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      ...(keepalive ? { keepalive } : {}),
     });
   } catch {
     throw new ApiRequestError({ code: null, message: apiText("Could not reach the server. Check your connection and try again."), retryable: true, status: null });
