@@ -146,9 +146,11 @@ check_domains() {
 
 # Written unquoted into app.env, which Compose and the server read: one line of at most 100 characters, with nothing
 # Compose would take as a quote, a comment or a variable.
+# Not blank, as the server trims it; U+2028 and U+2029 (line and paragraph separators) count as new lines there too.
 check_operator_name() {
-  [[ -n ${OPERATOR_NAME:-} && ${#OPERATOR_NAME} -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* ]] ||
-    fail "OPERATOR_NAME must be who runs the service, as the privacy notice names them: one line of at most 100 characters, without quotes, #, \$ or backslashes."
+  [[ ${OPERATOR_NAME:-} == *[![:space:]]* && ${#OPERATOR_NAME} -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* &&
+    $OPERATOR_NAME != *$'\xe2\x80\xa8'* && $OPERATOR_NAME != *$'\xe2\x80\xa9'* ]] ||
+    fail "OPERATOR_NAME must be who runs the service, as the privacy notice names them: one line of at most 100 characters, not blank, without quotes, #, \$ or backslashes."
 }
 
 # Written to backup.conf and alert.curlrc: plain values only (no quotes, backslashes or spaces).

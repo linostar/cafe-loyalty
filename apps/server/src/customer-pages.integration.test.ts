@@ -662,6 +662,8 @@ describe("recovery", () => {
     }
     const deleted = await first.app.inject({ method: "POST", url: `/r/${token}`, ...formBody({ action: "delete", confirm: "yes", lang: "en" }) });
     expect(deleted.body).toContain("Your card and its data are deleted.");
+    // Its language switch shows the same page in Arabic, as after deleting one card.
+    expect(deleted.body).toContain('<a href="/deleted?lang=ar" lang="ar">');
     for (const secret of secrets) {
       expect(await cardRow(secret)).toBeUndefined();
     }

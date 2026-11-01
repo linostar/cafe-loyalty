@@ -209,11 +209,11 @@ test.describe("customer page details", () => {
     await expect(page.getByText(t("en", "walletHint"))).toBeVisible();
   });
 
-  test("every page offers a home-screen icon and a theme colour, and the deleted page switches language in place", async ({ page }) => {
+  // Which language switch each page gets is the routes' choice, tested with them (customer-pages.integration.test.ts).
+  test("every page offers a home-screen icon and a theme colour", async ({ page }) => {
     await serve(page, deletedView("ar", "/deleted?lang=en"));
     await page.goto(`${ORIGIN}/`);
     await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", ICON_PATH);
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", /^#[0-9a-f]{6}$/i);
-    await expect(page.getByRole("link", { name: "English" })).toHaveAttribute("href", "/deleted?lang=en");
   });
 });
