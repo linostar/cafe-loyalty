@@ -21,8 +21,8 @@ STAGING_COUNTER_DOMAIN=counter.staging.example.com
 STAGING_PUBLIC_DOMAIN=card.staging.example.com
 
 # Who runs the service and keeps customers' data, as the signup page's privacy notice names them (both environments):
-# one line of at most 100 characters, in double quotes here (this file is sourced), with no quotes, #, $ or backslashes
-# inside.
+# one line of at most 100 characters with a Latin or Arabic letter or digit, in double quotes here (this file is sourced),
+# with no quotes, #, $ or backslashes inside.
 OPERATOR_NAME="Loyalty Everywhere"
 
 # Backups (README, Backups): the age public key every off-site copy is encrypted to. Make the key pair on your own

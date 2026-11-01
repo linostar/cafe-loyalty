@@ -47,12 +47,19 @@ describe("the server settings provisioning generates (deploy/provision.sh)", () 
   const operatorLines = (target: string) => readFileSync(join(target, "app.env"), "utf8").split("\n").filter((line) => line.startsWith("OPERATOR_NAME="));
 
   it("refuse an operator name Compose or the server would not read as one line of text, writing nothing", () => {
-    const wrongs = ["", "   ", 'Say "hi"', "Rana's", "No #1", "Cost $5", "back\\slash", "tick`", "two\nlines", "two lines", "two paragraphs", "x".repeat(101)];
+    const invisible = ["  ﻿", "​", "​‍", "..."];
+    const wrongs = ["", "   ", ...invisible, 'Say "hi"', "Rana's", "No #1", "Cost $5", "back\\slash", "tick`", "two\nlines", "two lines", "two paragraphs", "x".repeat(101)];
     for (const wrong of wrongs) {
       const target = mkdtempSync(join(dir, "refused-"));
       expect(() => envFiles(target, wrong), JSON.stringify(wrong)).toThrow(/OPERATOR_NAME must be who runs the service/);
       expect(readdirSync(target)).toEqual([]);
     }
+  });
+
+  it("take an operator name in Arabic, which the server takes too", () => {
+    const target = mkdtempSync(join(dir, "arabic-"));
+    envFiles(target, "شركة الولاء ٢٠٢٦");
+    expect(operatorLines(target)).toEqual(["OPERATOR_NAME=شركة الولاء ٢٠٢٦"]);
   });
 
   it("keep one operator name line after PUBLIC_URL on every run, and add it to an app.env from before it existed", () => {

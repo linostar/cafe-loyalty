@@ -51,7 +51,9 @@ const serverEnvSchema = z.object({
     // Characters, as provision.sh counts them (not UTF-16 units), so a name it accepts never stops the server.
     .refine((value) => Array.from(value).length <= 100, "Use at most 100 characters.")
     // Control characters, and the line and paragraph separators (U+2028, U+2029), which are not controls but break lines.
-    .refine((value) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value), "Use one line of text, with no control characters."),
+    .refine((value) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value), "Use one line of text, with no control characters.")
+    // Something a customer can read: trim() keeps format characters such as U+200B, which show as nothing.
+    .refine((value) => /[\p{L}\p{N}\p{P}\p{S}]/u.test(value), "Use a name with at least one letter, digit or sign."),
   /** Secret pepper for the HMAC lookup hashes of phone numbers and recovery emails (AC 6). Never change it. */
   PHONE_LOOKUP_PEPPER: secretBytes("PHONE_LOOKUP_PEPPER"),
   /** AES-256-GCM keys for phone numbers at rest. */

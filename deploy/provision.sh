@@ -146,11 +146,15 @@ check_domains() {
 
 # Written unquoted into app.env, which Compose and the server read: one line of at most 100 characters, with nothing
 # Compose would take as a quote, a comment or a variable.
-# Not blank, as the server trims it; U+2028 and U+2029 (line and paragraph separators) count as new lines there too.
+# U+2028 and U+2029 (line and paragraph separators) count as new lines on the server too. It must also hold a Latin or
+# Arabic letter or digit (matched as bytes, whatever the locale), which no trim removes and the server takes as visible,
+# so a name made only of spaces of any kind or of invisible characters never stops the server at startup.
 check_operator_name() {
-  [[ ${OPERATOR_NAME:-} == *[![:space:]]* && ${#OPERATOR_NAME} -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* &&
+  if ! [[ -n ${OPERATOR_NAME:-} && ${#OPERATOR_NAME} -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* &&
     $OPERATOR_NAME != *$'\xe2\x80\xa8'* && $OPERATOR_NAME != *$'\xe2\x80\xa9'* ]] ||
-    fail "OPERATOR_NAME must be who runs the service, as the privacy notice names them: one line of at most 100 characters, not blank, without quotes, #, \$ or backslashes."
+    ! LC_ALL=C grep -qE $'[A-Za-z0-9]|\xd8[\xa1-\xba]|\xd9[\x81-\x8a\xa0-\xa9]' <<<"$OPERATOR_NAME"; then
+    fail "OPERATOR_NAME must be who runs the service, as the privacy notice names them: one line of at most 100 characters, with a Latin or Arabic letter or digit, without quotes, #, \$ or backslashes."
+  fi
 }
 
 # Written to backup.conf and alert.curlrc: plain values only (no quotes, backslashes or spaces).
