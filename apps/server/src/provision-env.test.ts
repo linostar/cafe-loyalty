@@ -56,10 +56,15 @@ describe("the server settings provisioning generates (deploy/provision.sh)", () 
     }
   });
 
-  it("take an operator name in Arabic, which the server takes too", () => {
+  it("take an operator name in Arabic, counted in characters as the server counts them, not bytes", () => {
     const target = mkdtempSync(join(dir, "arabic-"));
     envFiles(target, "شركة الولاء ٢٠٢٦");
     expect(operatorLines(target)).toEqual(["OPERATOR_NAME=شركة الولاء ٢٠٢٦"]);
+    // 100 Arabic letters (200 bytes) pass, as on the server (config.test.ts); 101 do not.
+    const longest = mkdtempSync(join(dir, "arabic-"));
+    envFiles(longest, "ش".repeat(100));
+    expect(operatorLines(longest)).toEqual([`OPERATOR_NAME=${"ش".repeat(100)}`]);
+    expect(() => envFiles(mkdtempSync(join(dir, "arabic-")), "ش".repeat(101))).toThrow(/OPERATOR_NAME must be who runs the service/);
   });
 
   it("keep one operator name line after PUBLIC_URL on every run, and add it to an app.env from before it existed", () => {

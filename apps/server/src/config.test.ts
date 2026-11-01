@@ -117,6 +117,8 @@ describe("loadServerConfig", () => {
     expect(loadServerConfig({ ...valid, OPERATOR_NAME: "☕".repeat(100) }).OPERATOR_NAME).toHaveLength(100);
     expect(loadServerConfig({ ...valid, OPERATOR_NAME: "🫘".repeat(100) }).OPERATOR_NAME).toHaveLength(200);
     expect(loadServerConfig({ ...valid, OPERATOR_NAME: "شركة الولاء" }).OPERATOR_NAME).toBe("شركة الولاء");
+    expect(loadServerConfig({ ...valid, OPERATOR_NAME: "ش".repeat(100) }).OPERATOR_NAME).toHaveLength(100);
+    expect(() => loadServerConfig({ ...valid, OPERATOR_NAME: "ش".repeat(101) })).toThrow(/OPERATOR_NAME/);
     for (const wrong of [undefined, "", "   ", "  ﻿", "​", "​‍", "Two\nlines", "Two lines", "Two paragraphs", "x".repeat(101)]) {
       expect(() => loadServerConfig({ ...valid, OPERATOR_NAME: wrong })).toThrow(/OPERATOR_NAME/);
     }

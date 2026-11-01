@@ -150,7 +150,10 @@ check_domains() {
 # Arabic letter or digit (matched as bytes, whatever the locale), which no trim removes and the server takes as visible,
 # so a name made only of spaces of any kind or of invisible characters never stops the server at startup.
 check_operator_name() {
-  if ! [[ -n ${OPERATOR_NAME:-} && ${#OPERATOR_NAME} -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* &&
+  # Characters, as the server counts them, whatever the locale: every UTF-8 byte but continuation bytes starts one.
+  local characters
+  characters=$(printf '%s' "${OPERATOR_NAME:-}" | LC_ALL=C tr -d '\200-\277' | wc -c)
+  if ! [[ -n ${OPERATOR_NAME:-} && $characters -le 100 && $OPERATOR_NAME != *[[:cntrl:]\#\$\\\"\'\`]* &&
     $OPERATOR_NAME != *$'\xe2\x80\xa8'* && $OPERATOR_NAME != *$'\xe2\x80\xa9'* ]] ||
     ! LC_ALL=C grep -qE $'[A-Za-z0-9]|\xd8[\xa1-\xba]|\xd9[\x81-\x8a\xa0-\xa9]' <<<"$OPERATOR_NAME"; then
     fail "OPERATOR_NAME must be who runs the service, as the privacy notice names them: one line of at most 100 characters, with a Latin or Arabic letter or digit, without quotes, #, \$ or backslashes."
