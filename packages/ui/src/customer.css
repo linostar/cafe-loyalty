@@ -157,10 +157,27 @@ html[lang="en"] .kicker {
   font-weight: var(--weight-semibold);
 }
 
+/* A reward that is ready stands out from the stamps still to go: a pill in the accent, its border kept in forced colours. */
+.card-face .reward.is-ready {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  border: 2px solid var(--color-accent);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
 .card-qr {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
   padding: var(--space-5);
+}
+
+.ready-heading {
+  margin-block-end: var(--space-3);
+  font-size: var(--text-lg);
+  text-align: center;
 }
 
 .qr {
@@ -193,7 +210,7 @@ html[lang="en"] .kicker {
   margin: 0;
 }
 
-/* Add to Apple Wallet in Apple's black, Google's own badge as it comes. */
+/* Add to Apple Wallet in Apple's black, Google's own badge as it comes; only wallet buttons use these. */
 .wallet-row {
   display: flex;
   justify-content: center;

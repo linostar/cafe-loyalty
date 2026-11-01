@@ -90,6 +90,7 @@ await app.register(customerPages, {
   mailer,
   background,
   publicUrl: config.PUBLIC_URL,
+  operatorName: config.OPERATOR_NAME,
   secrets,
   jobs: startedJobs,
   apple: config.applePasses,

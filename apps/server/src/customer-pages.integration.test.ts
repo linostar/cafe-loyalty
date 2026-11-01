@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
 import { decryptPhone } from "./customer-crypto.js";
 import { MIN_SIGNUP_MS } from "./customer-pages.js";
-import { PUBLIC_URL, TEST_SECRETS, useApiHarness, withCookie, type Harness, type SignedUpOwner } from "./testing/api-harness.js";
+import { OPERATOR_NAME, PUBLIC_URL, TEST_SECRETS, useApiHarness, withCookie, type Harness, type SignedUpOwner } from "./testing/api-harness.js";
 
 const context = useApiHarness();
 const { harness, signUp, auditActions } = context;
@@ -78,8 +78,7 @@ describe("signup", () => {
     const response = await join(app, code, "٧٠ ١٢٣ ٤٥٦");
     expect(response.statusCode).toBe(303);
     const card = await cardRow(secretOf(response));
-    expect(card).toMatchObject({ cafe_id: owner.cafeId, epoch: 1, email: null });
-    expect(card?.offers_opt_in_at).toBeInstanceOf(Date);
+    expect(card).toMatchObject({ cafe_id: owner.cafeId, epoch: 1, email: null, offers_opt_in_at: null });
     expect(card?.privacy_accepted_at).toBeInstanceOf(Date);
     const { rows } = await context.admin.query<{ phone_lookup: Buffer; phone_ciphertext: Buffer; phone_key_id: string }>(
       "SELECT phone_lookup, phone_ciphertext, phone_key_id FROM app.customers WHERE id = $1",
@@ -91,19 +90,55 @@ describe("signup", () => {
     expect(await auditActions(owner.cafeId)).toContain("card.created");
   });
 
-  it("turns offers on for every new card without asking, whatever an older form sends", async () => {
+  it("asks for offers with an unticked box, and turns them on only when it is ticked (AC 4)", async () => {
     const { app, code, owner } = await cafeWithJoinCode();
-    const page = await app.inject({ method: "GET", url: `/join/${code}?lang=en` });
-    expect(page.body).not.toContain('name="offers"');
-    expect(page.body).not.toContain("Send offers");
-    expect((await app.inject({ method: "GET", url: `/join/${code}?lang=ar` })).body).not.toContain('name="offers"');
-    for (const extra of [{}, { offers: "yes" }, { offers: "no" }]) {
-      const card = await cardRow(secretOf(await join(app, code, uniquePhone(), extra)));
-      // On, as the offer jobs read it (cards.offers_opt_in_at IS NOT NULL: worker offers.ts and win-back.ts).
-      expect(card?.offers_opt_in_at).toBeInstanceOf(Date);
+    for (const lang of ["en", "ar"]) {
+      const page = await app.inject({ method: "GET", url: `/join/${code}?lang=${lang}` });
+      expect(page.body).toContain('<input type="checkbox" name="offers" value="yes"> ');
+      expect(page.body).not.toContain('name="offers" value="yes" checked');
+      // The privacy notice names who keeps the data, and says the café may show offers.
+      expect(page.body).toContain(`\u2068${OPERATOR_NAME}\u2069`);
+    }
+    expect((await app.inject({ method: "GET", url: `/join/${code}?lang=en` })).body).toContain("may show offers on your card");
+    const optedIn = await cardRow(secretOf(await join(app, code, uniquePhone(), { offers: "yes" })));
+    // On, as the offer jobs read it (cards.offers_opt_in_at IS NOT NULL: worker offers.ts and win-back.ts).
+    expect(optedIn?.offers_opt_in_at).toBeInstanceOf(Date);
+    for (const extra of [{}, { offers: "no" }]) {
+      expect((await cardRow(secretOf(await join(app, code, uniquePhone(), extra))))?.offers_opt_in_at).toBeNull();
     }
     const { rows } = await context.admin.query<{ changes: unknown }>("SELECT changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'card.created' ORDER BY id", [owner.cafeId]);
-    expect(rows.map((row) => row.changes)).toEqual(Array.from({ length: 3 }, () => ({ source: "customer", offers: "on_by_default" })));
+    expect(rows.map((row) => row.changes)).toEqual([
+      { source: "customer", offers: "opted_in" },
+      { source: "customer", offers: "not_opted_in" },
+      { source: "customer", offers: "not_opted_in" },
+    ]);
+  });
+
+  it("stores an optional recovery email at signup, never in the audit log or the logs (AC 8)", async () => {
+    const { app, code, owner, logs } = await cafeWithJoinCode();
+    const email = `nour-${randomUUID()}@example.com`;
+    const withEmail = await join(app, code, uniquePhone(), { email: ` ${email} ` });
+    expect(withEmail.statusCode).toBe(303);
+    expect((await cardRow(secretOf(withEmail)))?.email).toBe(email);
+    expect((await cardRow(secretOf(await join(app, code, uniquePhone(), { email: "" }))))?.email).toBeNull();
+    const { rows } = await context.admin.query<{ changes: unknown }>("SELECT changes FROM app.audit_log WHERE cafe_id = $1", [owner.cafeId]);
+    expect(JSON.stringify(rows)).not.toContain(email);
+    expect(logs.join("\n")).not.toContain(email);
+    // The card it made has its email: no nudge to add one, unlike a card without.
+    expect((await app.inject({ method: "GET", url: `/c/${secretOf(withEmail)}?lang=en` })).body).not.toContain("Add a recovery email");
+  });
+
+  it("keeps everything typed when the email is not an address, and makes no card", async () => {
+    const { app, code, owner } = await cafeWithJoinCode();
+    const phone = uniquePhone();
+    const response = await join(app, code, phone, { email: "nour@example", offers: "yes" });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('<p class="field-error" id="email-error" role="alert">Enter an email address in Latin letters');
+    expect(response.body).toMatch(/id="email" name="email" type="email" autocomplete="email" dir="ltr" value="nour@example" aria-describedby="email-hint email-error" aria-invalid="true"/);
+    expect(response.body).toContain(`value="${phone}"`);
+    expect(response.body).toContain('name="offers" value="yes" checked');
+    expect(response.body).toMatch(/name="privacy" value="yes" required aria-describedby="privacy-text" checked/);
+    expect(await auditActions(owner.cafeId)).not.toContain("card.created");
   });
 
   it("answers a new number, a number known elsewhere and a number already here the same way, never with the existing card (AC 5)", async () => {
@@ -308,6 +343,9 @@ describe("fonts and logo", () => {
     const logo = await app.inject({ method: "GET", url: "/assets/logo.svg" });
     expect(logo.headers).toMatchObject({ "content-type": "image/svg+xml", "cache-control": "public, max-age=604800" });
     expect(logo.body).toMatch(/^<svg /);
+    const icon = await app.inject({ method: "GET", url: "/assets/icon-192.png" });
+    expect(icon.headers).toMatchObject({ "content-type": "image/png", "cache-control": "public, max-age=604800" });
+    expect(icon.rawPayload.subarray(1, 4).toString("latin1")).toBe("PNG");
     for (const url of ["/assets/fonts/unknown.woff2", "/assets/fonts/..%2F..%2Fpackage.json"]) {
       const missing = await app.inject({ method: "GET", url });
       expect(missing.statusCode).toBe(404);
@@ -330,6 +368,13 @@ describe("web card", () => {
     expect(card.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "same-origin", "x-robots-tag": "noindex, nofollow" });
     // The page itself says the same, so a meta tag never takes the real Origin off its own form posts.
     expect(card.body).toContain('<meta name="referrer" content="same-origin">');
+    // An icon and a colour for the home screen it asks to be added to.
+    expect(card.body).toContain('<link rel="apple-touch-icon" href="/assets/icon-192.png">');
+    expect(card.body).toMatch(/<meta name="theme-color" content="#[0-9a-f]{6}">/i);
+    // No recovery email yet: the card asks for one, linking to its settings' email section.
+    expect(card.body).toContain(`<a class="link-button next" href="/c/${secret}/settings?lang=en#email-title"><span>Add a recovery email</span>`);
+    await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: `maya-${randomUUID()}@example.com` }) });
+    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).not.toContain("Add a recovery email");
   });
 
   it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {
@@ -339,7 +384,7 @@ describe("web card", () => {
     const coffee =
       (await as("POST", "/api/cafe/order-types", { nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1, active: true })).json<{ orderTypes: { id: string }[] }>()
         .orderTypes[0]?.id ?? "missing";
-    const secret = secretOf(await join(app, code, uniquePhone()));
+    const secret = secretOf(await join(app, code, uniquePhone(), { offers: "yes" }));
     const card = await cardRow(secret);
     await context.admin.query("UPDATE app.cards SET stamps = 3 WHERE id = $1", [card?.id]);
     const page = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
@@ -372,9 +417,11 @@ describe("web card", () => {
       const full = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
       expect(full.match(/<li class="stamp is-filled">/g)).toHaveLength(9);
       expect(full).not.toContain('<li class="stamp"></li>');
-      expect(full).toContain("Your reward is ready: \u2068Free coffee\u2069. Show this card to the barista.");
+      expect(full).toContain('<p class="reward is-ready">Your reward is ready: \u2068Free coffee\u2069. Show this card to the barista.</p>');
+      expect(full).toContain('<h2 class="ready-heading">Reward ready: show this code to the barista</h2>');
       expect(full).not.toContain("to go for");
     }
+    expect(page).not.toContain("is-ready");
   });
 
   it("sets and removes a recovery email, and opts in and out of offers", async () => {
@@ -413,6 +460,12 @@ describe("web card", () => {
     expect((await first.app.inject({ method: "POST", url: `/c/${here}/delete`, ...formBody({ lang: "en" }) })).statusCode).toBe(400);
     const deleted = await first.app.inject({ method: "POST", url: `/c/${here}/delete`, ...formBody({ confirm: "yes", lang: "en" }) });
     expect(deleted.body).toContain("Your card and its data are deleted.");
+    // Its language switch shows the same page in Arabic, not another page.
+    expect(deleted.body).toContain('<a href="/deleted?lang=ar" lang="ar">');
+    const arabic = await first.app.inject({ method: "GET", url: "/deleted?lang=ar" });
+    expect(arabic.statusCode).toBe(200);
+    expect(arabic.body).toContain("تم حذف بطاقتك وبياناتها.");
+    expect(arabic.body).toContain('<a href="/deleted?lang=en" lang="en">');
     expect(await cardRow(here)).toBeUndefined();
     expect(await customerCount()).toBe(1);
     expect((await first.app.inject({ method: "GET", url: `/c/${here}?lang=en` })).statusCode).toBe(404);
@@ -611,6 +664,17 @@ describe("recovery", () => {
       expect(await cardRow(secret)).toBeUndefined();
     }
     expect((await context.admin.query("SELECT 1 FROM app.customers WHERE id = $1", [customerId])).rowCount).toBe(0);
+  });
+
+  it("restores a card by the email given at signup", async () => {
+    const h = await cafeWithJoinCode();
+    const email = `lina-${randomUUID()}@example.com`;
+    const secret = secretOf(await join(h.app, h.code, uniquePhone(), { email }));
+    await requestLink(h, email);
+    expect(h.mailer.sent[0]?.to).toBe(email);
+    const restored = await h.app.inject({ method: "POST", url: `/r/${tokenOf(h)}`, ...formBody({ action: "restore", lang: "en" }) });
+    expect(restored.statusCode).toBe(303);
+    expect(secretOf(restored)).not.toBe(secret);
   });
 
   it("goes straight to the card when the email has only one", async () => {
@@ -1033,7 +1097,7 @@ describe("feedback", () => {
     const saved = await as("PATCH", "/api/cafe", { googleReviewUrl: " https://g.page/r/FakeReviewLink/review " });
     expect(saved.json<{ cafe: { googleReviewUrl: string | null } }>().cafe.googleReviewUrl).toBe("https://g.page/r/FakeReviewLink/review");
     const withLink = await app.inject({ method: "GET", url: `${path}?lang=en` });
-    expect(withLink.body).toContain('<a class="wallet" href="https://g.page/r/FakeReviewLink/review" rel="noreferrer">Write a Google review</a>');
+    expect(withLink.body).toContain('<a class="link-button" href="https://g.page/r/FakeReviewLink/review" rel="noreferrer">Write a Google review</a>');
     expect(withLink.body).toContain('<textarea id="message"');
     // Arabic too.
     expect((await app.inject({ method: "GET", url: path, headers: { "accept-language": "ar" } })).body).toContain("اكتب تقييماً على Google");
@@ -1118,10 +1182,13 @@ describe("feedback", () => {
   });
 
   it("closes a visit's link 30 days after it, so an old pass cannot fill the inbox", async () => {
-    const { app, path, as, card } = await askedCard();
+    const { app, path, as, card, secret } = await askedCard();
     const age = (days: number) => context.admin.query("UPDATE app.feedback_requests SET created_at = now() - make_interval(days => $1) WHERE card_id = $2", [days, card?.id]);
     const send = () => app.inject({ method: "POST", url: path, ...formBody({ message: "Fake feedback", lang: "en" }) });
+    const cardPage = async () => (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
     await age(31);
+    // A closed link is not offered on the card.
+    expect(await cardPage()).not.toContain("Tell the café");
     const page = await app.inject({ method: "GET", url: `${path}?lang=en` });
     expect(page.statusCode).toBe(410);
     expect(page.body).toContain("more than 30 days ago");
@@ -1130,8 +1197,11 @@ describe("feedback", () => {
     expect((await send()).statusCode).toBe(410);
     expect((await as("GET", "/api/feedback")).json<{ items: unknown[] }>().items).toEqual([]);
     await age(29);
+    expect(await cardPage()).toContain("Tell the café");
     expect((await app.inject({ method: "GET", url: `${path}?lang=en` })).body).toContain("<textarea");
     expect((await send()).statusCode).toBe(303);
+    // Answered: not offered on the card any more, though it is still open.
+    expect(await cardPage()).not.toContain("Tell the café");
     // Answered, then closed: still thanks, not "closed".
     await age(31);
     expect((await app.inject({ method: "GET", url: `${path}?lang=en` })).body).toContain("You already sent a message about this visit.");

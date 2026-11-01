@@ -25,6 +25,7 @@ const valid = {
   SMTP_USER: "mailer",
   SMTP_PASSWORD: "smtp-secret",
   EMAIL_FROM: "Cafe Loyalty <no-reply@example.com>",
+  OPERATOR_NAME: "Loyalty Everywhere",
   BUILT_AT: "2026-10-01T09:30:00Z",
 };
 
@@ -109,6 +110,15 @@ describe("loadServerConfig", () => {
     );
     expect(() => loadServerConfig({ ...valid, EMAIL_FROM: "Cafe Loyalty" })).toThrow(/EMAIL_FROM/);
     expect(loadServerConfig({ ...valid, EMAIL_FROM: "no-reply@example.com" }).EMAIL_FROM).toBe("no-reply@example.com");
+  });
+
+  it("needs the operator's name on one line, trimmed", () => {
+    expect(loadServerConfig({ ...valid, OPERATOR_NAME: "  Najjar Software SAL " }).OPERATOR_NAME).toBe("Najjar Software SAL");
+    expect(loadServerConfig({ ...valid, OPERATOR_NAME: "☕".repeat(100) }).OPERATOR_NAME).toHaveLength(100);
+    expect(loadServerConfig({ ...valid, OPERATOR_NAME: "🫘".repeat(100) }).OPERATOR_NAME).toHaveLength(200);
+    for (const wrong of [undefined, "", "   ", "Two\nlines", "x".repeat(101)]) {
+      expect(() => loadServerConfig({ ...valid, OPERATOR_NAME: wrong })).toThrow(/OPERATOR_NAME/);
+    }
   });
 
   it("takes Apple Wallet settings all together or not at all, checking the certificates and that the key fits", () => {

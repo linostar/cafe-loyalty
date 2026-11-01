@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { PASS_TEXT } from "@cafe-loyalty/db";
 import { PRODUCT_NAME } from "@cafe-loyalty/shared";
-import { selfHostedFonts, stylesheets } from "@cafe-loyalty/ui";
+import { selfHostedFonts, stylesheets, tokenValue } from "@cafe-loyalty/ui";
 
 export type Lang = "ar" | "en";
 
@@ -48,6 +48,10 @@ export function pickLang(requested: unknown, acceptLanguage: string | undefined)
 /** Where the customer pages' fonts and logo are served from (customer-pages.ts); their own origin only. */
 export const FONT_PATH = "/assets/fonts/";
 export const LOGO_PATH = "/assets/logo.svg";
+export const ICON_PATH = "/assets/icon-192.png";
+
+/** The browser's bar colour on phones: the card's espresso. */
+const THEME_COLOR = tokenValue("color-espresso");
 
 const fonts = selfHostedFonts(FONT_PATH);
 
@@ -82,9 +86,12 @@ const MESSAGES = {
     phoneHint: "For example 70 123 456. The café uses it to find your card when you forget your phone.",
     privacyTitle: "Privacy",
     privacyText:
-      "We keep your number encrypted, with your stamps and visits at {cafe}, only to run your loyalty card. The café sees your card, not your number. You can add an email to restore your card on a new phone, and you can delete your card at any time from its page.",
+      "{operator} keeps your number encrypted, with your stamps and visits at {cafe}, only to run your loyalty card. The café sees your card, not your number. If you tick the offers box, {cafe} may show offers on your card; you can turn them off in your card's settings. You can add an email to restore your card on a new phone, and you can delete your card at any time from its page.",
     privacyAccept: "I have read the privacy notice and want a card.",
     joinButton: "Get my card",
+    joinEmailLabel: "Recovery email (optional)",
+    joinEmailHint: "If you lose this phone, we can email you a link to restore your card. You can also add one later from your card.",
+    alreadyHaveCard: "Already have a card here? Open it from your wallet or bookmark: signing up again starts a new card.",
     phoneInvalid: "Enter a mobile number, such as 70 123 456 or +961 70 123 456.",
     privacyRequired: "Tick the box to accept the privacy notice.",
     cardTitle: "Your card at {cafe}",
@@ -94,6 +101,10 @@ const MESSAGES = {
     keepLink: "This page is your card. Bookmark it or add it to your home screen, and do not share its link.",
     addToAppleWallet: "Add to Apple Wallet",
     addToGoogleWallet: "Add to Google Wallet",
+    walletHint: "Your card updates itself in your wallet, and this page keeps working too.",
+    emailNudgeTitle: "Don't lose your stamps",
+    emailNudgeText: "If you lose this phone or this page's link, a recovery email gets your card back.",
+    emailNudgeLink: "Add a recovery email",
     emailTitle: "Recovery email",
     emailText: "If you lose this phone, we can email you a link to restore your card.",
     emailLabel: "Email",
@@ -146,12 +157,13 @@ const MESSAGES = {
     tryAgain: "Try again",
     stampsToGo: "{stamps} to go for {reward}.",
     rewardReady: "Your reward is ready: {reward}. Show this card to the barista.",
+    rewardReadyHeading: "Reward ready: show this code to the barista",
     yourOffer: "Your offer",
     poweredBy: "Loyalty card by {product}",
     feedbackTitle: "How was your visit to {cafe}?",
     feedbackText: "Tell the café what went well and what didn't. Your message goes privately to the owner.",
     feedbackLabel: "Your message",
-    feedbackHint: "Up to 2,000 characters. Your message is anonymous, and the owner cannot reply to it here.",
+    feedbackHint: "Up to 2,000 characters. The café does not see your name or number, and the owner cannot reply to it here.",
     feedbackSend: "Send to the café",
     feedbackSent: "Thank you. Your message is with the café.",
     feedbackDone: "You already sent a message about this visit. Thank you.",
@@ -177,9 +189,12 @@ const MESSAGES = {
     phoneHint: "مثلاً ⁦70 123 456⁩. يستخدمه المقهى للعثور على بطاقتك إذا نسيت هاتفك.",
     privacyTitle: "الخصوصية",
     privacyText:
-      "نحتفظ برقمك مشفّراً، مع أختامك وزياراتك في {cafe}، فقط لتشغيل بطاقة الولاء. يرى المقهى بطاقتك لا رقمك. يمكنك إضافة بريد إلكتروني لاستعادة بطاقتك على هاتف جديد، ويمكنك حذف بطاقتك في أي وقت من صفحتها.",
+      "يحتفظ {operator} برقمك مشفّراً، مع أختامك وزياراتك في {cafe}، فقط لتشغيل بطاقة الولاء. يرى المقهى بطاقتك لا رقمك. إذا وضعت علامة في مربع العروض، قد يعرض {cafe} عروضاً على بطاقتك، ويمكنك إيقافها من إعدادات بطاقتك. يمكنك إضافة بريد إلكتروني لاستعادة بطاقتك على هاتف جديد، ويمكنك حذف بطاقتك في أي وقت من صفحتها.",
     privacyAccept: "قرأت إشعار الخصوصية وأريد بطاقة.",
     joinButton: "أعطني بطاقتي",
+    joinEmailLabel: "بريد الاستعادة (اختياري)",
+    joinEmailHint: "إذا فقدت هذا الهاتف، يمكننا أن نرسل إلى بريدك رابطاً لاستعادة بطاقتك. يمكنك أيضاً إضافته لاحقاً من بطاقتك.",
+    alreadyHaveCard: "لديك بطاقة هنا من قبل؟ افتحها من محفظتك أو من المفضلة: التسجيل مرة أخرى يبدأ بطاقة جديدة.",
     phoneInvalid: "أدخل رقم هاتف محمول، مثل ⁦70 123 456⁩ أو ⁦+961 70 123 456⁩.",
     privacyRequired: "ضع علامة في المربع للموافقة على إشعار الخصوصية.",
     cardTitle: "بطاقتك في {cafe}",
@@ -189,6 +204,10 @@ const MESSAGES = {
     keepLink: "هذه الصفحة هي بطاقتك. احفظها في المفضلة أو أضفها إلى الشاشة الرئيسية، ولا تشارك رابطها.",
     addToAppleWallet: "إضافة إلى Apple Wallet",
     addToGoogleWallet: "إضافة إلى محفظة Google",
+    walletHint: "تتحدّث بطاقتك وحدها في محفظتك، وتبقى هذه الصفحة تعمل أيضاً.",
+    emailNudgeTitle: "لا تخسر أختامك",
+    emailNudgeText: "إذا فقدت هذا الهاتف أو رابط هذه الصفحة، يعيد لك بريد الاستعادة بطاقتك.",
+    emailNudgeLink: "أضف بريد استعادة",
     emailTitle: "بريد الاستعادة",
     emailText: "إذا فقدت هذا الهاتف، يمكننا أن نرسل لك رابطاً لاستعادة بطاقتك.",
     emailLabel: "البريد الإلكتروني",
@@ -241,12 +260,13 @@ const MESSAGES = {
     tryAgain: "حاول مجدداً",
     stampsToGo: "تبقّى {stamps} للحصول على {reward}.",
     rewardReady: "مكافأتك جاهزة: {reward}. أظهر هذه البطاقة للباريستا.",
+    rewardReadyHeading: "المكافأة جاهزة: أظهر هذا الرمز للباريستا",
     yourOffer: "عرضك",
     poweredBy: "بطاقة ولاء من {product}",
     feedbackTitle: "كيف كانت زيارتك إلى {cafe}؟",
     feedbackText: "أخبر المقهى بما أعجبك وما لم يعجبك. تصل رسالتك إلى المالك بشكل خاص.",
     feedbackLabel: "رسالتك",
-    feedbackHint: "حتى 2,000 حرف. رسالتك بلا اسم، ولا يستطيع المالك الرد عليها هنا.",
+    feedbackHint: "حتى 2,000 حرف. لا يرى المقهى اسمك ولا رقمك، ولا يستطيع المالك الرد على رسالتك هنا.",
     feedbackSend: "إرسال إلى المقهى",
     feedbackSent: "شكراً لك. وصلت رسالتك إلى المقهى.",
     feedbackDone: "لقد أرسلت رسالة عن هذه الزيارة. شكراً لك.",
@@ -316,6 +336,8 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 <meta name="robots" content="noindex, nofollow">
 <title>${title}</title>
 <link rel="icon" type="image/svg+xml" href="${LOGO_PATH}">
+<link rel="apple-touch-icon" href="${ICON_PATH}">
+<meta name="theme-color" content="${THEME_COLOR}">
 <style>${new SafeHtml(STYLE)}</style>
 </head>
 <body>

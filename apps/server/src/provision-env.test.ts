@@ -15,6 +15,7 @@ const DOMAINS = {
   STAGING_DASHBOARD_DOMAIN: "dashboard.staging.example.test",
   STAGING_COUNTER_DOMAIN: "counter.staging.example.test",
   STAGING_PUBLIC_DOMAIN: "card.staging.example.test",
+  OPERATOR_NAME: "Najjar & Co (SAL)",
 };
 const dir = mkdtempSync(join(tmpdir(), "provision-env-"));
 afterAll(() => {
@@ -36,6 +37,7 @@ describe("the server settings provisioning generates (deploy/provision.sh)", () 
     });
     expect(config.NODE_ENV).toBe("production");
     expect(config.DASHBOARD_URL).toBe("https://dashboard.example.test");
+    expect(config.OPERATOR_NAME).toBe("Najjar & Co (SAL)");
     expect(config.DATABASE_URL).toContain(`:${database.APP_PASSWORD ?? "missing"}@`);
   });
 });

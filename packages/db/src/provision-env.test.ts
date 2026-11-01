@@ -15,6 +15,7 @@ const DOMAINS = {
   STAGING_DASHBOARD_DOMAIN: "dashboard.staging.example.test",
   STAGING_COUNTER_DOMAIN: "counter.staging.example.test",
   STAGING_PUBLIC_DOMAIN: "card.staging.example.test",
+  OPERATOR_NAME: "Test Operator",
 };
 const dir = mkdtempSync(join(tmpdir(), "provision-env-"));
 afterAll(() => {

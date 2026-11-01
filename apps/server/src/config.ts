@@ -40,6 +40,17 @@ const serverEnvSchema = z.object({
   COUNTER_URL: counterUrlSchema,
   /** Public address of this server's customer pages: café signup QR codes, web cards and recovery links. */
   PUBLIC_URL: publicUrlSchema,
+  /**
+   * Who runs the service and keeps customers' data, as the signup page's privacy notice names them (both languages):
+   * one line, no control characters.
+   */
+  OPERATOR_NAME: z
+    .string()
+    .trim()
+    .min(1, "Name who runs the service, as the privacy notice should show it.")
+    // Characters, as provision.sh counts them (not UTF-16 units), so a name it accepts never stops the server.
+    .refine((value) => Array.from(value).length <= 100, "Use at most 100 characters.")
+    .refine((value) => !/\p{Cc}/u.test(value), "Use one line of text, with no control characters."),
   /** Secret pepper for the HMAC lookup hashes of phone numbers and recovery emails (AC 6). Never change it. */
   PHONE_LOOKUP_PEPPER: secretBytes("PHONE_LOOKUP_PEPPER"),
   /** AES-256-GCM keys for phone numbers at rest. */
