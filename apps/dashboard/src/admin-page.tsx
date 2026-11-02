@@ -24,6 +24,7 @@ import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang
 import { parseUsdInput } from "./money-input.js";
 import { ChangePasswordForm } from "./password-form.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
+import { useUnsavedChanges } from "./unsaved-changes.js";
 
 const AR = {
   Pilot: "تجريبية",
@@ -186,6 +187,8 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
   // Suspending stops the café's signups, so it asks again first (A1); the other plans save in one press.
   const asks = plan === "suspended" && !unchanged;
   const { pending, error, submit } = useSubmit();
+  // The form's own, so a suspend confirmed outside its submit still clears the leave-page warning once saved.
+  const unsaved = useUnsavedChanges();
   const save = () => {
     void submit(() => apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { plan })).then((result) => {
       if (result.ok) {
@@ -196,6 +199,7 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
   };
   return (
     <Form
+      unsaved={unsaved}
       onSubmit={(event) => {
         event.preventDefault();
         // The button stays focusable when there is nothing to save (aria-disabled), so a press does nothing here.
@@ -234,7 +238,9 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
           confirmLabel={t("Yes, suspend {name}", { name: cafe.name })}
           describedBy={`plan-hint-${cafe.id}`}
           pending={pending}
-          onConfirm={save}
+          onConfirm={() => {
+            unsaved.submit(save);
+          }}
         />
       ) : (
         // aria-disabled, not disabled: once saved the plan is unchanged, and a disabled button would drop focus to the page.
@@ -490,7 +496,8 @@ function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invit
             {t("{name} already has an owner. A new link lets one more person sign up as its owner.", { name: cafe.name })}
           </p>
           <ConfirmButton
-            label={pending ? t("Making a link…") : t("New signup link")}
+            // Fixed while pending, as every ConfirmButton's: its name (below) must start with what is shown (WCAG 2.5.3).
+            label={t("New signup link")}
             name={t("New signup link for {name}", { name: cafe.name })}
             confirmLabel={t("Yes, make a link for another owner")}
             confirmName={t("Yes, make a link for another owner of {name}", { name: cafe.name })}

@@ -498,6 +498,30 @@ test("refuses an owner on the admin screen with the operator sign-in", async ({ 
   await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
 });
 
+test("leaves without asking once a confirmed suspend is saved, but asks while it is only picked", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(200, cafe({ plan: "suspended" })),
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  const asked: string[] = [];
+  page.on("dialog", (dialog) => {
+    asked.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await card.getByLabel("Suspended").check();
+  await page.getByRole("link", { name: "All cafés" }).click();
+  await expect.poll(() => asked).toEqual(["beforeunload"]);
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByRole("button", { name: "Yes, suspend Café Najjar" }).click();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
+  await page.getByRole("link", { name: "All cafés" }).click();
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+  expect(asked).toEqual(["beforeunload"]);
+});
+
 test("shows the café's owner and open signup links, and revokes the open ones after asking (A4)", async ({ page }) => {
   let revoked = 0;
   await mockApi(page, {
