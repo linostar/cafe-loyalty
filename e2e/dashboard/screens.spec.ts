@@ -130,7 +130,8 @@ const ADMIN = {
           { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", amountCents: 2500, paidOn: "2026-09-01", method: "cash", reference: null, recordedAt: "2026-09-01T09:00:00.000Z", voided: { at: "2026-09-02T09:00:00.000Z", reason: "Typed the wrong amount" } },
         ],
         owners: [{ email: "owner@example.com", signedUpAt: "2026-09-02T08:00:00.000Z" }],
-        openInvites: [{ id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", createdAt: "2026-10-01T08:00:00.000Z", expiresAt: "2026-10-08T08:00:00.000Z" }],
+        // Open until long after any run: the page drops expired links.
+        openInvites: [{ id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", createdAt: "2026-10-01T08:00:00.000Z", expiresAt: "2099-10-08T08:00:00.000Z" }],
       },
       { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e", name: "Study Corner", plan: "pilot", createdAt: "2026-09-15T08:00:00.000Z", paidCents: 0, payments: [], owners: [], openInvites: [] },
     ],

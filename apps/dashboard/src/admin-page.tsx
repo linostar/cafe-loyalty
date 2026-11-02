@@ -19,7 +19,7 @@ import {
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale } from "./api.js";
-import { ConfirmButton, Field, Form, FormError, Notice, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useSubmit, type SubmitState } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
 import { ChangePasswordForm } from "./password-form.js";
@@ -475,9 +475,10 @@ function InviteLink({ cafe, invite }: { cafe: AdminCafe; invite: AdminInvite }) 
   );
 }
 
-function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invite: AdminInvite) => void }) {
+/** `links` is the request state NewLinkButton shares with OwnerLinks' revoke, so the two never overlap. */
+function NewLinkButton({ cafe, links, onCreated }: { cafe: AdminCafe; links: SubmitState; onCreated: (invite: AdminInvite) => void }) {
   const t = useT(AR);
-  const { pending, error, submit } = useSubmit();
+  const { pending, submit } = links;
   const make = () => {
     void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/invites`, adminInviteSchema, {})).then((result) => {
       if (result.ok) {
@@ -488,7 +489,6 @@ function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invit
   const hintId = `new-link-hint-${cafe.id}`;
   return (
     <div>
-      <FormError message={error} />
       {/* A café with an owner asks first: the link lets one more person sign up as its owner. */}
       {cafe.owners.length > 0 ? (
         <>
@@ -516,13 +516,36 @@ function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invit
   );
 }
 
-/** Who signed up as the café's owner, and its signup links still open, which the operator may close (A4). */
-function OwnerLinks({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
+/** Calls `then` a second after `expiresAt` (a signup link's 7 days fit setTimeout's 24.8-day limit); returns the cancel. */
+function afterExpiry(expiresAt: string, then: () => void): () => void {
+  const timer = setTimeout(then, Date.parse(expiresAt) - Date.now() + 1000);
+  return () => {
+    clearTimeout(timer);
+  };
+}
+
+/**
+ * Who signed up as the café's owner, and its signup links still open, which the operator may close (A4). A link drops
+ * off the list when it expires, while the page stays open; `links` is shared with NewLinkButton (above).
+ */
+function OwnerLinks({ cafe, links, onSaved }: { cafe: AdminCafe; links: SubmitState; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
   const t = useT(AR);
   const lang = useLang();
   const dayFormat = dateFormat(lang, DAY);
   const timeFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
-  const { pending, error, submit } = useSubmit();
+  const { pending, submit } = links;
+  const [now, setNow] = useState(Date.now);
+  // Soonest to expire first (the server's order), so the first one left is the next to drop off.
+  const openInvites = cafe.openInvites.filter((invite) => Date.parse(invite.expiresAt) > now);
+  const nextExpiry = openInvites[0]?.expiresAt;
+  useEffect(() => {
+    if (nextExpiry === undefined) {
+      return;
+    }
+    return afterExpiry(nextExpiry, () => {
+      setNow(Date.now());
+    });
+  }, [nextExpiry]);
   return (
     <>
       <h3>
@@ -542,18 +565,17 @@ function OwnerLinks({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminC
         </ul>
       )}
       <h4>{t("Open signup links")}</h4>
-      {cafe.openInvites.length === 0 ? (
+      {openInvites.length === 0 ? (
         <p className="empty">{t("No open signup links.")}</p>
       ) : (
         <>
           <ul className="items">
-            {cafe.openInvites.map((invite) => (
+            {openInvites.map((invite) => (
               <li key={invite.id}>
                 {t("Made {made}, works until {until}.", { made: timeFormat.format(new Date(invite.createdAt)), until: timeFormat.format(new Date(invite.expiresAt)) })}
               </li>
             ))}
           </ul>
-          <FormError message={error} />
           <ConfirmButton
             label={t("Revoke open links")}
             name={t("Revoke open links of {name}", { name: cafe.name })}
@@ -892,6 +914,8 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
   const [state, setData, retry] = useApiData("/api/admin/cafes", adminCafesSchema);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const [invite, setInvite] = useState<AdminInvite | null>(null);
+  // One request at a time for a new link and a revoke: a revoke's answer, read before a link made meanwhile, would drop it.
+  const links = useSubmit();
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
   }
@@ -926,6 +950,7 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       <div className="card">
         <OwnerLinks
           cafe={cafe}
+          links={links}
           onSaved={(saved, message) => {
             // A link shown here was revoked with the rest, so it goes.
             setInvite(null);
@@ -936,8 +961,10 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           A link takes only the owners and open links from its copy of the café: the rest of it may be older than a plan
           or payment saved meanwhile.
         */}
+        <FormError message={links.error} />
         <NewLinkButton
           cafe={cafe}
+          links={links}
           onCreated={(made) => {
             setData((current) => ({
               cafes: current.cafes.map((entry) => (entry.id === made.cafe.id ? { ...entry, owners: made.cafe.owners, openInvites: made.cafe.openInvites } : entry)),

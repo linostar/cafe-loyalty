@@ -20,6 +20,8 @@ const cafe = (overrides: Record<string, unknown> = {}) => ({
 });
 const OWNER = { email: "owner@example.com", signedUpAt: "2026-10-02T08:00:00.000Z" };
 const OPEN = { id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", createdAt: "2026-10-01T08:00:00.000Z", expiresAt: "2026-10-08T08:00:00.000Z" };
+/** A time while OPEN is still open: the page drops a link once it expires. */
+const WHILE_OPEN = new Date("2026-10-02T09:00:00.000Z");
 const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
 const invite = (token: string, overrides: Record<string, unknown> = {}) => ({ cafe: cafe(overrides), link: link(token), expiresAt: "2026-10-08T08:00:00.000Z" });
 
@@ -533,6 +535,7 @@ test("shows the café's owner and open signup links, and revokes the open ones a
       await route.fulfill({ json: cafe({ owners: [OWNER] }) });
     },
   });
+  await page.clock.install({ time: WHILE_OPEN });
   await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await expect(card.getByRole("heading", { level: 3, name: "Owner and signup links of Café Najjar" })).toBeVisible();
@@ -563,6 +566,7 @@ test("asks before a new signup link for a café that already has an owner, and l
       await route.fulfill({ status: 201, json: invite("fake-invite-token-second-owner", { owners: [OWNER], openInvites: [OPEN] }) });
     },
   });
+  await page.clock.install({ time: WHILE_OPEN });
   await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await expect(card.getByText("Café Najjar already has an owner. A new link lets one more person sign up as its owner.")).toBeVisible();
@@ -576,6 +580,54 @@ test("asks before a new signup link for a café that already has an owner, and l
   await expect(shown).toBeFocused();
   await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
   expect(made).toBe(1);
+});
+
+test("drops a signup link from the open ones when it expires while the page is open", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ owners: [OWNER], openInvites: [OPEN] })] }),
+  });
+  await page.clock.install({ time: new Date(Date.parse(OPEN.expiresAt) - 60_000) });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
+  await page.clock.fastForward("02:00");
+  await expect(card.getByText("No open signup links.")).toBeVisible();
+  await expect(card.getByRole("button", { name: /^Revoke open links/ })).toHaveCount(0);
+});
+
+test("holds Revoke open links while a new link is on its way, so the link made is never dropped", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let revoked = 0;
+  // Open for good, so the test needs no fake clock.
+  const open = { ...OPEN, expiresAt: "2099-10-08T08:00:00.000Z" };
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ openInvites: [open] })] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      await held;
+      await route.fulfill({ status: 201, json: invite("fake-invite-token-held", { openInvites: [open, { ...open, id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02" }] }) });
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/invites/revoke`]: async (route) => {
+      revoked += 1;
+      await route.fulfill({ json: cafe() });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  const revoke = card.getByRole("button", { name: "Revoke open links of Café Najjar" });
+  await expect(revoke).toHaveAttribute("aria-disabled", "true");
+  // Forced: Playwright waits for an aria-disabled button to be enabled, and the press must land while the link is on its way.
+  await revoke.click({ force: true });
+  await expect(card.getByRole("button", { name: /^Yes, revoke/ })).toHaveCount(0);
+  release();
+  await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-held"));
+  await expect(card.getByRole("listitem").filter({ hasText: "Made 1 Oct 2026" })).toHaveCount(2);
+  expect(revoked).toBe(0);
 });
 
 test("finds a café by name and plan in the list, saying how many are shown (A3)", async ({ page }) => {
