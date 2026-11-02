@@ -129,8 +129,10 @@ const ADMIN = {
           { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "whish", reference: "W-1042", recordedAt: "2026-10-01T09:00:00.000Z", voided: null },
           { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", amountCents: 2500, paidOn: "2026-09-01", method: "cash", reference: null, recordedAt: "2026-09-01T09:00:00.000Z", voided: { at: "2026-09-02T09:00:00.000Z", reason: "Typed the wrong amount" } },
         ],
+        owners: [{ email: "owner@example.com", signedUpAt: "2026-09-02T08:00:00.000Z" }],
+        openInvites: [{ id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", createdAt: "2026-10-01T08:00:00.000Z", expiresAt: "2026-10-08T08:00:00.000Z" }],
       },
-      { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e", name: "Study Corner", plan: "pilot", createdAt: "2026-09-15T08:00:00.000Z", paidCents: 0, payments: [] },
+      { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e", name: "Study Corner", plan: "pilot", createdAt: "2026-09-15T08:00:00.000Z", paidCents: 0, payments: [], owners: [], openInvites: [] },
     ],
   }),
 };
@@ -250,6 +252,59 @@ for (const { lang, locale } of LANGS) {
         await check(page);
         await expectFocusNeverHidden(page);
       });
+
+      // The admin screen's second steps and states (UX Phase 5: A1, A3, A4).
+      for (const [name, path, act] of [
+        [
+          "suspending",
+          ADMIN_PATHS[1],
+          async (page: Page) => {
+            await page.getByRole("radio", { name: lang === "ar" ? "موقوفة" : "Suspended" }).check();
+            await page.getByRole("button", { name: /^Save plan|^حفظ الخطة/ }).click();
+            await expect(page.getByRole("button", { name: /^Yes, suspend|^نعم، أوقف/ })).toBeVisible();
+          },
+        ],
+        [
+          "revoking-links",
+          ADMIN_PATHS[1],
+          async (page: Page) => {
+            await page.getByRole("button", { name: /^Revoke open links|^إلغاء الروابط المفتوحة/ }).click();
+            await expect(page.getByRole("button", { name: /^Yes, revoke|^نعم، ألغِ/ })).toBeVisible();
+          },
+        ],
+        [
+          "another-owner-link",
+          ADMIN_PATHS[1],
+          async (page: Page) => {
+            await page.getByRole("button", { name: /^New signup link|^رابط تسجيل جديد/ }).click();
+            await expect(page.getByRole("button", { name: /^Yes, make a link|^نعم، أنشئ رابطاً/ })).toBeVisible();
+          },
+        ],
+        [
+          "no-owner",
+          "/admin/cafes/0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e",
+          async (page: Page) => {
+            await expect(page.getByText(lang === "ar" ? "لم يسجّل أي مالك بعد." : "No owner has signed up yet.")).toBeVisible();
+          },
+        ],
+        [
+          "filtered-out",
+          ADMIN_PATHS[0],
+          async (page: Page) => {
+            await page.getByRole("searchbox").fill("zzz");
+            await expect(page.getByText(lang === "ar" ? "لا مقهى يطابق البحث والخطة المختارة." : "No café matches the search and plan chosen.")).toBeVisible();
+          },
+        ],
+      ] as const) {
+        test(`operator admin state: ${name}`, async ({ page }, testInfo) => {
+          await mockApi(page, ADMIN);
+          await page.goto(path);
+          await act(page);
+          await capture(page, testInfo, `dashboard-admin-${name}${suffix}`);
+          await check(page);
+          await expectFocusNeverHidden(page);
+        });
+      }
 
       test("inbox with its older messages loaded", async ({ page }, testInfo) => {
         await mockApi(page, {

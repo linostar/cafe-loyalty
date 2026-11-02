@@ -322,6 +322,7 @@ export function ConfirmButton({
   pending,
   onConfirm,
   className,
+  describedBy,
 }: {
   label: string;
   confirmLabel: string;
@@ -331,6 +332,8 @@ export function ConfirmButton({
   onConfirm: () => void;
   /** The class of the button that asks, such as `primary`. */
   className?: string | undefined;
+  /** The id of text beside the buttons saying what confirming does, read with each of them. */
+  describedBy?: string;
 }) {
   const t = useCommonT();
   const [asking, setAsking] = useState(false);
@@ -365,6 +368,7 @@ export function ConfirmButton({
             type="button"
             className="danger"
             aria-label={confirmName}
+            aria-describedby={describedBy}
             aria-disabled={pending || undefined}
             onKeyDown={cancelOnEscape}
             onClick={() => {
@@ -379,7 +383,7 @@ export function ConfirmButton({
           >
             {confirmLabel}
           </button>
-          <button type="button" data-confirm-cancel onKeyDown={cancelOnEscape} onClick={cancel}>
+          <button type="button" data-confirm-cancel aria-describedby={describedBy} onKeyDown={cancelOnEscape} onClick={cancel}>
             {t("Cancel")}
           </button>
         </>
@@ -388,6 +392,7 @@ export function ConfirmButton({
           type="button"
           className={className}
           aria-label={name}
+          aria-describedby={describedBy}
           aria-disabled={pending || undefined}
           onClick={() => {
             if (pending) {

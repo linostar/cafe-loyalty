@@ -79,6 +79,8 @@ for (const path of ["/admin", `/admin/cafes/${SESSION.cafe.id}`, "/admin/cafes/n
             createdAt: "2026-09-01T08:00:00.000Z",
             paidCents: 99999999,
             payments: [{ id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 99999999, paidOn: "2026-10-01", method: "bank_transfer", reference: "R".repeat(100), recordedAt: "2026-10-01T09:00:00.000Z", voided: null }],
+            owners: [{ email: `${"o".repeat(60)}@example.com`, signedUpAt: "2026-09-02T08:00:00.000Z" }],
+            openInvites: [{ id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", createdAt: "2026-10-01T08:00:00.000Z", expiresAt: "2026-10-08T08:00:00.000Z" }],
           },
         ],
       }),
