@@ -32,10 +32,14 @@ button {
   padding-inline: var(--space-3);
 }
 
-/* Connectivity and the queue in one short chip: a filled dot online and a ring offline, a shape as well as a colour. */
+/*
+ * Connectivity and the queue in one short chip: a filled dot online and a ring offline, a shape as well as a colour. Its
+ * text wraps inside it when the row is short of room (a long status, larger text or wider spacing), rather than the
+ * header running off the screen.
+ */
 .connection {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
   gap: var(--space-2);
   min-block-size: var(--control-height);
@@ -43,7 +47,6 @@ button {
   border-radius: var(--radius-pill);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
-  white-space: nowrap;
 }
 
 .connection::before {

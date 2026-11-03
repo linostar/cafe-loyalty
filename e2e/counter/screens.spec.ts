@@ -1,9 +1,6 @@
-import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTextSpacing, expectTextZoom, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
-import { mockApi, reply } from "../dashboard/api-mock.js";
-import { CAMERA_CAFE_ID } from "./camera.js";
+import { expectAccessible, mockCounter } from "./fixtures.js";
 
 /**
  * Screenshots of the counter's screens at three widths, with fake data, attached to the report for review (Step 13b).
@@ -12,84 +9,7 @@ import { CAMERA_CAFE_ID } from "./camera.js";
  * for 44 px touch targets and under forced colours; 320 px is the reflow width of WCAG 1.4.10.
  */
 
-/**
- * What every counter screen passes: the header in one row (brand, status chip and language switch side by side, even
- * offline on a phone), and the accessibility checks.
- */
-async function expectAccessible(page: Page, lang: "ar" | "en"): Promise<void> {
-  await expectLanguageAndFit(page, lang);
-  const rows = await page.evaluate(() =>
-    ["header .brand", "header .connection", "header .lang-switch"].map((selector) => {
-      const box = document.querySelector(selector)?.getBoundingClientRect();
-      return box === undefined ? null : { top: box.top, bottom: box.bottom };
-    }),
-  );
-  expect(rows, "header parts").not.toContain(null);
-  const boxes = rows.filter((box) => box !== null);
-  expect(Math.max(...boxes.map((box) => box.top)), "header in one row").toBeLessThan(Math.min(...boxes.map((box) => box.bottom)));
-  await expectEveryControlNamed(page);
-  await expectNoAxeViolations(page);
-  await expectTouchTargets(page);
-  await expectUsableInForcedColors(page);
-  await expectTextSpacing(page, lang);
-  await expectTextZoom(page, lang);
-}
 test.use({ serviceWorkers: "block", timezoneId: "Asia/Beirut" });
-
-const PAIRED = {
-  deviceId: "7e57d3c1-0000-4000-8000-000000000001",
-  keyId: "7e57d3c1-0000-4000-8000-000000000002",
-  deviceName: "Front counter",
-  cafe: { id: CAMERA_CAFE_ID, name: "Café Najjar" },
-  // Fake test token shaped like a real one; never a real credential.
-  accessToken: "e2eFakeDeviceToken_0123456789abcdefghijklm",
-  accessTokenExpiresAt: "2099-01-01T00:00:00.000Z",
-};
-const salt = randomBytes(16);
-const barista = (index: number, name: string) => ({
-  id: `2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d${String(index).padStart(2, "0")}`,
-  name,
-  pinSalt: salt.toString("base64url"),
-  pinHash: pbkdf2Sync("482913", salt, 1000, 32, "sha256").toString("base64url"),
-  pinIterations: 1000,
-});
-const STAFF = [barista(1, "Rami"), barista(2, "Maya"), barista(3, "Karim"), barista(4, "Lina")];
-const orderType = (index: number, nameEn: string, nameAr: string, priceCents: number, costCents: number, stampsEarned = 1) => ({
-  id: `3c4d5e6f-7a8b-4c3d-8e4f-5a6b7c8d9e${String(index).padStart(2, "0")}`,
-  nameEn,
-  nameAr,
-  priceCents,
-  costCents,
-  stampsEarned,
-});
-const MENU = [
-  orderType(1, "Espresso", "إسبريسو", 250, 70),
-  orderType(2, "Latte", "لاتيه", 350, 110),
-  orderType(3, "Cappuccino", "كابتشينو", 350, 110),
-  orderType(4, "Iced coffee", "قهوة مثلجة", 400, 120),
-  orderType(5, "Croissant", "كرواسان", 200, 80, 0),
-  orderType(6, "Cheesecake", "تشيز كيك", 450, 150, 0),
-];
-const CATALOG = {
-  catalogVersion: 4,
-  timeZone: "Asia/Beirut",
-  campaigns: [
-    {
-      id: "6f7a8b9c-0d1e-4f2a-9b3c-4d5e6f7a8b9c",
-      nameAr: "عرض",
-      nameEn: "Quiet afternoons",
-      weekdays: [1, 2, 3, 4, 5, 6, 7],
-      startsMinute: 0,
-      endsMinute: 1440,
-      discount: { kind: "percent", value: 20 },
-      minMarginPercent: 30,
-      orderTypeIds: [MENU[1]?.id],
-    },
-  ],
-  winBackOffers: [] as unknown[],
-  orderTypes: MENU,
-  program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
-};
 
 const WIDTHS = [
   { width: 1440, height: 900 },
@@ -108,16 +28,6 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
   const path = testInfo.outputPath(`${name}.png`);
   await page.screenshot({ path, fullPage: true });
   await testInfo.attach(name, { path, contentType: "image/png" });
-}
-
-async function mockCounter(page: Page): Promise<void> {
-  await mockApi(page, {
-    "POST /api/device/pair": reply(201, PAIRED),
-    "GET /api/device/staff": reply(200, { staff: STAFF }),
-    "GET /api/device/catalog": reply(200, CATALOG),
-    "POST /api/device/sync": reply(200, { results: [] }),
-    "POST /api/device/cards/status": reply(200, { stamps: 9, rewardReady: true }),
-  });
 }
 
 /** Pairs the counter and opens Rami's PIN screen, capturing each screen on the way when `shoot` is set. */

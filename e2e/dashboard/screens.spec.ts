@@ -359,6 +359,8 @@ for (const { lang, locale } of LANGS) {
         // reach only until it closes, as with any menu the user opens.
         await expectNoAxeViolations(page, ["target-size"]);
         await expectUsableInForcedColors(page);
+        await expectTextSpacing(page, lang);
+        await expectTextZoom(page, lang);
       });
 
       test("Results for an earlier month", async ({ page }, testInfo) => {
@@ -408,6 +410,8 @@ for (const { lang, locale } of LANGS) {
         await expectEveryControlNamed(page);
         await expectNoAxeViolations(page);
         await expectUsableInForcedColors(page);
+        await expectTextSpacing(page, lang);
+        await expectTextZoom(page, lang);
         await expectFocusNeverHidden(page);
       };
 
@@ -584,7 +588,7 @@ for (const { lang, locale } of LANGS) {
         await page.goto(path);
         await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
         await expectLanguageAndFit(page, lang);
-          await expectTextSpacing(page, lang);
+        await expectTextSpacing(page, lang);
       }
     });
 
@@ -594,7 +598,7 @@ for (const { lang, locale } of LANGS) {
       for (let step = 1; step <= 5; step += 1) {
         await expect(page.locator("#setup-step-title")).toContainText(String(step));
         await expectLanguageAndFit(page, lang);
-          await expectTextSpacing(page, lang);
+        await expectTextSpacing(page, lang);
         if (step < 5) {
           await nextStep(page).click();
         }
@@ -604,7 +608,7 @@ for (const { lang, locale } of LANGS) {
       await page.goto("/");
       await expect(page.locator("#setup-checklist-title")).toBeVisible();
       await expectLanguageAndFit(page, lang);
-          await expectTextSpacing(page, lang);
+      await expectTextSpacing(page, lang);
     });
 
     test("the open void form reflows", async ({ page }) => {
@@ -613,7 +617,7 @@ for (const { lang, locale } of LANGS) {
       await page.getByRole("button", { name: /^Void the payment of|^إبطال دفعة/ }).click();
       await expect(page.getByRole("textbox", { name: /^Reason$|^السبب$/ })).toBeFocused();
       await expectLanguageAndFit(page, lang);
-          await expectTextSpacing(page, lang);
+      await expectTextSpacing(page, lang);
     });
   });
 }
