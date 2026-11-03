@@ -50,17 +50,21 @@ const offBreakpoints = (css: string): string[] =>
     [...(query[1] ?? "").matchAll(/\(([^()]*\bwidth\b[^()]*)\)/g)].map((condition) => (condition[1] ?? "").trim()).filter((condition) => !onBreakpoint(condition)),
   );
 
-/** The selectors of focus rules setting an outline width (a length or thin, medium, thick) other than --focus-width. */
+/**
+ * The selectors of focus rules whose outline is not --focus-width wide: an `outline-width` other than it, or an `outline`
+ * shorthand without it (whatever its width is spelled as: a length, thin, medium, thick, another variable).
+ */
 const ownFocusWidths = (css: string): string[] =>
   [...css.matchAll(/([^{}]*:focus[^{}]*)\{([^{}]*)\}/g)]
     .filter((rule) =>
       [...(rule[2] ?? "").matchAll(/(?:^|[\s;])outline(-width)?\s*:\s*([^;]+)/g)].some(([, longhand, value = ""]) =>
-        longhand === undefined
-          ? value.replace("var(--focus-width)", "").split(/\s+/).some((part) => /^(?:[\d.]|calc\(|(?:thin|medium|thick)$)/.test(part))
-          : value.trim() !== "var(--focus-width)",
+        longhand === undefined ? !value.includes("var(--focus-width)") : value.trim() !== "var(--focus-width)",
       ),
     )
     .map((rule) => (rule[1] ?? "").trim());
+
+/** Every z-index set to anything but a --z-* token. */
+const ownLayers = (css: string): string[] => css.match(/z-index:\s*(?![\s]|var\(--z-)[^;}]*/g) ?? [];
 
 describe("stylesheets", () => {
   it("are all found", () => {
@@ -74,7 +78,7 @@ describe("stylesheets", () => {
 
   it.each(STYLESHEETS)("%s takes its layers, focus ring widths and breakpoints from the tokens", (file) => {
     const css = readFileSync(join(repo, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(css.match(/z-index:\s*-?\d[^;]*/g) ?? [], "z-index without a --z-* token").toEqual([]);
+    expect(ownLayers(css), "z-index without a --z-* token").toEqual([]);
     expect(ownFocusWidths(css), "focus rules with an outline width of their own").toEqual([]);
     expect(offBreakpoints(css), "media queries off the breakpoints in tokens.css").toEqual([]);
   });
@@ -118,7 +122,13 @@ describe("stylesheets", () => {
       ".g:focus-visible { outline-width: thin; }",
       ".h:focus-visible { color: red; outline-width: 3px; }",
       ".i:hover { outline: 4px solid red; }",
+      ".j:focus-visible { outline: var(--space-1) solid var(--color-focus); }",
     ].join("\n");
-    expect(ownFocusWidths(css)).toEqual([".d:focus", ".e:focus", ".f:focus", ".g:focus-visible", ".h:focus-visible"]);
+    expect(ownFocusWidths(css)).toEqual([".d:focus", ".e:focus", ".f:focus", ".g:focus-visible", ".h:focus-visible", ".j:focus-visible"]);
+  });
+
+  it("catches a layer that is not a token", () => {
+    const css = ".a { z-index: var(--z-overlay); }\n.b { z-index:var(--z-raised) }\n.c { z-index: 10; }\n.d { z-index: -1; }\n.e { z-index: calc(999); }\n.f { z-index: var(--other); }";
+    expect(ownLayers(css)).toEqual(["z-index: 10", "z-index: -1", "z-index: calc(999)", "z-index: var(--other)"]);
   });
 });

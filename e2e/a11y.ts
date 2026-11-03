@@ -87,21 +87,30 @@ async function withCss(page: Page, css: string, check: () => Promise<void>): Pro
 /**
  * WCAG 1.4.12 (text spacing): with line height 1.5, paragraph spacing 2em, letter spacing 0.12em and word spacing
  * 0.16em on all text, the page still fits (expectLanguageAndFit) and no element cuts its text off: none that hides its
- * overflow has more content than room. Text hidden for screen readers (`.visually-hidden`) is left out.
+ * overflow has more content than room, however small its box. Text hidden for screen readers is left out: in
+ * `.visually-hidden` or under the same `clip-path: inset(50%)` (the counter's name on a phone, the skip link until focused).
  */
 export async function expectTextSpacing(page: Page, lang: "ar" | "en"): Promise<void> {
   await withCss(page, "* { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; } p { margin-block-end: 2em !important; }", async () => {
     await expectLanguageAndFit(page, lang);
-    const clipped = await page.evaluate((): string[] =>
-      [...document.querySelectorAll<HTMLElement>("body *")]
-        .filter((element) => element.clientWidth > 1 && element.clientHeight > 1 && element.closest(".visually-hidden") === null && element.textContent.trim() !== "")
+    const clipped = await page.evaluate((): string[] => {
+      const forScreenReaders = (element: Element) => {
+        for (let node: Element | null = element; node !== null; node = node.parentElement) {
+          if (node.classList.contains("visually-hidden") || getComputedStyle(node).clipPath === "inset(50%)") {
+            return true;
+          }
+        }
+        return false;
+      };
+      return [...document.querySelectorAll<HTMLElement>("body *")]
+        .filter((element) => element.textContent.trim() !== "" && !forScreenReaders(element))
         .filter((element) => {
           const style = getComputedStyle(element);
           const hides = (value: string) => value === "hidden" || value === "clip";
           return (hides(style.overflowX) && element.scrollWidth > element.clientWidth + 1) || (hides(style.overflowY) && element.scrollHeight > element.clientHeight + 1);
         })
-        .map((element) => element.outerHTML.slice(0, 80)),
-    );
+        .map((element) => element.outerHTML.slice(0, 80));
+    });
     expect(clipped, "text cut off with WCAG 1.4.12 spacing").toEqual([]);
   });
 }

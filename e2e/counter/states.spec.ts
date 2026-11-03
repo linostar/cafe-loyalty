@@ -235,10 +235,10 @@ for (const { width, height } of [
       });
 
       for (const [code, english, arabic] of [
-        ["STAMP_COOLDOWN", "less than 30 minutes before", /أقل من 30 دقيقة|30 دقيقة/],
-        ["DAILY_STAMP_CAP", "reached its stamps for today", /آخر زيارة/],
+        ["STAMP_COOLDOWN", "less than 30 minutes before", /قبل أقل من 30 دقيقة/],
+        ["DAILY_STAMP_CAP", "reached its stamps for today", /بلغ حدّ أختامه لهذا اليوم/],
         ["CARD_GONE", "the card was deleted", /لأن البطاقة حُذفت/],
-        ["HELD_FOR_REVIEW", "held for the owner to check", /آخر زيارة/],
+        ["HELD_FOR_REVIEW", "held for the owner to check", /أُوقفت ليراجعها المالك/],
         ["OK", "recorded.", /سُجّلت\./],
       ] as const) {
         test(`the last visit's outcome: ${code}`, async ({ page }) => {
@@ -297,6 +297,7 @@ for (const { width, height } of [
         await offer.check();
         await expect(page.getByText(/^The offer takes nothing off this order/)).toBeVisible();
         await expectInBothLanguages(page, /طبّق عرض العودة/);
+        await expect(page.getByText(/^لا يخصم العرض شيئاً من هذا الطلب/)).toBeVisible();
       });
 
       test("a saved visit with its Undo", async ({ page }) => {
