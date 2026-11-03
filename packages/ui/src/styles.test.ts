@@ -41,13 +41,13 @@ const declarations = (css: string): string[] =>
 const onBreakpoint = (condition: string): boolean => {
   const match = /^(min|max)-width:\s*([\d.]+)rem$/.exec(condition);
   const rem = Number(match?.[2]);
-  return match !== null && (BREAKPOINTS_REM.includes(rem) || (match[1] === "max" && BREAKPOINTS_REM.includes(Math.round((rem + 0.01) * 100) / 100)));
+  return match !== null && (BREAKPOINTS_REM.includes(rem) || (match[1] === "max" && BREAKPOINTS_REM.some((breakpoint) => Math.abs(rem - (breakpoint - 0.01)) < 1e-9)));
 };
 
-/** Every width condition of every media query that is off the breakpoints (another unit or range syntax included). */
+/** Every width condition of every media query that is off the breakpoints (another unit, range syntax or calc() included). */
 const offBreakpoints = (css: string): string[] =>
   [...css.matchAll(/@media([^{]*)\{/g)].flatMap((query) =>
-    [...(query[1] ?? "").matchAll(/\(([^()]*\bwidth\b[^()]*)\)/g)].map((condition) => (condition[1] ?? "").trim()).filter((condition) => !onBreakpoint(condition)),
+    [...(query[1] ?? "").matchAll(/\(((?:[^()]|\([^()]*\))*\bwidth\b(?:[^()]|\([^()]*\))*)\)/g)].map((condition) => (condition[1] ?? "").trim()).filter((condition) => !onBreakpoint(condition)),
   );
 
 /**
@@ -63,8 +63,12 @@ const ownFocusWidths = (css: string): string[] =>
     )
     .map((rule) => (rule[1] ?? "").trim());
 
-/** Every z-index set to anything but a --z-* token. */
-const ownLayers = (css: string): string[] => css.match(/z-index:\s*(?![\s]|var\(--z-)[^;}]*/g) ?? [];
+/** The --z-* tokens tokens.css defines. */
+const LAYERS = readFileSync(join(repo, "packages/ui/src/tokens.css"), "utf8").match(/--z-[\w-]+(?=\s*:)/g) ?? [];
+
+/** Every z-index set to anything but one of those tokens (a misspelled one included). */
+const ownLayers = (css: string): string[] =>
+  [...css.matchAll(/z-index:\s*([^;}]*)/g)].filter((layer) => !LAYERS.some((token) => (layer[1] ?? "").trim() === `var(${token})`)).map((layer) => layer[0].trimEnd());
 
 describe("stylesheets", () => {
   it("are all found", () => {
@@ -107,8 +111,10 @@ describe("stylesheets", () => {
       "@media (min-width: 640px) {}",
       "@media (min-width: 40em) {}",
       "@media (width >= 40rem) {}",
+      "@media (max-width: 39.994rem) {}",
+      "@media (min-width: calc(40rem + 1px)) {}",
     ].join("\n");
-    expect(offBreakpoints(css)).toEqual(["min-width: 45rem", "max-width: 40.5rem", "min-width: 640px", "min-width: 40em", "width >= 40rem"]);
+    expect(offBreakpoints(css)).toEqual(["min-width: 45rem", "max-width: 40.5rem", "min-width: 640px", "min-width: 40em", "width >= 40rem", "max-width: 39.994rem", "min-width: calc(40rem + 1px)"]);
   });
 
   it("catches a focus ring width of its own", () => {
@@ -128,7 +134,8 @@ describe("stylesheets", () => {
   });
 
   it("catches a layer that is not a token", () => {
-    const css = ".a { z-index: var(--z-overlay); }\n.b { z-index:var(--z-raised) }\n.c { z-index: 10; }\n.d { z-index: -1; }\n.e { z-index: calc(999); }\n.f { z-index: var(--other); }";
-    expect(ownLayers(css)).toEqual(["z-index: 10", "z-index: -1", "z-index: calc(999)", "z-index: var(--other)"]);
+    const css = ".a { z-index: var(--z-overlay); }\n.b { z-index:var(--z-raised) }\n.c { z-index: 10; }\n.d { z-index: -1; }\n.e { z-index: calc(999); }\n.f { z-index: var(--other); }\n.g { z-index: var(--z-overaly); }";
+    expect(LAYERS).toEqual(expect.arrayContaining(["--z-raised", "--z-overlay"]));
+    expect(ownLayers(css)).toEqual(["z-index: 10", "z-index: -1", "z-index: calc(999)", "z-index: var(--other)", "z-index: var(--z-overaly)"]);
   });
 });
