@@ -34,8 +34,8 @@ export async function expectLanguageAndFit(page: Page, lang: "ar" | "en"): Promi
       .map((element) => element.outerHTML.slice(0, 80)),
   }), screenWidth);
   expect(overflow, `scrolls sideways; past the edge: ${past.join(" | ")}`).toBeLessThanOrEqual(0);
-  // The header's title never runs under its controls. Measured on the title's text, which a no-wrap heading can spill
-  // out of its own box; text hidden for screen readers (1px boxes) is left out.
+  // The header's title never runs under its controls. Measured on the title's text, not its box (which can be wider than
+  // the text, or narrower when the text overflows it); text hidden for screen readers (1px boxes) is left out.
   const covered = await page.evaluate(() => {
     const header = document.querySelector("header");
     const title = header?.querySelector("h1");

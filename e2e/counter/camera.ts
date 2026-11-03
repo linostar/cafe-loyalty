@@ -8,7 +8,7 @@ export const CAMERA_CAFE_ID = "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d";
 export const CAMERA_CARD_QR = `v1.5e6f7a8b-9c0d-4e5f-8a6b-7c8d9e0f1a2b.${CAMERA_CAFE_ID}.1.q1.${"M".repeat(43)}`;
 /** The video Chromium plays as the counter phone's camera. */
 export const CAMERA_FILE = join(tmpdir(), "cafe-loyalty-e2e-camera.y4m");
-/** A camera picture of a QR code that is not a loyalty card (a menu link), for scanner-states.spec.ts. */
+/** A camera picture of a QR code that is not a loyalty card (a menu link), for not-a-card.spec.ts. */
 export const NOT_A_CARD_FILE = join(tmpdir(), "cafe-loyalty-e2e-camera-not-a-card.y4m");
 
 /**
