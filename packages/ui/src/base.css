@@ -75,8 +75,10 @@ video {
   max-inline-size: 100%;
 }
 
-:focus-visible {
-  outline: 3px solid var(--color-focus);
+:focus-visible,
+/* A time or date field: its focus sits on one of its own parts, so it matches only :focus-within. */
+input:is([type="time"], [type="date"]):focus-within {
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -115,6 +117,7 @@ textarea:hover {
 }
 
 input:not([type="checkbox"], [type="radio"]):focus-visible,
+input:is([type="time"], [type="date"]):focus-within,
 select:focus-visible,
 textarea:focus-visible {
   border-color: var(--color-focus);
@@ -313,6 +316,13 @@ button[aria-disabled="true"] {
   border-color: var(--color-success);
   background: var(--color-success-soft);
   color: var(--color-success);
+}
+
+/* A notice that tells, rather than confirms a change: such as an order cleared while idle, or an update ready. */
+.notice.notice-info {
+  border-color: var(--color-info);
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .warning-box {

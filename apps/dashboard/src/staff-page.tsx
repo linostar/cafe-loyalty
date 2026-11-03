@@ -97,7 +97,7 @@ function StaffItem({ member, change, reload }: { member: StaffMember; change: Ch
         {member.revoked ? (
           <>
             {" "}
-            <span className="badge">
+            <span className="badge badge-danger">
               <span className="visually-hidden">· </span>
               {t("removed")}
             </span>

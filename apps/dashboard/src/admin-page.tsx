@@ -743,7 +743,7 @@ function PaymentsTable({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Adm
                     </button>
                   ) : (
                     <span className="payment-status" tabIndex={-1}>
-                      <span className="badge badge-warning">{t("Voided")}</span> <bdi>{payment.voided.reason}</bdi>
+                      <span className="badge badge-danger">{t("Voided")}</span> <bdi>{payment.voided.reason}</bdi>
                     </span>
                   )}
                 </td>

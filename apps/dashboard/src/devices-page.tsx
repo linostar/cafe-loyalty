@@ -213,7 +213,7 @@ export function DevicesPage() {
       <span className="row-main">
         <strong>{device.name}</strong>{" "}
         {device.revoked ? (
-          <span className="badge">
+          <span className="badge badge-danger">
             <span className="visually-hidden">· </span>
             {t("removed")}
           </span>
