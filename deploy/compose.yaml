@@ -16,7 +16,7 @@ x-app: &app
 services:
   postgres:
     # Same as CI and development (compose.dev.yaml): the tests run on this server.
-    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5 # 18-alpine, multi-arch index
+    image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5 # 18-alpine, multi-arch index
     # POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB; no port is published (AC 50).
     env_file: database.env
     volumes:
