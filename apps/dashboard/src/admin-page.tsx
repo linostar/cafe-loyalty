@@ -927,18 +927,18 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
     );
   }
   /**
-   * Puts a saved café in the list, from the latest list (another response may have landed since this render). A plan or
-   * payment never changes the owners or links, so `links` (false) keeps the ones shown: its copy of them may be older
-   * than a link made meanwhile. A revoke's answer (true) has them as they now are.
+   * Takes from a saved café only the fields its save changed, into the latest list (another response may have landed
+   * since this render): the rest of its copy may be older than another save answered first, such as a plan's paid total
+   * after a payment, or a revoke's plan after a plan save.
    */
-  const put = (saved: AdminCafe, message: Later<typeof AR>, links: boolean) => {
-    setData((current) => ({
-      cafes: current.cafes.map((entry) => (entry.id !== saved.id ? entry : links ? saved : { ...saved, owners: entry.owners, openInvites: entry.openInvites })),
-    }));
-    setNotice(() => message);
+  const put = (id: string, changed: Partial<AdminCafe>, message: Later<typeof AR> | null) => {
+    setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === id ? { ...entry, ...changed } : entry)) }));
+    setNotice(message === null ? null : () => message);
   };
-  const onSaved = (saved: AdminCafe, message: Later<typeof AR>) => {
-    put(saved, message, false);
+  const linksOf = (saved: AdminCafe) => ({ owners: saved.owners, openInvites: saved.openInvites });
+  const paymentsOf = (saved: AdminCafe) => ({ paidCents: saved.paidCents, payments: saved.payments });
+  const onPaid = (saved: AdminCafe, message: Later<typeof AR>) => {
+    put(saved.id, paymentsOf(saved), message);
   };
   const titleId = `admin-cafe-${cafe.id}`;
   return (
@@ -959,33 +959,31 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           onSaved={(saved, message) => {
             // A link shown here was revoked with the rest, so it goes.
             setInvite(null);
-            put(saved, message, true);
+            put(saved.id, linksOf(saved), message);
           }}
         />
-        {/*
-          A link takes only the owners and open links from its copy of the café: the rest of it may be older than a plan
-          or payment saved meanwhile.
-        */}
         <FormError message={links.error} />
         <NewLinkButton
           cafe={cafe}
           links={links}
           onCreated={(made) => {
-            setData((current) => ({
-              cafes: current.cafes.map((entry) => (entry.id === made.cafe.id ? { ...entry, owners: made.cafe.owners, openInvites: made.cafe.openInvites } : entry)),
-            }));
-            setNotice(null);
+            put(made.cafe.id, linksOf(made.cafe), null);
             setInvite(made);
           }}
         />
         {invite === null ? null : <InviteLink key={invite.link} cafe={cafe} invite={invite} />}
       </div>
       <div className="card">
-        <PlanForm cafe={cafe} onSaved={onSaved} />
+        <PlanForm
+          cafe={cafe}
+          onSaved={(saved, message) => {
+            put(saved.id, { plan: saved.plan }, message);
+          }}
+        />
       </div>
       <div className="card">
-        <PaymentForm cafe={cafe} onSaved={onSaved} />
-        <PaymentsTable cafe={cafe} onSaved={onSaved} />
+        <PaymentForm cafe={cafe} onSaved={onPaid} />
+        <PaymentsTable cafe={cafe} onSaved={onPaid} />
       </div>
     </section>
   );

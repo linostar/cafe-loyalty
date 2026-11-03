@@ -599,6 +599,61 @@ test("drops a signup link from the open ones when it expires while the page is o
   await expect(card.getByRole("button", { name: /^Revoke open links/ })).toHaveCount(0);
 });
 
+test("keeps a payment recorded while a plan was being saved, and a plan saved while a revoke was on its way", async ({ page }) => {
+  const releases: (() => void)[] = [];
+  const hold = () =>
+    new Promise<void>((resolve) => {
+      releases.push(resolve);
+    });
+  const open = { ...OPEN, expiresAt: "2099-10-08T08:00:00.000Z" };
+  const paid = { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "cash", reference: null, recordedAt: "2026-10-01T09:00:00.000Z", voided: null };
+  let plan = "pilot";
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ openInvites: [open] })] }),
+    // Each answer's copy of the café was read before the other save.
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: async (route) => {
+      await hold();
+      plan = (route.request().postDataJSON() as { plan: string }).plan;
+      await route.fulfill({ json: cafe({ plan, openInvites: [open] }) });
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/payments`]: reply(201, cafe({ paidCents: 2500, payments: [paid], openInvites: [open] })),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites/revoke`]: async (route) => {
+      await hold();
+      // Read while the café was still active, before the plan save below.
+      await route.fulfill({ json: cafe({ plan: "active", paidCents: 2500, payments: [paid] }) });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+
+  // A plan's answer, after a payment's: the payment and its total stay.
+  await card.getByLabel("Active").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByLabel("Amount (USD)").fill("25");
+  await card.getByLabel("Paid on").fill("2026-10-01");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await expect(card.getByText("Paid in all: $25.00.")).toBeVisible();
+  releases.shift()?.();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Active");
+  await expect(card.getByText("Paid in all: $25.00.")).toBeVisible();
+  await expect(card.getByRole("table", { name: "Latest payments of Café Najjar" }).getByRole("row")).toHaveCount(2);
+
+  // A revoke's answer, after a plan's: the plan stays.
+  await card.getByRole("button", { name: "Revoke open links of Café Najjar" }).click();
+  await card.getByRole("button", { name: "Yes, revoke the open links of Café Najjar" }).click();
+  await card.getByLabel("Pilot").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await expect.poll(() => releases.length).toBe(2);
+  // Answer the plan first, then the revoke.
+  releases.pop()?.();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Pilot");
+  releases.pop()?.();
+  await expect(card.getByText("No open signup links.")).toBeVisible();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Pilot");
+  await expect(card.getByText("Paid in all: $25.00.")).toBeVisible();
+});
+
 test("keeps a link made while a plan was being saved, whose answer came later", async ({ page }) => {
   let release: () => void = () => undefined;
   const held = new Promise<void>((resolve) => {
