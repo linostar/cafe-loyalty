@@ -516,14 +516,6 @@ function NewLinkButton({ cafe, links, onCreated }: { cafe: AdminCafe; links: Sub
   );
 }
 
-/** Calls `then` a second after `expiresAt` (a signup link's 7 days fit setTimeout's 24.8-day limit); returns the cancel. */
-function afterExpiry(expiresAt: string, then: () => void): () => void {
-  const timer = setTimeout(then, Date.parse(expiresAt) - Date.now() + 1000);
-  return () => {
-    clearTimeout(timer);
-  };
-}
-
 /**
  * Who signed up as the café's owner, and its signup links still open, which the operator may close (A4). A link drops
  * off the list when it expires, while the page stays open; `links` is shared with NewLinkButton (above).
@@ -535,17 +527,21 @@ function OwnerLinks({ cafe, links, onSaved }: { cafe: AdminCafe; links: SubmitSt
   const timeFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
   const { pending, submit } = links;
   const [now, setNow] = useState(Date.now);
-  // Soonest to expire first (the server's order), so the first one left is the next to drop off.
   const openInvites = cafe.openInvites.filter((invite) => Date.parse(invite.expiresAt) > now);
-  const nextExpiry = openInvites[0]?.expiresAt;
+  const anyOpen = openInvites.length > 0;
+  // Checked again every minute while a link is open, rather than one timer to the next expiry, so a device clock set
+  // forwards or back meanwhile is off by a minute at most.
   useEffect(() => {
-    if (nextExpiry === undefined) {
+    if (!anyOpen) {
       return;
     }
-    return afterExpiry(nextExpiry, () => {
+    const timer = setInterval(() => {
       setNow(Date.now());
-    });
-  }, [nextExpiry]);
+    }, 60_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [anyOpen]);
   return (
     <>
       <h3>
@@ -930,10 +926,19 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       </section>
     );
   }
-  const onSaved = (saved: AdminCafe, message: Later<typeof AR>) => {
-    // From the latest list: another response may have landed since this render.
-    setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === saved.id ? saved : entry)) }));
+  /**
+   * Puts a saved café in the list, from the latest list (another response may have landed since this render). A plan or
+   * payment never changes the owners or links, so `links` (false) keeps the ones shown: its copy of them may be older
+   * than a link made meanwhile. A revoke's answer (true) has them as they now are.
+   */
+  const put = (saved: AdminCafe, message: Later<typeof AR>, links: boolean) => {
+    setData((current) => ({
+      cafes: current.cafes.map((entry) => (entry.id !== saved.id ? entry : links ? saved : { ...saved, owners: entry.owners, openInvites: entry.openInvites })),
+    }));
     setNotice(() => message);
+  };
+  const onSaved = (saved: AdminCafe, message: Later<typeof AR>) => {
+    put(saved, message, false);
   };
   const titleId = `admin-cafe-${cafe.id}`;
   return (
@@ -954,7 +959,7 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           onSaved={(saved, message) => {
             // A link shown here was revoked with the rest, so it goes.
             setInvite(null);
-            onSaved(saved, message);
+            put(saved, message, true);
           }}
         />
         {/*

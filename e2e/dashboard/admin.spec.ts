@@ -591,9 +591,40 @@ test("drops a signup link from the open ones when it expires while the page is o
   await page.goto(CAFE_PAGE);
   const card = page.getByRole("region", { name: /Café Najjar/ });
   await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
-  await page.clock.fastForward("02:00");
+  // The device clock is set forwards past the expiry (no timer fires): within a minute the link has gone.
+  await page.clock.setSystemTime(Date.parse(OPEN.expiresAt) + 60 * 60_000);
+  await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
+  await page.clock.fastForward("01:00");
   await expect(card.getByText("No open signup links.")).toBeVisible();
   await expect(card.getByRole("button", { name: /^Revoke open links/ })).toHaveCount(0);
+});
+
+test("keeps a link made while a plan was being saved, whose answer came later", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const open = { ...OPEN, expiresAt: "2099-10-08T08:00:00.000Z" };
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: reply(201, invite("fake-invite-token-meanwhile", { openInvites: [open] })),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: async (route) => {
+      await held;
+      // Its copy of the café was read before the link was made.
+      await route.fulfill({ json: cafe({ plan: "active" }) });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByLabel("Active").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(card.getByRole("listitem").filter({ hasText: "works until 8 Oct 2099" })).toHaveCount(1);
+  release();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Active");
+  await expect(card.getByRole("listitem").filter({ hasText: "works until 8 Oct 2099" })).toHaveCount(1);
+  await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-meanwhile"));
 });
 
 test("holds Revoke open links while a new link is on its way, so the link made is never dropped", async ({ page }) => {
