@@ -8,6 +8,7 @@ import {
   apiText,
   formatUsd,
   operatorSessionSchema,
+  plural,
   type AdminCafe,
   type AdminInvite,
   type AdminPayment,
@@ -16,13 +17,14 @@ import {
   type PaymentMethod,
   type Lang,
 } from "@cafe-loyalty/shared";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale } from "./api.js";
-import { Field, Form, FormError, Notice, useSubmit } from "./forms.js";
+import { ConfirmButton, Field, Form, FormError, Notice, useSubmit, type SubmitState } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
 import { ChangePasswordForm } from "./password-form.js";
 import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
+import { useUnsavedChanges } from "./unsaved-changes.js";
 
 const AR = {
   Pilot: "تجريبية",
@@ -99,7 +101,35 @@ const AR = {
   "Copy link": "نسخ الرابط",
   "Copied.": "تم النسخ.",
   "Could not copy. Select the link and copy it.": "تعذّر النسخ. حدّد الرابط وانسخه.",
+  "Save plan of {name}": "حفظ الخطة لـ{name}",
+  "Yes, suspend {name}": "نعم، أوقف {name}",
+  "Owner and signup links": "المالك وروابط التسجيل",
+  "Signed up {day}": "سجّل في {day}",
+  "No owner has signed up yet.": "لم يسجّل أي مالك بعد.",
+  "Open signup links": "روابط التسجيل المفتوحة",
+  "Made {made}, works until {until}.": "أُنشئ في {made}، يعمل حتى {until}.",
+  "No open signup links.": "لا روابط تسجيل مفتوحة.",
+  "Revoke open links": "إلغاء الروابط المفتوحة",
+  "Revoke open links of {name}": "إلغاء الروابط المفتوحة لـ{name}",
+  "Yes, revoke the open links": "نعم، ألغِ الروابط المفتوحة",
+  "Yes, revoke the open links of {name}": "نعم، ألغِ الروابط المفتوحة لـ{name}",
+  "Closed the open signup links of {name}.": "أُغلقت روابط التسجيل المفتوحة لـ{name}.",
+  "New signup link for {name}": "رابط تسجيل جديد لـ{name}",
+  "{name} already has an owner. A new link lets one more person sign up as its owner.": "لدى {name} مالك بالفعل. يتيح رابط جديد لشخص آخر التسجيل كمالك له.",
+  "Yes, make a link for another owner": "نعم، أنشئ رابطاً لمالك آخر",
+  "Yes, make a link for another owner of {name}": "نعم، أنشئ رابطاً لمالك آخر لـ{name}",
+  "No owner yet": "بلا مالك بعد",
+  "Search by name": "البحث بالاسم",
+  Plan: "الخطة",
+  "All plans": "كل الخطط",
+  "No café matches the search and plan chosen.": "لا مقهى يطابق البحث والخطة المختارة.",
 } as const;
+
+/** How many cafés the list shows of all of them, counted by the total. */
+const SHOWING = {
+  en: { one: "Showing {count} of {n} café", other: "Showing {count} of {n} cafés" },
+  ar: { one: "يظهر {count} من مقهى واحد", two: "يظهر {count} من مقهيين", few: "يظهر {count} من {n} مقاهٍ", other: "يظهر {count} من {n} مقهى" },
+};
 
 const PLAN_LABELS = { pilot: "Pilot", active: "Active", suspended: "Suspended" } as const satisfies Record<CafePlan, keyof typeof AR>;
 const PLAN_HINTS = {
@@ -154,21 +184,29 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
   const [plan, setPlan] = useState<CafePlan>(cafe.plan);
   const unchanged = plan === cafe.plan;
   const whyId = `plan-unchanged-${cafe.id}`;
+  // Suspending stops the café's signups, so it asks again first (A1); the other plans save in one press.
+  const asks = plan === "suspended" && !unchanged;
   const { pending, error, submit } = useSubmit();
+  // The form's own, so a suspend confirmed outside its submit still clears the leave-page warning once saved.
+  const unsaved = useUnsavedChanges();
+  const save = () => {
+    void submit(() => apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { plan })).then((result) => {
+      if (result.ok) {
+        const plan = result.value.plan;
+        onSaved(result.value, (say: Translate<typeof AR>) => say("{name} is now on the {plan} plan.", { name: cafe.name, plan: say(PLAN_LABELS[plan]).toLowerCase() }));
+      }
+    });
+  };
   return (
     <Form
+      unsaved={unsaved}
       onSubmit={(event) => {
         event.preventDefault();
         // The button stays focusable when there is nothing to save (aria-disabled), so a press does nothing here.
-        if (unchanged) {
+        if (unchanged || asks) {
           return;
         }
-        void submit(() => apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { plan })).then((result) => {
-          if (result.ok) {
-            const plan = result.value.plan;
-            onSaved(result.value, (say: Translate<typeof AR>) => say("{name} is now on the {plan} plan.", { name: cafe.name, plan: say(PLAN_LABELS[plan]).toLowerCase() }));
-          }
-        });
+        save();
       }}
     >
       <FormError message={error} />
@@ -189,13 +227,28 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
             </label>
           ))}
         </div>
-        <p className="hint">{t(PLAN_HINTS[plan])}</p>
+        <p id={`plan-hint-${cafe.id}`} className="hint">
+          {t(PLAN_HINTS[plan])}
+        </p>
       </fieldset>
-      {/* aria-disabled, not disabled: once saved the plan is unchanged, and a disabled button would drop focus to the page. */}
-      <button type="submit" aria-disabled={pending || unchanged || undefined} aria-describedby={unchanged ? whyId : undefined}>
-        {pending ? t("Saving…") : t("Save plan")}
-        {forCafe(t("of {name}", { name: cafe.name }))}
-      </button>
+      {asks ? (
+        <ConfirmButton
+          label={t("Save plan")}
+          name={t("Save plan of {name}", { name: cafe.name })}
+          confirmLabel={t("Yes, suspend {name}", { name: cafe.name })}
+          describedBy={`plan-hint-${cafe.id}`}
+          pending={pending}
+          onConfirm={() => {
+            unsaved.submit(save);
+          }}
+        />
+      ) : (
+        // aria-disabled, not disabled: once saved the plan is unchanged, and a disabled button would drop focus to the page.
+        <button type="submit" aria-disabled={pending || unchanged || undefined} aria-describedby={unchanged ? whyId : undefined}>
+          {pending ? t("Saving…") : t("Save plan")}
+          {forCafe(t("of {name}", { name: cafe.name }))}
+        </button>
+      )}
       {/* A disabled button says why, beside it and in its description. */}
       {unchanged ? (
         <p id={whyId} className="hint">
@@ -373,7 +426,7 @@ function InviteLink({ cafe, invite }: { cafe: AdminCafe; invite: AdminInvite }) 
   const t = useT(AR);
   const lang = useLang();
   const input = useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = useState<"Copied." | "Could not copy. Select the link and copy it." | null>(null);
+  const [copied, setCopied] = useState<{ text: "Copied." | "Could not copy. Select the link and copy it."; press: number } | null>(null);
   const id = `invite-${cafe.id}`;
   useEffect(() => {
     input.current?.focus();
@@ -400,12 +453,15 @@ function InviteLink({ cafe, invite }: { cafe: AdminCafe; invite: AdminInvite }) 
       <button
         type="button"
         onClick={() => {
+          const said = (text: "Copied." | "Could not copy. Select the link and copy it.") => {
+            setCopied((last) => ({ text, press: (last?.press ?? 0) + 1 }));
+          };
           navigator.clipboard.writeText(invite.link).then(
             () => {
-              setCopied("Copied.");
+              said("Copied.");
             },
             () => {
-              setCopied("Could not copy. Select the link and copy it.");
+              said("Could not copy. Select the link and copy it.");
             },
           );
         }}
@@ -413,32 +469,126 @@ function InviteLink({ cafe, invite }: { cafe: AdminCafe; invite: AdminInvite }) 
         {t("Copy link")}
         {forCafe(t("for {name}", { name: cafe.name }))}
       </button>
-      <p role="status">{copied === null ? null : t(copied)}</p>
+      {/* A fresh node per press (A5): the same words again are still a change, so screen readers say them again. */}
+      <p role="status">{copied === null ? null : <span key={copied.press}>{t(copied.text)}</span>}</p>
     </div>
   );
 }
 
-function NewLinkButton({ cafe, onCreated }: { cafe: AdminCafe; onCreated: (invite: AdminInvite) => void }) {
+/** `links` is the request state NewLinkButton shares with OwnerLinks' revoke, so the two never overlap. */
+function NewLinkButton({ cafe, links, onCreated }: { cafe: AdminCafe; links: SubmitState; onCreated: (invite: AdminInvite) => void }) {
   const t = useT(AR);
-  const { pending, error, submit } = useSubmit();
+  const { pending, submit } = links;
+  const make = () => {
+    void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/invites`, adminInviteSchema, {})).then((result) => {
+      if (result.ok) {
+        onCreated(result.value);
+      }
+    });
+  };
+  const hintId = `new-link-hint-${cafe.id}`;
   return (
     <div>
-      <FormError message={error} />
-      <button
-        type="button"
-        aria-disabled={pending || undefined}
-        onClick={() => {
-          void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/invites`, adminInviteSchema, {})).then((result) => {
-            if (result.ok) {
-              onCreated(result.value);
-            }
-          });
-        }}
-      >
-        {pending ? t("Making a link…") : t("New signup link")}
-        {forCafe(t("for {name}", { name: cafe.name }))}
-      </button>
+      {/* A café with an owner asks first: the link lets one more person sign up as its owner. */}
+      {cafe.owners.length > 0 ? (
+        <>
+          <p id={hintId} className="hint">
+            {t("{name} already has an owner. A new link lets one more person sign up as its owner.", { name: cafe.name })}
+          </p>
+          <ConfirmButton
+            // Fixed while pending, as every ConfirmButton's: its name (below) must start with what is shown (WCAG 2.5.3).
+            label={t("New signup link")}
+            name={t("New signup link for {name}", { name: cafe.name })}
+            confirmLabel={t("Yes, make a link for another owner")}
+            confirmName={t("Yes, make a link for another owner of {name}", { name: cafe.name })}
+            describedBy={hintId}
+            pending={pending}
+            onConfirm={make}
+          />
+        </>
+      ) : (
+        <button type="button" aria-disabled={pending || undefined} onClick={make}>
+          {pending ? t("Making a link…") : t("New signup link")}
+          {forCafe(t("for {name}", { name: cafe.name }))}
+        </button>
+      )}
     </div>
+  );
+}
+
+/**
+ * Who signed up as the café's owner, and its signup links still open, which the operator may close (A4). A link drops
+ * off the list when it expires, while the page stays open; `links` is shared with NewLinkButton (above).
+ */
+function OwnerLinks({ cafe, links, onSaved }: { cafe: AdminCafe; links: SubmitState; onSaved: (cafe: AdminCafe, notice: Later<typeof AR>) => void }) {
+  const t = useT(AR);
+  const lang = useLang();
+  const dayFormat = dateFormat(lang, DAY);
+  const timeFormat = dateFormat(lang, { dateStyle: "medium", timeStyle: "short" });
+  const { pending, submit } = links;
+  const [now, setNow] = useState(Date.now);
+  const openInvites = cafe.openInvites.filter((invite) => Date.parse(invite.expiresAt) > now);
+  const anyOpen = openInvites.length > 0;
+  // Checked again every minute while a link is open, rather than one timer to the next expiry, so a device clock set
+  // forwards or back meanwhile is off by a minute at most.
+  useEffect(() => {
+    if (!anyOpen) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 60_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [anyOpen]);
+  return (
+    <>
+      <h3>
+        {t("Owner and signup links")}
+        {forCafe(t("of {name}", { name: cafe.name }))}
+      </h3>
+      {cafe.owners.length === 0 ? (
+        <p className="empty">{t("No owner has signed up yet.")}</p>
+      ) : (
+        <ul className="items">
+          {cafe.owners.map((owner) => (
+            <li key={owner.email}>
+              <bdi dir="ltr">{owner.email}</bdi>
+              <span className="hint"> · {t("Signed up {day}", { day: dayFormat.format(new Date(owner.signedUpAt)) })}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h4>{t("Open signup links")}</h4>
+      {openInvites.length === 0 ? (
+        <p className="empty">{t("No open signup links.")}</p>
+      ) : (
+        <>
+          <ul className="items">
+            {openInvites.map((invite) => (
+              <li key={invite.id}>
+                {t("Made {made}, works until {until}.", { made: timeFormat.format(new Date(invite.createdAt)), until: timeFormat.format(new Date(invite.expiresAt)) })}
+              </li>
+            ))}
+          </ul>
+          <ConfirmButton
+            label={t("Revoke open links")}
+            name={t("Revoke open links of {name}", { name: cafe.name })}
+            confirmLabel={t("Yes, revoke the open links")}
+            confirmName={t("Yes, revoke the open links of {name}", { name: cafe.name })}
+            pending={pending}
+            onConfirm={() => {
+              void submit(() => apiRequest("POST", `/api/admin/cafes/${cafe.id}/invites/revoke`, adminCafeSchema, {})).then((result) => {
+                if (result.ok) {
+                  onSaved(result.value, (say: Translate<typeof AR>) => say("Closed the open signup links of {name}.", { name: cafe.name }));
+                }
+              });
+            }}
+          />
+        </>
+      )}
+    </>
   );
 }
 
@@ -633,15 +783,25 @@ function BackToList() {
   );
 }
 
-/** `/admin`: every café as a tile linking to its page, and the way to a new one. */
+/**
+ * `/admin`: every café as a row linking to its page, found by name and plan (A3), and the way to a new one.
+ * ponytail: filtered in the browser from the whole list; page it on the server past a few dozen cafés.
+ */
 function CafeListPage() {
   const t = useT(AR);
-  const dayFormat = dateFormat(useLang(), DAY);
+  const lang = useLang();
+  const dayFormat = dateFormat(lang, DAY);
   const [state, , retry] = useApiData("/api/admin/cafes", adminCafesSchema);
+  const [search, setSearch] = useState("");
+  const [planShown, setPlanShown] = useState<CafePlan | "all">("all");
+  const searchId = useId();
+  const planId = useId();
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
   }
-  const { cafes } = state.data;
+  const all = state.data.cafes;
+  const query = search.trim().toLocaleLowerCase();
+  const cafes = all.filter((cafe) => (planShown === "all" || cafe.plan === planShown) && cafe.name.toLocaleLowerCase().includes(query));
   return (
     <section aria-labelledby="admin-cafes-title">
       <h2 id="admin-cafes-title" tabIndex={-1}>
@@ -653,21 +813,67 @@ function CafeListPage() {
           {t("New café")}
         </a>
       </p>
-      {cafes.length === 0 ? (
+      {all.length === 0 ? (
         <p className="empty">{t("No cafés yet.")}</p>
       ) : (
-        <ul className="tiles">
-          {cafes.map((cafe) => (
-            <li key={cafe.id}>
-              <a href={`/admin/cafes/${cafe.id}`}>{cafe.name}</a>
-              <p>
-                <span className="visually-hidden">{t(", plan:")}</span>
-                <span className={planBadge(cafe.plan)}>{t(PLAN_LABELS[cafe.plan])}</span>{" "}
-                {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
-              </p>
-            </li>
-          ))}
-        </ul>
+        <>
+          <div className="cafe-filters">
+            <div className="field">
+              <label htmlFor={searchId}>{t("Search by name")}</label>
+              <input
+                id={searchId}
+                type="search"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                }}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={planId}>{t("Plan")}</label>
+              <select
+                id={planId}
+                value={planShown}
+                onChange={(event) => {
+                  const chosen = CAFE_PLANS.find((plan) => plan === event.target.value);
+                  setPlanShown(chosen ?? "all");
+                }}
+              >
+                <option value="all">{t("All plans")}</option>
+                {CAFE_PLANS.map((plan) => (
+                  <option key={plan} value={plan}>
+                    {t(PLAN_LABELS[plan])}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <Notice>{plural(lang, SHOWING, all.length, { count: cafes.length })}</Notice>
+          {cafes.length === 0 ? (
+            <p className="empty">{t("No café matches the search and plan chosen.")}</p>
+          ) : (
+            <ul className="items">
+              {cafes.map((cafe) => (
+                <li key={cafe.id} className="cafe-row">
+                  <a href={`/admin/cafes/${cafe.id}`}>{cafe.name}</a>
+                  <span>
+                    <span className="visually-hidden">{t(", plan:")}</span>
+                    <span className={planBadge(cafe.plan)}>{t(PLAN_LABELS[cafe.plan])}</span>
+                    {cafe.owners.length === 0 ? (
+                      <>
+                        {" "}
+                        <span className="badge badge-accent">{t("No owner yet")}</span>
+                      </>
+                    ) : null}
+                  </span>
+                  <span className="hint">
+                    {t("Created {day}. Paid in all: {amount}.", { day: dayFormat.format(new Date(cafe.createdAt)), amount: formatUsd(cafe.paidCents, "en") })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );
@@ -704,6 +910,8 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
   const [state, setData, retry] = useApiData("/api/admin/cafes", adminCafesSchema);
   const [notice, setNotice] = useState<Later<typeof AR> | null>(null);
   const [invite, setInvite] = useState<AdminInvite | null>(null);
+  // One request at a time for a new link and a revoke: a revoke's answer, read before a link made meanwhile, would drop it.
+  const links = useSubmit();
   if (state.status !== "loaded") {
     return <PageStatus state={state} onRetry={retry} />;
   }
@@ -718,16 +926,25 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       </section>
     );
   }
-  const onSaved = (saved: AdminCafe, message: Later<typeof AR>) => {
-    // From the latest list: another response may have landed since this render.
-    setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === saved.id ? saved : entry)) }));
-    setNotice(() => message);
+  /**
+   * Takes from a saved café only the fields its save changed, into the latest list (another response may have landed
+   * since this render): the rest of its copy may be older than another save answered first, such as a plan's paid total
+   * after a payment, or a revoke's plan after a plan save.
+   */
+  const put = (id: string, changed: Partial<AdminCafe>, message: Later<typeof AR> | null) => {
+    setData((current) => ({ cafes: current.cafes.map((entry) => (entry.id === id ? { ...entry, ...changed } : entry)) }));
+    setNotice(message === null ? null : () => message);
+  };
+  const linksOf = (saved: AdminCafe) => ({ owners: saved.owners, openInvites: saved.openInvites });
+  const paymentsOf = (saved: AdminCafe) => ({ paidCents: saved.paidCents, payments: saved.payments });
+  const onPaid = (saved: AdminCafe, message: Later<typeof AR>) => {
+    put(saved.id, paymentsOf(saved), message);
   };
   const titleId = `admin-cafe-${cafe.id}`;
   return (
     <section aria-labelledby={titleId}>
       <BackToList />
-      <h2 id={titleId} tabIndex={-1}>
+      <h2 id={titleId} tabIndex={-1} data-focus-after-change>
         {cafe.name}
         <span className="visually-hidden">{t(", plan:")}</span> <span className={planBadge(cafe.plan)}>{t(PLAN_LABELS[cafe.plan])}</span>
       </h2>
@@ -736,22 +953,37 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
       </p>
       <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <div className="card">
-        {/* A link leaves the café as listed: its copy of it may be older than a plan or payment saved meanwhile. */}
+        <OwnerLinks
+          cafe={cafe}
+          links={links}
+          onSaved={(saved, message) => {
+            // A link shown here was revoked with the rest, so it goes.
+            setInvite(null);
+            put(saved.id, linksOf(saved), message);
+          }}
+        />
+        <FormError message={links.error} />
         <NewLinkButton
           cafe={cafe}
+          links={links}
           onCreated={(made) => {
-            setNotice(null);
+            put(made.cafe.id, linksOf(made.cafe), null);
             setInvite(made);
           }}
         />
         {invite === null ? null : <InviteLink key={invite.link} cafe={cafe} invite={invite} />}
       </div>
       <div className="card">
-        <PlanForm cafe={cafe} onSaved={onSaved} />
+        <PlanForm
+          cafe={cafe}
+          onSaved={(saved, message) => {
+            put(saved.id, { plan: saved.plan }, message);
+          }}
+        />
       </div>
       <div className="card">
-        <PaymentForm cafe={cafe} onSaved={onSaved} />
-        <PaymentsTable cafe={cafe} onSaved={onSaved} />
+        <PaymentForm cafe={cafe} onSaved={onPaid} />
+        <PaymentsTable cafe={cafe} onSaved={onPaid} />
       </div>
     </section>
   );

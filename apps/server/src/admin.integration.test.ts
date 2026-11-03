@@ -193,6 +193,7 @@ describe("operator accounts (AC 39)", () => {
       "PATCH /api/admin/cafes/:id",
       "POST /api/admin/cafes",
       "POST /api/admin/cafes/:id/invites",
+      "POST /api/admin/cafes/:id/invites/revoke",
       "POST /api/admin/cafes/:id/payments",
       "POST /api/admin/cafes/:id/payments/:paymentId/void",
       "POST /api/admin/password",
@@ -319,6 +320,57 @@ describe("the admin screen (AC 39)", () => {
     expect(signup.statusCode).toBe(201);
     expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/invites`)).statusCode).toBe(404);
     expect((await auditActions(app.owner.cafeId)).filter((action) => action === "owner_invite.created")).toHaveLength(2);
+  });
+
+  it("shows the café's owners and open signup links, and revokes the open ones, in the audit log", async () => {
+    const app = await adminApp();
+    interface Listed {
+      owners: { email: string; signedUpAt: string }[];
+      openInvites: { id: string; createdAt: string; expiresAt: string }[];
+    }
+    const listed = async () => (await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: (Listed & { id: string })[] }>().cafes.find((cafe) => cafe.id === app.owner.cafeId);
+    const before = await listed();
+    // signUp used the café's first link, so it has one owner and no open link.
+    expect(before?.owners).toHaveLength(1);
+    expect(before?.owners[0]?.email).toMatch(/@example\.com$/);
+    expect(before?.openInvites).toEqual([]);
+
+    const links: string[] = [];
+    for (let made = 0; made < 4; made += 1) {
+      links.push((await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/invites`)).json<{ link: string }>().link);
+    }
+    const tokenOf = (link: string) => new URLSearchParams(new URL(link).hash.slice(1)).get("invite") ?? "";
+    const signUpWith = (link: string, email = `owner-${randomUUID()}@example.com`) =>
+      app.app.inject({ method: "POST", url: "/api/auth/signup", payload: { inviteToken: tokenOf(link), email, password: PASSWORD } });
+    const setExpiry = async (link: string, expiresAt: string) =>
+      (await context.admin.query<{ id: string }>("UPDATE app.owner_invites SET expires_at = now() + $2::interval WHERE token_hash = $1 RETURNING id", [hashToken(tokenOf(link)), expiresAt])).rows[0]?.id;
+    // One used, one expired: neither is open. The last one made expires first, so it is listed first.
+    const secondOwner = `owner-${randomUUID()}@example.com`;
+    expect((await signUpWith(links[0] ?? "", secondOwner)).statusCode).toBe(201);
+    await setExpiry(links[1] ?? "", "-1 second");
+    const soonest = (await setExpiry(links[3] ?? "", "1 hour")) ?? "missing";
+    const later = (await setExpiry(links[2] ?? "", "7 days")) ?? "missing";
+    const open = await listed();
+    expect(open?.owners.map((owner) => owner.email)).toEqual([before?.owners[0]?.email, secondOwner]);
+    expect(Date.parse(open?.owners[1]?.signedUpAt ?? "")).toBeGreaterThan(Date.parse(open?.owners[0]?.signedUpAt ?? ""));
+    expect(open?.openInvites.map((invite) => invite.id)).toEqual([soonest, later]);
+
+    const revoked = await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/invites/revoke`);
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json<Listed>().openInvites).toEqual([]);
+    expect((await signUpWith(links[2] ?? "")).json()).toMatchObject({ code: "LINK_EXPIRED" });
+    // Nothing left open: the same answer, no new entry.
+    expect((await app.asOperator("POST", `/api/admin/cafes/${app.owner.cafeId}/invites/revoke`)).statusCode).toBe(200);
+    expect((await app.asOperator("POST", `/api/admin/cafes/${randomUUID()}/invites/revoke`)).statusCode).toBe(404);
+
+    const operatorId = (await app.asOperator("GET", "/api/admin/session")).json<{ operator: { id: string } }>().operator.id;
+    const { rows } = await context.admin.query<{ actor_type: string; actor_id: string; entity_id: string; changes: unknown }>(
+      "SELECT actor_type, actor_id, entity_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'owner_invite.revoked' ORDER BY entity_id",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual(
+      [soonest, later].sort().map((entityId) => ({ actor_type: "operator", actor_id: operatorId, entity_id: entityId, changes: {} })),
+    );
   });
 
   it("voids a payment once with its reason, keeping it listed but out of the total, in the audit log without the reason", async () => {

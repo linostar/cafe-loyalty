@@ -88,6 +88,15 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     .where("cafe_payment_voids.payment_id", "is", null)
     .select(sql<string>`coalesce(sum(cafe_payments.amount_cents), 0)`.as("total"))
     .executeTakeFirstOrThrow();
+  const owners = await trx.selectFrom("owners").select(["email", "created_at"]).orderBy("created_at").orderBy("id").execute();
+  const openInvites = await trx
+    .selectFrom("owner_invites")
+    .select(["id", "created_at", "expires_at"])
+    .where("used_at", "is", null)
+    .where("expires_at", ">", now())
+    .orderBy("expires_at")
+    .orderBy("id")
+    .execute();
   return {
     id: cafe.id,
     name: cafe.name,
@@ -103,6 +112,8 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
       recordedAt: payment.created_at.toISOString(),
       voided: payment.voided_at === null || payment.void_reason === null ? null : { at: payment.voided_at.toISOString(), reason: payment.void_reason },
     })),
+    owners: owners.map((owner) => ({ email: owner.email, signedUpAt: owner.created_at.toISOString() })),
+    openInvites: openInvites.map((invite) => ({ id: invite.id, createdAt: invite.created_at.toISOString(), expiresAt: invite.expires_at.toISOString() })),
   };
 }
 
@@ -285,6 +296,24 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     const created = await withListedCafe(id, (trx) => invite(trx, id, operator.operatorId));
     request.log.info({ cafeId: id, operatorId: operator.operatorId }, "owner invite created");
     return reply.code(201).send(created);
+  });
+
+  /**
+   * Closes every signup link of the café still open, such as one sent to the wrong person: each is marked used, which
+   * owner signup refuses as expired or used. One audit entry per link; with none open, nothing changes.
+   */
+  app.post("/cafes/:id/invites/revoke", { config: { access: "operator" } }, async (request) => {
+    const operator = operatorOf(request);
+    const { id } = parseInput(idParams, request.params);
+    const cafe = await withListedCafe(id, async (trx) => {
+      const revoked = await trx.updateTable("owner_invites").set({ used_at: now() }).where("used_at", "is", null).where("expires_at", ">", now()).returning("id").execute();
+      for (const invite of revoked) {
+        await audit(trx, { cafeId: id, actorType: "operator", actorId: operator.operatorId, action: "owner_invite.revoked", entityType: "owner_invite", entityId: invite.id });
+      }
+      return loadCafe(trx, id);
+    });
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "owner invites revoked");
+    return cafe;
   });
 
   /** Sets a café's plan; suspending it stops new customers joining (AC 39), its counter still syncs. */

@@ -825,6 +825,27 @@ form > .actions {
   border-block-start: 1px solid var(--color-border);
 }
 
+/* The admin café list's search and plan filter: side by side when there is room, stacked on a phone. */
+.cafe-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.cafe-filters > .field {
+  flex: 1 1 14rem;
+}
+
+/* A café row: its name, then its badges and figures, each on its own line. */
+.cafe-row {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.cafe-row > a {
+  font-weight: var(--weight-semibold);
+}
+
 /* The operator's screen: the owner layout without its navigation. */
 .admin-layout,
 .owner-layout.admin-layout {

@@ -70,7 +70,10 @@ export const adminPaymentSchema = z.object({
   voided: z.object({ at: timestamp, reason: z.string() }).nullable(),
 });
 
-/** One café on the admin screen: its plan, what it paid in all (voided payments aside), and its latest payments. */
+/**
+ * One café on the admin screen: its plan, what it paid in all (voided payments aside), its latest payments, the owners
+ * who signed up (oldest first) and its signup links still open (unused and unexpired, soonest to expire first).
+ */
 export const adminCafeSchema = z.object({
   id: z.uuid(),
   name: z.string(),
@@ -78,6 +81,8 @@ export const adminCafeSchema = z.object({
   createdAt: timestamp,
   paidCents: z.int(),
   payments: z.array(adminPaymentSchema),
+  owners: z.array(z.object({ email: z.string(), signedUpAt: timestamp })),
+  openInvites: z.array(z.object({ id: z.uuid(), createdAt: timestamp, expiresAt: timestamp })),
 });
 
 export const adminCafesSchema = z.object({ cafes: z.array(adminCafeSchema) });

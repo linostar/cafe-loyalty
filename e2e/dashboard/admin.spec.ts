@@ -14,8 +14,14 @@ const cafe = (overrides: Record<string, unknown> = {}) => ({
   createdAt: "2026-09-01T08:00:00.000Z",
   paidCents: 0,
   payments: [],
+  owners: [],
+  openInvites: [],
   ...overrides,
 });
+const OWNER = { email: "owner@example.com", signedUpAt: "2026-10-02T08:00:00.000Z" };
+const OPEN = { id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", createdAt: "2026-10-01T08:00:00.000Z", expiresAt: "2026-10-08T08:00:00.000Z" };
+/** A time while OPEN is still open: the page drops a link once it expires. */
+const WHILE_OPEN = new Date("2026-10-02T09:00:00.000Z");
 const link = (token: string) => `https://dashboard.example.com/signup#invite=${token}`;
 const invite = (token: string, overrides: Record<string, unknown> = {}) => ({ cafe: cafe(overrides), link: link(token), expiresAt: "2026-10-08T08:00:00.000Z" });
 
@@ -60,6 +66,7 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
   await expect(page.getByRole("button", { name: "Save plan" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign out" })).toBeHidden();
   await expect(page.getByRole("listitem").filter({ hasText: "Café Najjar" })).toContainText("Pilot");
+  await expect(page.getByRole("listitem").filter({ hasText: "Café Najjar" })).toContainText("No owner yet");
   await page.getByRole("link", { name: "Café Najjar" }).click();
   await expect(page).toHaveURL(CAFE_PAGE);
 
@@ -75,8 +82,16 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
   await expect(card.getByRole("button", { name: "Save plan" })).toBeEnabled();
   await expect(card.getByText("Choose another plan to save.")).toHaveCount(0);
   await expect(card.getByText("Its signup page enrols no one; its counter still records and syncs visits.")).toBeVisible();
+  // Suspending asks again (A1): the safe choice has focus, and Escape steps back without saving.
   await card.getByRole("button", { name: "Save plan" }).click();
+  await expect(card.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await expect(card.getByRole("button", { name: "Yes, suspend Café Najjar" })).toHaveAccessibleDescription("Its signup page enrols no one; its counter still records and syncs visits.");
+  await page.keyboard.press("Escape");
+  await expect(card.getByRole("button", { name: "Save plan of Café Najjar" })).toBeFocused();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByRole("button", { name: "Yes, suspend Café Najjar" }).click();
   await expect(page.getByRole("status")).toHaveText("Café Najjar is now on the suspended plan.");
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toBeFocused();
   await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
 
   // An amount the form cannot read is caught before anything is sent.
@@ -157,6 +172,11 @@ test("the operator creates a café, copies its owner's signup link and opens its
   await page.getByRole("button", { name: "Copy link for Café Nouveau" }).click();
   await expect(page.getByRole("status")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link("fake-invite-token-one"));
+  // Copied again: the same words in a fresh node, so a screen reader says them again (A5).
+  const said = await page.getByRole("status").locator("span").elementHandle();
+  await page.getByRole("button", { name: "Copy link for Café Nouveau" }).click();
+  await expect.poll(() => said.evaluate((node) => node.isConnected)).toBe(false);
+  await expect(page.getByRole("status")).toHaveText("Copied.");
   expect(sent).toEqual([{ cafeId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown, name: "Café Nouveau" }, sent[0]]);
   await expect(page.getByRole("link", { name: "Open Café Nouveau" })).toHaveAttribute("href", CAFE_PAGE);
 });
@@ -230,6 +250,7 @@ test("keeps a plan saved while the café's new link was on its way", async ({ pa
   await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
   await card.getByLabel("Suspended").check();
   await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByRole("button", { name: "Yes, suspend Café Najjar" }).click();
   await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
   release();
   await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-najjar"));
@@ -477,4 +498,251 @@ test("refuses an owner on the admin screen with the operator sign-in", async ({ 
   await mockApi(page, { "GET /api/admin/session": reply(403, { code: "FORBIDDEN", message: "Only the service's operator can do this, from the admin screen.", retryable: false }) });
   await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
+});
+
+test("leaves without asking once a confirmed suspend is saved, but asks while it is only picked", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: reply(200, cafe({ plan: "suspended" })),
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  const asked: string[] = [];
+  page.on("dialog", (dialog) => {
+    asked.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await card.getByLabel("Suspended").check();
+  await page.getByRole("link", { name: "All cafés" }).click();
+  await expect.poll(() => asked).toEqual(["beforeunload"]);
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByRole("button", { name: "Yes, suspend Café Najjar" }).click();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
+  await page.getByRole("link", { name: "All cafés" }).click();
+  await expect(page.getByRole("heading", { name: "Cafés" })).toBeVisible();
+  expect(asked).toEqual(["beforeunload"]);
+});
+
+test("shows the café's owner and open signup links, and revokes the open ones after asking (A4)", async ({ page }) => {
+  let revoked = 0;
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ owners: [OWNER], openInvites: [OPEN] })] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites/revoke`]: async (route) => {
+      expect(route.request().postDataJSON()).toEqual({});
+      revoked += 1;
+      await route.fulfill({ json: cafe({ owners: [OWNER] }) });
+    },
+  });
+  await page.clock.install({ time: WHILE_OPEN });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await expect(card.getByRole("heading", { level: 3, name: "Owner and signup links of Café Najjar" })).toBeVisible();
+  await expect(card.getByText("owner@example.com")).toBeVisible();
+  await expect(card.getByText("Signed up 2 Oct 2026")).toBeVisible();
+  await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
+
+  await card.getByRole("button", { name: "Revoke open links of Café Najjar" }).click();
+  await expect(card.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await card.getByRole("button", { name: "Cancel" }).click();
+  expect(revoked).toBe(0);
+  await card.getByRole("button", { name: "Revoke open links of Café Najjar" }).click();
+  await card.getByRole("button", { name: "Yes, revoke the open links of Café Najjar" }).click();
+  await expect(page.getByRole("status").first()).toHaveText("Closed the open signup links of Café Najjar.");
+  await expect(card.getByText("No open signup links.")).toBeVisible();
+  await expect(card.getByRole("button", { name: /^Revoke open links/ })).toHaveCount(0);
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toBeFocused();
+  expect(revoked).toBe(1);
+});
+
+test("asks before a new signup link for a café that already has an owner, and lists the new link as open", async ({ page }) => {
+  let made = 0;
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ owners: [OWNER] })] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      made += 1;
+      await route.fulfill({ status: 201, json: invite("fake-invite-token-second-owner", { owners: [OWNER], openInvites: [OPEN] }) });
+    },
+  });
+  await page.clock.install({ time: WHILE_OPEN });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await expect(card.getByText("Café Najjar already has an owner. A new link lets one more person sign up as its owner.")).toBeVisible();
+  await expect(card.getByText("No open signup links.")).toBeVisible();
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(card.getByRole("button", { name: "Cancel" })).toHaveAccessibleDescription("Café Najjar already has an owner. A new link lets one more person sign up as its owner.");
+  expect(made).toBe(0);
+  await card.getByRole("button", { name: "Yes, make a link for another owner of Café Najjar" }).click();
+  const shown = card.getByLabel("Owner signup link for Café Najjar");
+  await expect(shown).toHaveValue(link("fake-invite-token-second-owner"));
+  await expect(shown).toBeFocused();
+  await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
+  expect(made).toBe(1);
+});
+
+test("drops a signup link from the open ones when it expires while the page is open", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ owners: [OWNER], openInvites: [OPEN] })] }),
+  });
+  await page.clock.install({ time: new Date(Date.parse(OPEN.expiresAt) - 60_000) });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
+  // The device clock is set forwards past the expiry (no timer fires): within a minute the link has gone.
+  await page.clock.setSystemTime(Date.parse(OPEN.expiresAt) + 60 * 60_000);
+  await expect(card.getByText("Made 1 Oct 2026, 08:00, works until 8 Oct 2026, 08:00.")).toBeVisible();
+  await page.clock.fastForward("01:00");
+  await expect(card.getByText("No open signup links.")).toBeVisible();
+  await expect(card.getByRole("button", { name: /^Revoke open links/ })).toHaveCount(0);
+});
+
+test("keeps a payment recorded while a plan was being saved, and a plan saved while a revoke was on its way", async ({ page }) => {
+  const releases: (() => void)[] = [];
+  const hold = () =>
+    new Promise<void>((resolve) => {
+      releases.push(resolve);
+    });
+  const open = { ...OPEN, expiresAt: "2099-10-08T08:00:00.000Z" };
+  const paid = { id: "d01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", amountCents: 2500, paidOn: "2026-10-01", method: "cash", reference: null, recordedAt: "2026-10-01T09:00:00.000Z", voided: null };
+  let plan = "pilot";
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ openInvites: [open] })] }),
+    // Each answer's copy of the café was read before the other save.
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: async (route) => {
+      await hold();
+      plan = (route.request().postDataJSON() as { plan: string }).plan;
+      await route.fulfill({ json: cafe({ plan, openInvites: [open] }) });
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/payments`]: reply(201, cafe({ paidCents: 2500, payments: [paid], openInvites: [open] })),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites/revoke`]: async (route) => {
+      await hold();
+      // Read while the café was still active, before the plan save below.
+      await route.fulfill({ json: cafe({ plan: "active", paidCents: 2500, payments: [paid] }) });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+
+  // A plan's answer, after a payment's: the payment and its total stay.
+  await card.getByLabel("Active").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByLabel("Amount (USD)").fill("25");
+  await card.getByLabel("Paid on").fill("2026-10-01");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await expect(card.getByText("Paid in all: $25.00.")).toBeVisible();
+  releases.shift()?.();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Active");
+  await expect(card.getByText("Paid in all: $25.00.")).toBeVisible();
+  await expect(card.getByRole("table", { name: "Latest payments of Café Najjar" }).getByRole("row")).toHaveCount(2);
+
+  // A revoke's answer, after a plan's: the plan stays.
+  await card.getByRole("button", { name: "Revoke open links of Café Najjar" }).click();
+  await card.getByRole("button", { name: "Yes, revoke the open links of Café Najjar" }).click();
+  await card.getByLabel("Pilot").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await expect.poll(() => releases.length).toBe(2);
+  // Answer the plan first, then the revoke.
+  releases.pop()?.();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Pilot");
+  releases.pop()?.();
+  await expect(card.getByText("No open signup links.")).toBeVisible();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Pilot");
+  await expect(card.getByText("Paid in all: $25.00.")).toBeVisible();
+});
+
+test("keeps a link made while a plan was being saved, whose answer came later", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const open = { ...OPEN, expiresAt: "2099-10-08T08:00:00.000Z" };
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: reply(201, invite("fake-invite-token-meanwhile", { openInvites: [open] })),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: async (route) => {
+      await held;
+      // Its copy of the café was read before the link was made.
+      await route.fulfill({ json: cafe({ plan: "active" }) });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByLabel("Active").check();
+  await card.getByRole("button", { name: "Save plan" }).click();
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  await expect(card.getByRole("listitem").filter({ hasText: "works until 8 Oct 2099" })).toHaveCount(1);
+  release();
+  await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Active");
+  await expect(card.getByRole("listitem").filter({ hasText: "works until 8 Oct 2099" })).toHaveCount(1);
+  await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-meanwhile"));
+});
+
+test("holds Revoke open links while a new link is on its way, so the link made is never dropped", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let revoked = 0;
+  // Open for good, so the test needs no fake clock.
+  const open = { ...OPEN, expiresAt: "2099-10-08T08:00:00.000Z" };
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe({ openInvites: [open] })] }),
+    [`POST /api/admin/cafes/${CAFE_ID}/invites`]: async (route) => {
+      await held;
+      await route.fulfill({ status: 201, json: invite("fake-invite-token-held", { openInvites: [open, { ...open, id: "e01c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02" }] }) });
+    },
+    [`POST /api/admin/cafes/${CAFE_ID}/invites/revoke`]: async (route) => {
+      revoked += 1;
+      await route.fulfill({ json: cafe() });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  const card = page.getByRole("region", { name: /Café Najjar/ });
+  await card.getByRole("button", { name: "New signup link for Café Najjar" }).click();
+  const revoke = card.getByRole("button", { name: "Revoke open links of Café Najjar" });
+  await expect(revoke).toHaveAttribute("aria-disabled", "true");
+  // Forced: Playwright waits for an aria-disabled button to be enabled, and the press must land while the link is on its way.
+  await revoke.click({ force: true });
+  await expect(card.getByRole("button", { name: /^Yes, revoke/ })).toHaveCount(0);
+  release();
+  await expect(card.getByLabel("Owner signup link for Café Najjar")).toHaveValue(link("fake-invite-token-held"));
+  await expect(card.getByRole("listitem").filter({ hasText: "Made 1 Oct 2026" })).toHaveCount(2);
+  expect(revoked).toBe(0);
+});
+
+test("finds a café by name and plan in the list, saying how many are shown (A3)", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, {
+      cafes: [
+        cafe({ owners: [OWNER] }),
+        cafe({ id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1e", name: "Study Corner", plan: "active" }),
+        cafe({ id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1f", name: "Najjar Roastery", plan: "suspended" }),
+      ],
+    }),
+  });
+  await page.goto("/admin");
+  const rows = page.getByRole("main").getByRole("listitem");
+  await expect(rows).toHaveCount(3);
+  await expect(page.getByRole("status")).toHaveText("Showing 3 of 3 cafés");
+  await expect(rows.filter({ hasText: "Café Najjar" })).not.toContainText("No owner yet");
+  await expect(rows.filter({ hasText: "Study Corner" })).toContainText("No owner yet");
+
+  await page.getByRole("searchbox", { name: "Search by name" }).fill("  najJAR ");
+  await expect(rows).toHaveText([/Café Najjar/, /Najjar Roastery/]);
+  await expect(page.getByRole("status")).toHaveText("Showing 2 of 3 cafés");
+  await page.getByRole("combobox", { name: "Plan" }).selectOption({ label: "Suspended" });
+  await expect(rows).toHaveText([/Najjar Roastery/]);
+  await expect(page.getByRole("status")).toHaveText("Showing 1 of 3 cafés");
+  await page.getByRole("searchbox", { name: "Search by name" }).fill("corner");
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByText("No café matches the search and plan chosen.")).toBeVisible();
+  await page.getByRole("combobox", { name: "Plan" }).selectOption({ label: "All plans" });
+  await expect(rows).toHaveText([/Study Corner/]);
 });
