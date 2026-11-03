@@ -1,6 +1,6 @@
 import { PRODUCT_NAME } from "@cafe-loyalty/shared";
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectUsableInForcedColors, shownText } from "../a11y.js";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTextSpacing, expectTextZoom, expectUsableInForcedColors, shownText } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { FAKE_TOKEN, SESSION, UNAUTHENTICATED, mockApi, reply, visitHours } from "./api-mock.js";
 
@@ -180,6 +180,8 @@ for (const { lang, locale } of LANGS) {
         await expectEveryControlNamed(page);
         await expectNoAxeViolations(page);
         await expectUsableInForcedColors(page);
+        await expectTextSpacing(page, lang);
+        await expectTextZoom(page, lang);
       };
 
       for (const path of OWNER_PATHS) {
@@ -573,6 +575,7 @@ for (const { lang, locale } of LANGS) {
           await page.goto(path);
           await expect(page.getByRole("heading", { level: 2 }).first()).toBeVisible();
           await expectLanguageAndFit(page, lang);
+          await expectTextSpacing(page, lang);
         }
         await page.unrouteAll();
       }
@@ -581,6 +584,7 @@ for (const { lang, locale } of LANGS) {
         await page.goto(path);
         await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
         await expectLanguageAndFit(page, lang);
+          await expectTextSpacing(page, lang);
       }
     });
 
@@ -590,6 +594,7 @@ for (const { lang, locale } of LANGS) {
       for (let step = 1; step <= 5; step += 1) {
         await expect(page.locator("#setup-step-title")).toContainText(String(step));
         await expectLanguageAndFit(page, lang);
+          await expectTextSpacing(page, lang);
         if (step < 5) {
           await nextStep(page).click();
         }
@@ -599,6 +604,7 @@ for (const { lang, locale } of LANGS) {
       await page.goto("/");
       await expect(page.locator("#setup-checklist-title")).toBeVisible();
       await expectLanguageAndFit(page, lang);
+          await expectTextSpacing(page, lang);
     });
 
     test("the open void form reflows", async ({ page }) => {
@@ -607,6 +613,7 @@ for (const { lang, locale } of LANGS) {
       await page.getByRole("button", { name: /^Void the payment of|^إبطال دفعة/ }).click();
       await expect(page.getByRole("textbox", { name: /^Reason$|^السبب$/ })).toBeFocused();
       await expectLanguageAndFit(page, lang);
+          await expectTextSpacing(page, lang);
     });
   });
 }

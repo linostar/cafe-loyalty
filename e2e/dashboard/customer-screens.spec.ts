@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTextSpacing, expectTextZoom, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { renderSVG } from "uqr";
 import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, t, type Lang } from "../../apps/server/src/customer-html.js";
 import {
@@ -19,6 +19,7 @@ import {
   type CardView,
   type FeedbackView,
 } from "../../apps/server/src/customer-views.js";
+import { nextStep } from "../../apps/server/src/customer-pages.js";
 import { GOOGLE_WALLET_BADGES } from "../../apps/server/src/google-pass.js";
 
 /**
@@ -129,6 +130,15 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ["feedback-sent", (lang) => feedback(lang, { state: "sent" })],
   ["error", (lang) => errorView(lang, t(lang, "cardGone"), `/c/fake?lang=${other(lang)}`, { href: `/recover?lang=${lang}`, label: t(lang, "restoreCard") })],
   ["error-no-next-step", (lang) => errorView(lang, t(lang, "joinPaused", { cafe: lang === "ar" ? "مقهى النجار" : "Café Najjar" }), `/join/fake?lang=${other(lang)}`)],
+  // The states no page above shows (UX Phase 6, C18).
+  ["join-no-program", (lang) => joinView(lang, { path: "/join/fake", cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar", operatorName: "Loyalty Everywhere", program: undefined, formToken: "fake-form-token", values: {}, errors: {}, otherLangHref: `/join/fake?lang=${other(lang)}` })],
+  ["card-settings-email", (lang) => settings(lang, { maskedEmail: "r•••@example.com" })],
+  ["recover-error", (lang) => recoverView(lang, false, t(lang, "emailInvalid"), `/recover?lang=${other(lang)}`, "rana@example")],
+  ["feedback-done", (lang) => feedback(lang, { state: "done" })],
+  ["feedback-closed", (lang) => feedback(lang, { state: "closed" })],
+  ...(["linkExpired", "failed", "notFound"] as const).map(
+    (key): [string, (lang: Lang) => string] => [`error-${key}`, (lang) => errorView(lang, t(lang, key), `/c/fake?lang=${other(lang)}`, nextStep(lang, key, "GET", "/c/fake"))],
+  ),
 ];
 
 const PAGES = VIEWS.flatMap(([name, view]) => (["en", "ar"] as const).map((lang) => ({ name: `${name}-${lang}`, html: view(lang), lang })));
@@ -185,6 +195,8 @@ for (const width of [1440, 1024, 390, 320] as const) {
         await expectNoAxeViolations(page);
         await expectTouchTargets(page);
         await expectUsableInForcedColors(page);
+        await expectTextSpacing(page, lang);
+        await expectTextZoom(page, lang);
       });
     }
   });

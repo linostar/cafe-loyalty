@@ -48,6 +48,9 @@ const PAIRS: readonly [foreground: string, background: string, minimum: number][
   ["color-danger", "color-danger-soft", BODY],
   ["color-danger", "color-surface", BODY],
   ["color-danger", "color-page", BODY],
+  ["color-info", "color-info-soft", BODY],
+  ["color-info", "color-surface", BODY],
+  ["color-info", "color-page", BODY],
   ["color-text", "color-heat-1", BODY],
   ["color-text", "color-heat-2", BODY],
   ["color-text", "color-heat-3", BODY],
@@ -62,6 +65,7 @@ const PAIRS: readonly [foreground: string, background: string, minimum: number][
   ["color-focus", "color-success-soft", UI],
   ["color-focus", "color-warning-soft", UI],
   ["color-focus", "color-danger-soft", UI],
+  ["color-focus", "color-info-soft", UI],
   ["color-focus-inverse", "color-espresso", UI],
   ["color-accent", "color-page", UI],
   ["color-accent", "color-surface", UI],
@@ -83,5 +87,19 @@ describe("colour tokens", () => {
     const checked = new Set([...PAIRS.flatMap(([foreground, background]) => [foreground, background]), ...DECORATIVE]);
     expect([...colours.keys()].filter((name) => !checked.has(name))).toEqual([]);
     expect(colours.size).toBeGreaterThan(20);
+  });
+});
+
+describe("type sizes", () => {
+  const css = readFileSync(new URL("tokens.css", import.meta.url), "utf8");
+  /** The custom properties a rule of tokens.css sets, by name. */
+  const block = (selector: string): Record<string, string> =>
+    Object.fromEntries(
+      [...(new RegExp(`^${selector.replace(/[:()]/g, "\\$&")} \\{([^}]*)\\}`, "m").exec(css)?.[1] ?? "").matchAll(/--([\w-]+):\s*([^;]+);/g)].map((match) => [match[1] ?? "", match[2] ?? ""]),
+    );
+
+  it("are a step larger in Arabic for small text, with more heading line height, and unchanged in English", () => {
+    expect(block(":root")).toMatchObject({ "text-xs": "0.75rem", "text-sm": "0.875rem", "leading-tight": "1.25" });
+    expect(block(":root:lang(ar)")).toEqual({ "text-xs": "0.8125rem", "text-sm": "0.9375rem", "leading-tight": "1.4" });
   });
 });

@@ -22,8 +22,18 @@ export async function expectLanguageAndFit(page: Page, lang: "ar" | "en"): Promi
   await expect(page.locator("html")).toHaveAttribute("dir", lang === "ar" ? "rtl" : "ltr");
   // Against the screen's width, not innerWidth: a mobile browser widens its layout viewport to fit content that overflows.
   const screenWidth = page.viewportSize()?.width ?? 0;
-  const overflow = await page.evaluate((width) => document.documentElement.scrollWidth - width, screenWidth);
-  expect(overflow).toBeLessThanOrEqual(0);
+  const { overflow, past } = await page.evaluate((width) => ({
+    overflow: document.documentElement.scrollWidth - width,
+    // The deepest elements sticking out past either edge, to name in a failure.
+    past: [...document.querySelectorAll("body *")]
+      .filter((element) => {
+        const out = (box: DOMRect) => box.width > 1 && (box.right > width + 0.5 || box.left < -0.5);
+        return out(element.getBoundingClientRect()) && ![...element.children].some((child) => out(child.getBoundingClientRect()));
+      })
+      .slice(0, 5)
+      .map((element) => element.outerHTML.slice(0, 80)),
+  }), screenWidth);
+  expect(overflow, `scrolls sideways; past the edge: ${past.join(" | ")}`).toBeLessThanOrEqual(0);
   // The header's title never runs under its controls. Measured on the title's text, which a no-wrap heading can spill
   // out of its own box; text hidden for screen readers (1px boxes) is left out.
   const covered = await page.evaluate(() => {
@@ -51,6 +61,63 @@ export async function expectLanguageAndFit(page: Page, lang: "ar" | "en"): Promi
       .map(({ control }) => control.outerHTML.slice(0, 80));
   });
   expect(covered).toEqual([]);
+}
+
+/**
+ * Runs `check` with `css` applied to the page, then takes it off. A constructed style sheet, not a `<style>` element:
+ * the pages' policies refuse inline styles, and a constructed sheet is outside them.
+ */
+async function withCss(page: Page, css: string, check: () => Promise<void>): Promise<void> {
+  await page.evaluate((text) => {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(text);
+    (globalThis as unknown as { gateSheet?: CSSStyleSheet }).gateSheet = sheet;
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  }, css);
+  try {
+    await check();
+  } finally {
+    await page.evaluate(() => {
+      const sheet = (globalThis as unknown as { gateSheet?: CSSStyleSheet }).gateSheet;
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((adopted) => adopted !== sheet);
+    });
+  }
+}
+
+/**
+ * WCAG 1.4.12 (text spacing): with line height 1.5, paragraph spacing 2em, letter spacing 0.12em and word spacing
+ * 0.16em on all text, the page still fits (expectLanguageAndFit) and no element cuts its text off: none that hides its
+ * overflow has more content than room. Text hidden for screen readers (`.visually-hidden`) is left out.
+ */
+export async function expectTextSpacing(page: Page, lang: "ar" | "en"): Promise<void> {
+  await withCss(page, "* { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; } p { margin-block-end: 2em !important; }", async () => {
+    await expectLanguageAndFit(page, lang);
+    const clipped = await page.evaluate((): string[] =>
+      [...document.querySelectorAll<HTMLElement>("body *")]
+        .filter((element) => element.clientWidth > 1 && element.clientHeight > 1 && element.closest(".visually-hidden") === null && element.textContent.trim() !== "")
+        .filter((element) => {
+          const style = getComputedStyle(element);
+          const hides = (value: string) => value === "hidden" || value === "clip";
+          return (hides(style.overflowX) && element.scrollWidth > element.clientWidth + 1) || (hides(style.overflowY) && element.scrollHeight > element.clientHeight + 1);
+        })
+        .map((element) => element.outerHTML.slice(0, 80)),
+    );
+    expect(clipped, "text cut off with WCAG 1.4.12 spacing").toEqual([]);
+  });
+}
+
+/**
+ * WCAG 1.4.4 (resize text): with text at 200%, the page still fits and its header title is clear of its controls
+ * (expectLanguageAndFit). Only on screens 640 CSS px wide or more: on a phone, 200% text is past 400% zoom, which the
+ * 320 px reflow check stands for (WCAG 1.4.10).
+ */
+export async function expectTextZoom(page: Page, lang: "ar" | "en"): Promise<void> {
+  if ((page.viewportSize()?.width ?? 0) < 640) {
+    return;
+  }
+  await withCss(page, "html { font-size: 200% !important; }", async () => {
+    await expectLanguageAndFit(page, lang);
+  });
 }
 
 /** The axe rule tags of WCAG 2.0, 2.1 and 2.2 at levels A and AA: the level the product meets. */

@@ -36,6 +36,8 @@
   --color-warning-soft: #fcf1d9;
   --color-danger: #a3261c;
   --color-danger-soft: #fbe9e7;
+  --color-info: #1f5a85;
+  --color-info-soft: #e5eff7;
 
   /* Busy and quiet hours, quiet to busy; the busiest takes the accent with --color-on-accent text */
   --color-heat-1: #fbede3;
@@ -95,4 +97,28 @@
   /* Motion, removed under prefers-reduced-motion (base.css) */
   --duration-fast: 120ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* The focus ring's width (every :focus-visible outline; the screens specs check each Tab stop against it) */
+  --focus-width: 3px;
+
+  /* Layers: a part drawn over its neighbours (the counter's action bar), then what opens over the page (menus, the skip link) */
+  --z-raised: 1;
+  --z-overlay: 10;
+
+  /*
+   * Breakpoints (media queries cannot read custom properties, so they are written out; styles.test.ts allows only
+   * these, and a max-width query a hundredth of a rem under one): 30rem (a phone held upright), 40rem (beside the content: two
+   * columns, the dashboard's side navigation), 56rem (the counter's order beside its menu), 60rem (the dashboard's
+   * wide layout).
+   */
+}
+
+/*
+ * Arabic script needs more room than Latin at small sizes and in tight headings: its small text a step larger and its
+ * headings more line height. English keeps the values above.
+ */
+:root:lang(ar) {
+  --text-xs: 0.8125rem;
+  --text-sm: 0.9375rem;
+  --leading-tight: 1.4;
 }

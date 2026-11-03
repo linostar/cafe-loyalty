@@ -271,8 +271,8 @@ function StatusMessages({ problem, notice, info, update }: { problem: string | n
     <div aria-live="polite" className="messages">
       {problem === null ? null : <p className="warning-box">{say(problem)}</p>}
       {notice === null ? null : <p className="warning-box">{say(notice)}</p>}
-      {info === null ? null : <p className="notice">{say(info)}</p>}
-      {update.waiting ? <p className="notice">{t("An update is ready. It installs once everything is sent and nobody is typing.")}</p> : null}
+      {info === null ? null : <p className="notice notice-info">{say(info)}</p>}
+      {update.waiting ? <p className="notice notice-info">{t("An update is ready. It installs once everything is sent and nobody is typing.")}</p> : null}
       {update.error === null ? null : <p className="warning-box">{say(update.error)}</p>}
     </div>
   );

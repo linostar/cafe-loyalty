@@ -1,6 +1,6 @@
 import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
+import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTextSpacing, expectTextZoom, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { expectFocusNeverHidden } from "../focus.js";
 import { mockApi, reply } from "../dashboard/api-mock.js";
 import { CAMERA_CAFE_ID } from "./camera.js";
@@ -16,7 +16,8 @@ import { CAMERA_CAFE_ID } from "./camera.js";
  * What every counter screen passes: the header in one row (brand, status chip and language switch side by side, even
  * offline on a phone), and the accessibility checks.
  */
-async function expectAccessible(page: Page): Promise<void> {
+async function expectAccessible(page: Page, lang: "ar" | "en"): Promise<void> {
+  await expectLanguageAndFit(page, lang);
   const rows = await page.evaluate(() =>
     ["header .brand", "header .connection", "header .lang-switch"].map((selector) => {
       const box = document.querySelector(selector)?.getBoundingClientRect();
@@ -30,6 +31,8 @@ async function expectAccessible(page: Page): Promise<void> {
   await expectNoAxeViolations(page);
   await expectTouchTargets(page);
   await expectUsableInForcedColors(page);
+  await expectTextSpacing(page, lang);
+  await expectTextZoom(page, lang);
 }
 test.use({ serviceWorkers: "block", timezoneId: "Asia/Beirut" });
 
@@ -122,8 +125,7 @@ async function toPin(page: Page, testInfo: TestInfo, width: number, shoot: boole
   const shot = async (name: string) => {
     if (shoot) {
       await capture(page, testInfo, `counter-${name}-${String(width)}`);
-      await expectLanguageAndFit(page, "en");
-      await expectAccessible(page);
+      await expectAccessible(page, "en");
     }
   };
   await mockCounter(page);
@@ -176,13 +178,11 @@ for (const { width, height } of WIDTHS) {
         }
       }
       await capture(page, testInfo, `counter-order-${String(width)}`);
-      await expectLanguageAndFit(page, "en");
-      await expectAccessible(page);
+      await expectAccessible(page, "en");
       await context.setOffline(true);
       await expect(page.getByRole("status").first()).toHaveText(/^Offline/);
       await capture(page, testInfo, `counter-offline-${String(width)}`);
-      await expectLanguageAndFit(page, "en");
-      await expectAccessible(page);
+      await expectAccessible(page, "en");
       // Offline, the status chip is at its widest; on a phone the action bar is at the bottom of the screen.
       await expectFocusNeverHidden(page);
     });
@@ -190,8 +190,7 @@ for (const { width, height } of WIDTHS) {
     test("a saved visit with its Undo, a card with its reward ready, and switching barista with an order open", async ({ page }, testInfo) => {
       const check = async (name: string) => {
         await capture(page, testInfo, `counter-${name}-${String(width)}`);
-        await expectLanguageAndFit(page, "en");
-        await expectAccessible(page);
+        await expectAccessible(page, "en");
       };
       await toPin(page, testInfo, width, false);
       await page.getByLabel("PIN", { exact: true }).fill("482913");
@@ -233,8 +232,7 @@ for (const { width, height } of WIDTHS) {
       await page.getByRole("button", { name: "Sign in" }).click();
       await expect(page.getByRole("alert")).toContainText("Wrong PIN");
       await capture(page, testInfo, `counter-pin-wrong-${String(width)}`);
-      await expectLanguageAndFit(page, "en");
-      await expectAccessible(page);
+      await expectAccessible(page, "en");
     });
   });
 }
@@ -247,8 +245,7 @@ for (const { width, height } of [WIDTHS[1], WIDTHS[3], WIDTHS[4]]) {
     test("pairing, who is working, PIN, an order, and offline", async ({ page, context }, testInfo) => {
       const check = async (name: string) => {
         await capture(page, testInfo, `counter-${name}-ar-${String(width)}`);
-        await expectLanguageAndFit(page, "ar");
-        await expectAccessible(page);
+        await expectAccessible(page, "ar");
       };
       await mockCounter(page);
       await page.goto("/pair#code=ABCD-1234-EFGH");

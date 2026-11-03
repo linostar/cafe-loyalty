@@ -15,8 +15,8 @@ button {
 }
 
 /*
- * Header: one row, even on a phone: the brand (the product name, cut short if it must be; the app's name read to screen
- * readers only on a phone), connectivity and the queue in one chip, and the language switch.
+ * Header: one row, even on a phone: the brand (on a phone the logo, its name read to screen readers only),
+ * connectivity and the queue in one chip, and the language switch.
  */
 .topbar {
   flex-wrap: nowrap;
@@ -26,11 +26,6 @@ button {
 
 .topbar .brand {
   flex: 1 1 auto;
-}
-
-.topbar .brand h1 {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .topbar .lang-switch {
@@ -115,14 +110,16 @@ button {
 }
 
 @media (max-width: 39.99rem) {
-  /* Left to right even in Arabic, where only the Latin product name shows: cut short, it keeps its start. */
-  .topbar .brand h1 {
-    direction: ltr;
-    font-size: var(--text-base);
+  /* Room for the chip's Arabic text, a step larger, beside the logo and the language switch. */
+  .connection {
+    padding-inline: var(--space-2);
   }
 
-  /* The last-sent time for screen readers only: on a phone, the one-row header has no room for it. */
-  .topbar .brand-app,
+  /*
+   * The product name and the last-sent time for screen readers only: on a phone, the one-row header has room for the
+   * logo, the chip and the language switch, and a name cut short would lose its text (WCAG 1.4.12).
+   */
+  .topbar .brand h1,
   .connection .sent {
     position: absolute;
     inline-size: 1px;
@@ -314,7 +311,7 @@ main {
 
 .stepper button:not(.more) {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 
 /* A line in the order: a copper edge at its start and a bold count, so it differs from the rest by more than colour. */
@@ -519,7 +516,7 @@ main {
   .action-bar {
     position: sticky;
     inset-block-end: 0;
-    z-index: 1;
+    z-index: var(--z-raised);
     margin-block-start: var(--space-4);
     margin-inline: calc(var(--space-5) * -1);
     margin-block-end: calc(var(--space-5) * -1);
