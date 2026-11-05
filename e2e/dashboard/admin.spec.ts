@@ -307,6 +307,14 @@ test("shows a refused payment's reason by its field, and a failed sign-out in th
   await card.getByRole("button", { name: "Record payment" }).click();
   await expect(card.getByLabel("Paid on")).toHaveAccessibleDescription("Pick the day the café paid.");
   await expect(card.getByLabel("Paid on")).toBeFocused();
+  // The form's own messages follow a language switch (kept untranslated until shown).
+  await card.getByLabel("Amount (USD)").fill("0");
+  await card.getByRole("button", { name: "Record payment" }).click();
+  await page.getByRole("button", { name: "العربية" }).click();
+  await expect(card.getByLabel("تاريخ الدفع")).toHaveAccessibleDescription("اختر اليوم الذي دفع فيه المقهى.");
+  await expect(card.getByLabel("المبلغ (بالدولار)")).toHaveAccessibleDescription("أدخل مبلغاً بالدولار أكبر من 0، مثل 25 أو 25.00.");
+  await page.getByRole("button", { name: "English" }).click();
+  await card.getByLabel("Amount (USD)").fill("25");
   // A day outside the picker's range still goes to the server, whose reason shows by the field (AC 10).
   await card.getByLabel("Paid on").fill("2025-06-01");
   await card.getByRole("button", { name: "Record payment" }).click();

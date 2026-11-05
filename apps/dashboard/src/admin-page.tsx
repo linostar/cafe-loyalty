@@ -269,7 +269,8 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   const [reference, setReference] = useState("");
   // Kept until the payment is recorded, so sending the form again after a lost response records it once.
   const [paymentId, setPaymentId] = useState(() => crypto.randomUUID());
-  const [problems, setProblems] = useState<Record<string, string>>({});
+  // Built when shown, so a language switch after a failed send changes them too.
+  const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
   const titleId = `payment-title-${cafe.id}`;
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
@@ -278,10 +279,10 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
       onSubmit={(event) => {
         event.preventDefault();
         const amountCents = parseUsdInput(amount);
-        const found: Record<string, string> = {};
-        if (amountCents === null || amountCents < 1) found.amountCents = t("Enter an amount in dollars over 0, such as 25 or 25.00.");
+        const found: Record<string, Later<typeof AR>> = {};
+        if (amountCents === null || amountCents < 1) found.amountCents = (say) => say("Enter an amount in dollars over 0, such as 25 or 25.00.");
         // The picker's value is already the server's YYYY-MM-DD; it is "" when cleared or only partly entered.
-        if (paidOn === "") found.paidOn = t("Pick the day the café paid.");
+        if (paidOn === "") found.paidOn = (say) => say("Pick the day the café paid.");
         if (amountCents === null || amountCents < 1 || paidOn === "") {
           setProblems(found);
           return;
@@ -326,7 +327,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         inputMode="decimal"
         value={amount}
         onChange={setAmount}
-        error={problems.amountCents ?? fieldErrors.amountCents}
+        error={problems.amountCents?.(t, lang) ?? fieldErrors.amountCents}
       />
       {/* A date picker offering the days the server takes (2026 up to today); it still checks them and says why. */}
       <Field
@@ -342,7 +343,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         max={today()}
         value={paidOn}
         onChange={setPaidOn}
-        error={problems.paidOn ?? fieldErrors.paidOn}
+        error={problems.paidOn?.(t, lang) ?? fieldErrors.paidOn}
       />
       <fieldset>
         <legend>
