@@ -9,7 +9,8 @@ interface FieldProps {
   /** Text, or text with a visually hidden part that tells repeated fields apart. */
   label: ReactNode;
   name: string;
-  type: "email" | "password" | "text" | "url";
+  /** A date's value is always YYYY-MM-DD, whatever format the computer shows it in, and "" while empty or incomplete. */
+  type: "date" | "email" | "password" | "text" | "url";
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;
@@ -18,6 +19,9 @@ interface FieldProps {
   error?: string | undefined;
   minLength?: number;
   maxLength?: number;
+  /** A date field's first and last days the picker offers, YYYY-MM-DD (the Form sends anyway: the server has the last word). */
+  min?: string;
+  max?: string;
   /** The on-screen keyboard to show: digits for PINs and counts, decimals for prices. */
   inputMode?: "numeric" | "decimal";
   /** For text in one language whatever the page's: Arabic right to left, English left to right. */
@@ -105,7 +109,7 @@ const FIELD_AR = { Show: "إظهار" } as const;
  * A password or PIN has a Show toggle (aria-pressed; named only "Show", so the field's label still finds just the input,
  * and described by that label, so repeated fields' toggles differ).
  */
-export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
+export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, min, max, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
   const t = useT(FIELD_AR);
   const id = useId();
   const hintId = `${id}-hint`;
@@ -124,6 +128,8 @@ export function Field({ label, name, type, autoComplete, value, onChange, hint, 
       required={!optional}
       minLength={minLength}
       maxLength={maxLength}
+      min={min}
+      max={max}
       inputMode={inputMode}
       lang={lang}
       dir={lang === undefined ? undefined : lang === "ar" ? "rtl" : "ltr"}

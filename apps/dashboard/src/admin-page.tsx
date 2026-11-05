@@ -50,7 +50,7 @@ const AR = {
   "Plan of {name}": "خطة {name}",
   "Save plan": "حفظ الخطة",
   "Choose another plan to save.": "اختر خطة أخرى لحفظها.",
-  "Year-month-day, such as {day}.": "سنة-شهر-يوم، مثل {day}.",
+  "Pick the day the café paid.": "اختر اليوم الذي دفع فيه المقهى.",
   "Enter an amount in dollars over 0, such as 25 or 25.00.": "أدخل مبلغاً بالدولار أكبر من 0، مثل 25 أو 25.00.",
   "Recorded {amount} from {name}, paid by {method} on {day}.": "سُجّل مبلغ {amount} من {name}، بتاريخ {day}، طريقة الدفع: {method}.",
   "Record a payment": "تسجيل دفعة",
@@ -278,8 +278,12 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
       onSubmit={(event) => {
         event.preventDefault();
         const amountCents = parseUsdInput(amount);
-        if (amountCents === null || amountCents < 1) {
-          setProblems({ amountCents: t("Enter an amount in dollars over 0, such as 25 or 25.00.") });
+        const found: Record<string, string> = {};
+        if (amountCents === null || amountCents < 1) found.amountCents = t("Enter an amount in dollars over 0, such as 25 or 25.00.");
+        // The picker's value is already the server's YYYY-MM-DD; it is "" when cleared or only partly entered.
+        if (paidOn === "") found.paidOn = t("Pick the day the café paid.");
+        if (amountCents === null || amountCents < 1 || paidOn === "") {
+          setProblems(found);
           return;
         }
         setProblems({});
@@ -324,10 +328,7 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         onChange={setAmount}
         error={problems.amountCents ?? fieldErrors.amountCents}
       />
-      {/*
-        Text, not a date picker: the picker draws the day in the computer's own date format, which can show a weekday
-        it leaves blank (", 15 Oct 2026") or a time; the server checks the day and says how to write it.
-      */}
+      {/* A date picker offering the days the server takes (2026 up to today); it still checks them and says why. */}
       <Field
         label={
           <>
@@ -336,12 +337,12 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
           </>
         }
         name="paidOn"
-        type="text"
+        type="date"
+        min="2026-01-01"
+        max={today()}
         value={paidOn}
         onChange={setPaidOn}
-        // The example is a placeholder, isolated in Arabic: after Arabic letters its digits would otherwise read right to left.
-        hint={t("Year-month-day, such as {day}.", { day: "2026-10-01" })}
-        error={fieldErrors.paidOn}
+        error={problems.paidOn ?? fieldErrors.paidOn}
       />
       <fieldset>
         <legend>
