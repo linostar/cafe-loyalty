@@ -19,6 +19,7 @@ test-results/
 .env.*
 !.env.example
 secrets/
+keys/
 *.p12
 *.p8
 *.pfx
