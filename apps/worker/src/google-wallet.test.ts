@@ -112,12 +112,19 @@ describe("Google Wallet client", () => {
 
   it("replaces a café's class with the whole of it, creating it when Google has none", async () => {
     const classPath = `/walletobjects/v1/loyaltyClass/${encodeURIComponent(CLASS.id)}`;
-    const google = await fakeGoogle([{ status: 200 }, { status: 404 }, { status: 200 }, { status: 404 }, { status: 409 }]);
+    const google = await fakeGoogle([{ status: 200 }, { status: 404 }, { status: 200 }, { status: 404 }, { status: 409 }, { status: 200 }]);
     await google.wallet.saveClass(CLASS);
     await google.wallet.saveClass(CLASS);
-    // Made by another job in the meantime: taken as done.
+    // Made by another job in the meantime, maybe from older branding: replaced with this class.
     await google.wallet.saveClass(CLASS);
-    expect(google.api()).toEqual([`PUT ${classPath}`, `PUT ${classPath}`, "POST /walletobjects/v1/loyaltyClass", `PUT ${classPath}`, "POST /walletobjects/v1/loyaltyClass"]);
+    expect(google.api()).toEqual([
+      `PUT ${classPath}`,
+      `PUT ${classPath}`,
+      "POST /walletobjects/v1/loyaltyClass",
+      `PUT ${classPath}`,
+      "POST /walletobjects/v1/loyaltyClass",
+      `PUT ${classPath}`,
+    ]);
     expect(JSON.parse(google.seen.find((request) => request.method === "PUT")?.body ?? "{}")).toEqual(CLASS);
     expect(CLASS).toMatchObject({ hexBackgroundColor: "#4a2c2a", programLogo: { sourceUri: { uri: "https://card.example.test/wallet/logo.png" } } });
   });

@@ -155,6 +155,10 @@ describe("Apple pass downloads", () => {
       app.owner.cafeId,
     ]);
     const logo = rows[0];
+    // Stored, so the comparisons below are never of missing files on both sides.
+    for (const image of [logo?.apple_1x, logo?.apple_2x, logo?.apple_3x]) {
+      expect(Buffer.isBuffer(image) && image.length > 0).toBe(true);
+    }
     for (const pass of [await download(app, card.webSecret), readPass(await latest(app, plain))]) {
       expect(pass.json).toMatchObject({ logoText: "Café Nour", backgroundColor: "rgb(31, 90, 133)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(229, 239, 247)" });
       expect(pass.files.get("logo.png")).toEqual(logo?.apple_1x);

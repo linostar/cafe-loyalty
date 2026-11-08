@@ -481,6 +481,28 @@ describe("job queue", () => {
     await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE cafe_id = $1", [pass.cafeId]);
   });
 
+  it("gives up on a café that changes under every class write, forgetting the recorded class so the retry writes it", async () => {
+    const pass = await googlePass();
+    await admin.query("UPDATE app.cafes SET google_class_hash = $2 WHERE id = $1", [pass.cafeId, randomBytes(32)]);
+    const wallet = new FakeGoogleWallet();
+    let renames = 0;
+    // A rename during every write (the hook disarms itself after each one, so it arms itself again).
+    const rename = () => {
+      renames += 1;
+      wallet.whileWritingClass = rename;
+      return admin.query("UPDATE app.cafes SET name = $2 WHERE id = $1", [pass.cafeId, `Café ${String(renames)}`]);
+    };
+    wallet.whileWritingClass = rename;
+    await expect(writeGooglePass(db.app.db, wallet, GOOGLE, pino({ level: "silent" }), { cafeId: pass.cafeId, passId: pass.passId })).rejects.toMatchObject({
+      code: "google_class_changed",
+    });
+    expect(wallet.classes).toHaveLength(3);
+    expect(wallet.saved).toHaveLength(0);
+    const { rows } = await admin.query<{ google_class_hash: Buffer | null }>("SELECT google_class_hash FROM app.cafes WHERE id = $1", [pass.cafeId]);
+    expect(rows[0]?.google_class_hash).toBeNull();
+    await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE cafe_id = $1", [pass.cafeId]);
+  });
+
   it("writes an earlier epoch's Google object INACTIVE, without the QR, and only if it exists (AC 8)", async () => {
     const pass = await googlePass({ epoch: 1, cardEpoch: 2 });
     const { boss, task, wallet } = jobQueue();

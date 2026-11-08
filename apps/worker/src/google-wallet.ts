@@ -101,9 +101,17 @@ export function createGoogleWallet(options: GoogleWalletOptions): GoogleWallet {
         throw failed(status, "a class update");
       }
       const inserted = await call("POST", "/loyaltyClass", loyaltyClass);
-      // 409: another job made it in the meantime; the next change writes it again.
-      if (inserted !== 200 && inserted !== 409) {
+      if (inserted === 200) {
+        return;
+      }
+      if (inserted !== 409) {
         throw failed(inserted, "a class insert");
+      }
+      // 409: another job (or an earlier try whose answer was lost) made it in the meantime, maybe from older branding:
+      // replaced with this one, so what the caller then records is what Google has.
+      const replaced = await call("PUT", `/loyaltyClass/${encodeURIComponent(loyaltyClass.id)}`, loyaltyClass);
+      if (replaced !== 200) {
+        throw failed(replaced, "a class update");
       }
     },
 

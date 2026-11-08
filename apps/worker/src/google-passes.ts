@@ -105,7 +105,10 @@ export async function writeGooglePass(
         break;
       }
       if (attempt === 3) {
-        // The café keeps changing: pg-boss retries the job later.
+        // The café keeps changing: pg-boss retries the job later. The recorded class is forgotten first: a newer job
+        // may have recorded its class while this one's last write landed after it, so whichever job runs next writes
+        // the class again rather than trusting that record.
+        await withCafe(db, job.cafeId, (trx) => trx.updateTable("cafes").set({ google_class_hash: null }).where("id", "=", job.cafeId).execute());
         throw new DeliveryError("The café's card changed while its Google class was written.", "google_class_changed");
       }
       loyaltyClass = now.latest;
