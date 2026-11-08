@@ -1,6 +1,6 @@
 import { apiText, type CardColors } from "@cafe-loyalty/shared";
 import { useId, useState, type CSSProperties } from "react";
-import { Form, FormError, Notice, useFocusWhenInvalid, useSubmit } from "./forms.js";
+import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
 
 const AR = {
@@ -15,7 +15,7 @@ const AR = {
   "Uploading…": "جارٍ الرفع…",
   "Remove logo": "إزالة الشعار",
   "Removing…": "جارٍ الإزالة…",
-  "Saved. Cards in wallets show it within a few minutes.": "تم الحفظ. تظهر على البطاقات في المحافظ خلال دقائق.",
+  "Saved. Cards in wallets show it within a few minutes.": "تم الحفظ. يظهر الشعار على البطاقات في المحافظ خلال دقائق.",
   "Logo removed.": "أُزيل الشعار.",
 } as const;
 
@@ -80,10 +80,14 @@ export function LogoForm({
   const [file, setFile] = useState<File | null>(null);
   // In English, as the API words it, and translated when shown.
   const [problem, setProblem] = useState<string | null>(null);
-  const uploading = useSubmit();
-  const removing = useSubmit();
+  // One request at a time for the form: an upload and a removal never race (submit ignores a second while one is out).
+  const sending = useSubmit();
+  const [action, setAction] = useState<"upload" | "remove">("upload");
   const [said, setSaid] = useState<"saved" | "removed" | null>(null);
-  const error = problem ?? uploading.fieldErrors.image;
+  // Remove goes with the logo: focus then moves to the file field, not to the page (WCAG 2.4.3).
+  const [removals, setRemovals] = useState(0);
+  const field = useFocusOnChange<HTMLDivElement>(removals);
+  const error = problem ?? sending.fieldErrors.image;
   const input = useFocusWhenInvalid(error !== undefined);
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -92,6 +96,9 @@ export function LogoForm({
       aria-label={t("Logo of {name}", { name: cafeName })}
       onSubmit={(event) => {
         event.preventDefault();
+        if (sending.pending) {
+          return;
+        }
         setSaid(null);
         if (file === null || !LOGO_TYPES.includes(file.type)) {
           setProblem(apiText("Upload the logo as a PNG or JPEG image."));
@@ -102,20 +109,24 @@ export function LogoForm({
           return;
         }
         setProblem(null);
-        void uploading.submit(async () => upload(await base64Of(file))).then((result) => {
-          if (result.ok) {
+        setAction("upload");
+        void sending.submit(async () => upload(await base64Of(file))).then((result) => {
+          if (!result.ok) {
+            return;
+          }
+          setSaid("saved");
+          // The file sent is cleared, from the field too, unless another was chosen meanwhile (that one stays, to send).
+          if (input.current?.files?.[0] === file) {
+            input.current.value = "";
             setFile(null);
-            setSaid("saved");
           }
         });
       }}
     >
-      <FormError message={uploading.error ?? removing.error} />
-      <div className="field">
+      <FormError message={sending.error} />
+      <div ref={field} className="field">
         <label htmlFor={id}>{t("Logo")}</label>
-        {/* Keyed by the logo, so a saved upload clears the chosen file. */}
         <input
-          key={logoHash ?? "none"}
           ref={input}
           id={id}
           name="logo"
@@ -139,23 +150,28 @@ export function LogoForm({
         )}
       </div>
       <div className="actions">
-        <button type="submit" aria-disabled={uploading.pending || undefined}>
-          {uploading.pending ? t("Uploading…") : t("Upload logo")}
+        <button type="submit" aria-disabled={sending.pending || undefined}>
+          {sending.pending && action === "upload" ? t("Uploading…") : t("Upload logo")}
         </button>
         {logoHash === null ? null : (
           <button
             type="button"
-            aria-disabled={removing.pending || undefined}
+            aria-disabled={sending.pending || undefined}
             onClick={() => {
+              if (sending.pending) {
+                return;
+              }
               setSaid(null);
-              void removing.submit(remove).then((result) => {
+              setAction("remove");
+              void sending.submit(remove).then((result) => {
                 if (result.ok) {
                   setSaid("removed");
+                  setRemovals((count) => count + 1);
                 }
               });
             }}
           >
-            {removing.pending ? t("Removing…") : t("Remove logo")}
+            {sending.pending && action === "remove" ? t("Removing…") : t("Remove logo")}
           </button>
         )}
       </div>

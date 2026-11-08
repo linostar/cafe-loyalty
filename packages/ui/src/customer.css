@@ -87,7 +87,8 @@ html[lang="en"] .kicker {
 /*
  * The loyalty card: its face with the stamps, then the QR the barista scans. The face is the product's espresso unless
  * the café has colours of its own (set by the operator, at least 4.5:1 apart): the page then sets --card-background,
- * --card-foreground and --card-label on .card-face, in a stylesheet of its own (cardStyle, customer-html.ts).
+ * --card-foreground and --card-label on .card-face, in a stylesheet of its own (cardStyle, customer-html.ts), and
+ * --card-glow to transparent: the copper glow would lower its colours' contrast.
  */
 .loyalty-card {
   margin-block-end: var(--space-4);
@@ -101,13 +102,13 @@ html[lang="en"] .kicker {
 .card-face {
   padding: var(--space-5);
   background: var(--card-background, var(--color-espresso));
-  background: radial-gradient(circle at 100% 0, color-mix(in srgb, var(--color-accent) 45%, transparent), transparent 60%), var(--card-background, var(--color-espresso));
+  background: radial-gradient(circle at 100% 0, var(--card-glow, color-mix(in srgb, var(--color-accent) 45%, transparent)), transparent 60%), var(--card-background, var(--color-espresso));
   color: var(--card-foreground, var(--color-on-espresso));
 }
 
 /* The glow sits at the inline end's top corner, on the other side in right-to-left pages. */
 [dir="rtl"] .card-face {
-  background: radial-gradient(circle at 0 0, color-mix(in srgb, var(--color-accent) 45%, transparent), transparent 60%), var(--card-background, var(--color-espresso));
+  background: radial-gradient(circle at 0 0, var(--card-glow, color-mix(in srgb, var(--color-accent) 45%, transparent)), transparent 60%), var(--card-background, var(--color-espresso));
 }
 
 .card-face .kicker,

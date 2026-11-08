@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Updateable } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeCafeLogo, saveCafeLogo, type CafeLogoImages } from "./branding.js";
 import { withCafe, withLookup } from "./database.js";
 import type { CafesTable } from "./schema.js";
 import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
@@ -9,30 +10,43 @@ let testDb: TestDatabase;
 const cafeA = randomUUID();
 const cafeB = randomUUID();
 
-/** A café with one card whose epoch moved on once: an Apple and a Google pass at epoch 1 (voided) and at epoch 2 (current). */
+/** Each card's name in the markers, by its id. */
+const cardNames = new Map<string, string>();
+
+/**
+ * A café with two cards whose epochs moved on once: each with an Apple and a Google pass at epoch 1 (voided) and at
+ * epoch 2 (current).
+ */
 async function seed(cafeId: string): Promise<void> {
   await withCafe(testDb.app.db, cafeId, async (trx) => {
     await trx.insertInto("cafes").values({ id: cafeId, name: "Café" }).execute();
-    const cardId = randomUUID();
-    await trx.insertInto("cards").values({ id: cardId, cafe_id: cafeId, web_secret_hash: randomBytes(32), privacy_accepted_at: new Date() }).execute();
-    for (const epoch of [1, 2]) {
-      if (epoch === 2) {
-        await trx.updateTable("cards").set({ epoch: 2 }).where("id", "=", cardId).execute();
+    for (const name of ["x", "y"]) {
+      const cardId = randomUUID();
+      cardNames.set(cardId, name);
+      await trx.insertInto("cards").values({ id: cardId, cafe_id: cafeId, web_secret_hash: randomBytes(32), privacy_accepted_at: new Date() }).execute();
+      for (const epoch of [1, 2]) {
+        if (epoch === 2) {
+          await trx.updateTable("cards").set({ epoch: 2 }).where("id", "=", cardId).execute();
+        }
+        await trx.insertInto("apple_passes").values({ cafe_id: cafeId, card_id: cardId, epoch, auth_token_hash: randomBytes(32), layout_version: 1 }).execute();
+        await trx.insertInto("google_passes").values({ cafe_id: cafeId, card_id: cardId, epoch }).execute();
       }
-      await trx.insertInto("apple_passes").values({ cafe_id: cafeId, card_id: cardId, epoch, auth_token_hash: randomBytes(32), layout_version: 1 }).execute();
-      await trx.insertInto("google_passes").values({ cafe_id: cafeId, card_id: cardId, epoch }).execute();
     }
   });
 }
 
-/** Each pass's change marker, by wallet and epoch. */
+/**
+ * Each pass's change marker, by wallet, card and epoch; a current Google pass of either card is `google-current`, since
+ * a change marks just one of them, whichever.
+ */
 async function markers(cafeId: string): Promise<Record<string, string>> {
   return withCafe(testDb.app.db, cafeId, async (trx) => {
-    const apple = await trx.selectFrom("apple_passes").select(["epoch", "updated_xid"]).execute();
-    const google = await trx.selectFrom("google_passes").select(["epoch", "updated_xid"]).execute();
+    const apple = await trx.selectFrom("apple_passes").select(["card_id", "epoch", "updated_xid"]).execute();
+    const google = await trx.selectFrom("google_passes").select(["card_id", "epoch", "updated_xid"]).execute();
+    const key = (wallet: string, pass: { card_id: string; epoch: number }) => `${wallet}-${cardNames.get(pass.card_id) ?? "?"}-${String(pass.epoch)}`;
     const entries: [string, string][] = [
-      ...apple.map((pass): [string, string] => [`apple-${String(pass.epoch)}`, pass.updated_xid]),
-      ...google.map((pass): [string, string] => [`google-${String(pass.epoch)}`, pass.updated_xid]),
+      ...apple.map((pass): [string, string] => [key("apple", pass), pass.updated_xid]),
+      ...google.map((pass): [string, string] => [key("google", pass), pass.updated_xid]),
     ];
     return Object.fromEntries(entries);
   });
@@ -43,12 +57,20 @@ async function marked(change: () => Promise<unknown>): Promise<{ a: string[]; b:
   const before = { a: await markers(cafeA), b: await markers(cafeB) };
   await change();
   const after = { a: await markers(cafeA), b: await markers(cafeB) };
-  const moved = (was: Record<string, string>, now: Record<string, string>) => Object.keys(now).filter((key) => now[key] !== was[key]).sort();
+  const moved = (was: Record<string, string>, now: Record<string, string>) =>
+    Object.keys(now)
+      .filter((key) => now[key] !== was[key])
+      .map((key) => (/^google-.-2$/.test(key) ? "google-current" : key))
+      .sort();
   return { a: moved(before.a, after.a), b: moved(before.b, after.b) };
 }
 
-const CURRENT = ["apple-2", "google-2"];
+/** Every current Apple pass, and one current Google pass (its job writes the café's class; objects show nothing of the café). */
+const CURRENT = ["apple-x-2", "apple-y-2", "google-current"];
 const NONE = { a: [], b: [] };
+
+/** A logo's images (random bytes: the database does not decode them). */
+const images = (): CafeLogoImages => ({ hash: randomBytes(32), square: randomBytes(8), apple1x: randomBytes(8), apple2x: randomBytes(8), apple3x: randomBytes(8) });
 
 beforeAll(async () => {
   testDb = await createTestDatabase();
@@ -87,30 +109,46 @@ describe("a café's branding", () => {
   });
 
   it("marks them when a logo is added, replaced or removed, but not when the same logo is saved again", async () => {
-    const hash = randomBytes(32);
-    const logo = { hash, square: randomBytes(8), apple_1x: randomBytes(8), apple_2x: randomBytes(8), apple_3x: randomBytes(8) };
-    const save = (values: typeof logo) => () =>
-      withCafe(testDb.app.db, cafeA, (trx) =>
-        trx
-          .insertInto("cafe_logos")
-          .values({ cafe_id: cafeA, ...values })
-          .onConflict((conflict) => conflict.column("cafe_id").doUpdateSet(values))
-          .execute(),
-      );
+    const logo = images();
+    const save = (values: CafeLogoImages) => () => withCafe(testDb.app.db, cafeA, (trx) => saveCafeLogo(trx, cafeA, values));
+    const remove = () => withCafe(testDb.app.db, cafeA, (trx) => removeCafeLogo(trx, cafeA));
     expect(await marked(save(logo))).toEqual({ a: CURRENT, b: [] });
     expect(await marked(save(logo))).toEqual(NONE);
     expect(await marked(save({ ...logo, hash: randomBytes(32) }))).toEqual({ a: CURRENT, b: [] });
-    expect(await marked(() => withCafe(testDb.app.db, cafeA, (trx) => trx.deleteFrom("cafe_logos").execute()))).toEqual({ a: CURRENT, b: [] });
+    expect(await marked(remove)).toEqual({ a: CURRENT, b: [] });
+    // Removed already: nothing changes.
+    expect(await marked(remove)).toEqual(NONE);
   });
 
-  it("finds a logo by its hash with no café set, and nothing by another hash", async () => {
-    const hash = randomBytes(32);
-    await withCafe(testDb.app.db, cafeB, (trx) =>
-      trx.insertInto("cafe_logos").values({ cafe_id: cafeB, hash, square: Buffer.from("png"), apple_1x: randomBytes(8), apple_2x: randomBytes(8), apple_3x: randomBytes(8) }).execute(),
-    );
-    const found = await withLookup(testDb.app.db, { secretHash: hash }, (trx) => trx.selectFrom("cafe_logos").select(["cafe_id", "square"]).execute());
-    expect(found).toEqual([{ cafe_id: cafeB, square: Buffer.from("png") }]);
-    const other = await withLookup(testDb.app.db, { secretHash: randomBytes(32) }, (trx) => trx.selectFrom("cafe_logos").select("cafe_id").execute());
-    expect(other).toEqual([]);
+  it("keeps the logo a change replaced or removed as the previous one, until the next change", async () => {
+    const first = images();
+    const second = images();
+    const third = images();
+    const row = () => withCafe(testDb.app.db, cafeB, (trx) => trx.selectFrom("cafe_logos").select(["hash", "previous_hash", "previous_square"]).executeTakeFirstOrThrow());
+    await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, first));
+    expect(await row()).toEqual({ hash: first.hash, previous_hash: null, previous_square: null });
+    await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, second));
+    expect(await row()).toEqual({ hash: second.hash, previous_hash: first.hash, previous_square: first.square });
+    // The same logo again is no change.
+    await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, second));
+    expect(await row()).toEqual({ hash: second.hash, previous_hash: first.hash, previous_square: first.square });
+    expect(await withCafe(testDb.app.db, cafeB, (trx) => removeCafeLogo(trx, cafeB))).toEqual(second.hash);
+    expect(await row()).toEqual({ hash: null, previous_hash: second.hash, previous_square: second.square });
+    expect(await withCafe(testDb.app.db, cafeB, (trx) => removeCafeLogo(trx, cafeB))).toBeUndefined();
+    // A logo after none: nothing was shown before it.
+    await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, third));
+    expect(await row()).toEqual({ hash: third.hash, previous_hash: null, previous_square: null });
+    await withCafe(testDb.app.db, cafeB, (trx) => trx.deleteFrom("cafe_logos").execute());
+  });
+
+  it("finds a logo by its hash or its previous hash with no café set, and nothing by another hash", async () => {
+    const first = { ...images(), square: Buffer.from("first") };
+    const second = { ...images(), square: Buffer.from("second") };
+    await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, first));
+    await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, second));
+    const lookup = (hash: Buffer) => withLookup(testDb.app.db, { secretHash: hash }, (trx) => trx.selectFrom("cafe_logos").select(["cafe_id", "square", "previous_square"]).execute());
+    expect(await lookup(second.hash)).toEqual([{ cafe_id: cafeB, square: Buffer.from("second"), previous_square: Buffer.from("first") }]);
+    expect(await lookup(first.hash)).toEqual([{ cafe_id: cafeB, square: Buffer.from("second"), previous_square: Buffer.from("first") }]);
+    expect(await lookup(randomBytes(32))).toEqual([]);
   });
 });

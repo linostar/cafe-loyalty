@@ -33,10 +33,16 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
 /** The Apple logo.png images of a café's logo, or undefined without one (the pass then has the product's). */
 export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string): Promise<{ apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined> {
   const logo = await trx.selectFrom("cafe_logos").select(["apple_1x", "apple_2x", "apple_3x"]).where("cafe_id", "=", cafeId).executeTakeFirst();
-  return logo === undefined ? undefined : { apple1x: logo.apple_1x, apple2x: logo.apple_2x, apple3x: logo.apple_3x };
+  // A removed logo leaves its row, with no images.
+  return logo?.apple_1x == null || logo.apple_2x === null || logo.apple_3x === null
+    ? undefined
+    : { apple1x: logo.apple_1x, apple2x: logo.apple_2x, apple3x: logo.apple_3x };
 }
 
-/** Sets or replaces a café's logo, inside its withCafe; its triggers mark the café's passes changed (migration 0024). */
+/**
+ * Sets or replaces a café's logo, inside its withCafe; its triggers mark the café's passes changed and keep the logo it
+ * replaces served until the next change (migration 0024).
+ */
 export async function saveCafeLogo(trx: Transaction<Database>, cafeId: string, images: CafeLogoImages): Promise<void> {
   const values = { hash: images.hash, square: images.square, apple_1x: images.apple1x, apple_2x: images.apple2x, apple_3x: images.apple3x };
   await trx
@@ -46,10 +52,20 @@ export async function saveCafeLogo(trx: Transaction<Database>, cafeId: string, i
     .execute();
 }
 
-/** Removes a café's logo (its cards go back to the product's); true when it had one. */
-export async function removeCafeLogo(trx: Transaction<Database>, cafeId: string): Promise<boolean> {
-  const removed = await trx.deleteFrom("cafe_logos").where("cafe_id", "=", cafeId).executeTakeFirst();
-  return removed.numDeletedRows > 0n;
+/**
+ * Removes a café's logo (its cards go back to the product's), still served as the previous one until the next change;
+ * the removed logo's hash, or undefined when it had none.
+ */
+export async function removeCafeLogo(trx: Transaction<Database>, cafeId: string): Promise<Buffer | undefined> {
+  const removed = await trx
+    .updateTable("cafe_logos")
+    .set({ hash: null, square: null, apple_1x: null, apple_2x: null, apple_3x: null })
+    .where("cafe_id", "=", cafeId)
+    .where("hash", "is not", null)
+    // The row as keep_previous_logo left it: the removed logo is now the previous one.
+    .returning("previous_hash")
+    .executeTakeFirst();
+  return removed?.previous_hash ?? undefined;
 }
 
 /** Where a café's logo is served, publicly (Google fetches it, the web card shows it): by its hash, naming no café. */

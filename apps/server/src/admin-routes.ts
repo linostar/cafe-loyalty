@@ -111,7 +111,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     plan: cafe.plan,
     createdAt: cafe.created_at.toISOString(),
     cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
-    logoHash: logo?.hash.toString("hex") ?? null,
+    logoHash: logo?.hash?.toString("hex") ?? null,
     paidCents: Number(paid.total),
     payments: payments.map((payment) => ({
       id: payment.id,

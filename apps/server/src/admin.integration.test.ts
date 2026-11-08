@@ -497,7 +497,7 @@ describe("a café's name, card colours and logo", () => {
     ]);
   });
 
-  it("get a logo from the operator or the owner, served by its hash on both addresses, until it is replaced or removed", async () => {
+  it("get a logo from the operator or the owner, served by its hash on both addresses until the change after the one that replaced or removed it", async () => {
     const app = await adminApp();
     const set = await app.asOperator("PUT", `/api/admin/cafes/${app.owner.cafeId}/logo`, { image: await pngLogo() });
     expect(set.statusCode).toBe(200);
@@ -512,13 +512,18 @@ describe("a café's name, card colours and logo", () => {
     expect(forDashboard.statusCode).toBe(200);
     expect(forDashboard.rawPayload).toEqual(served.rawPayload);
 
-    // The owner replaces it: the old address is gone.
+    // The owner replaces it: the old address still serves the old image (Google's class and open web cards show it
+    // until their update arrives), until the next change.
     const replaced = await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo(200, 200, 90) });
     expect(replaced.statusCode).toBe(200);
     const second = replaced.json<{ cafe: { logoHash: string } }>().cafe.logoHash;
     expect(second).not.toBe(first);
-    expect((await app.app.inject({ method: "GET", url: `/logos/${first}.png` })).statusCode).toBe(404);
-    expect((await app.app.inject({ method: "GET", url: `/logos/${second}.png` })).statusCode).toBe(200);
+    const previous = await app.app.inject({ method: "GET", url: `/logos/${first}.png` });
+    expect(previous.statusCode).toBe(200);
+    expect(previous.rawPayload).toEqual(served.rawPayload);
+    const current = await app.app.inject({ method: "GET", url: `/logos/${second}.png` });
+    expect(current.statusCode).toBe(200);
+    expect(createHash("sha256").update(current.rawPayload).digest("hex")).toBe(second);
     expect((await app.app.inject({ method: "GET", url: "/logos/not-a-hash.png" })).statusCode).toBe(404);
 
     const notImage = await app.asOwner("PUT", "/api/cafe/logo", { image: Buffer.from("not an image").toString("base64") });
@@ -530,7 +535,9 @@ describe("a café's name, card colours and logo", () => {
 
     const removed = await app.asOperator("DELETE", `/api/admin/cafes/${app.owner.cafeId}/logo`);
     expect(removed.json()).toMatchObject({ logoHash: null });
-    expect((await app.app.inject({ method: "GET", url: `/logos/${second}.png` })).statusCode).toBe(404);
+    // The removed logo is the previous one now; the one before it is gone.
+    expect((await app.app.inject({ method: "GET", url: `/logos/${second}.png` })).statusCode).toBe(200);
+    expect((await app.app.inject({ method: "GET", url: `/logos/${first}.png` })).statusCode).toBe(404);
     // Removing it again changes nothing.
     expect((await app.asOwner("DELETE", "/api/cafe/logo")).json()).toMatchObject({ cafe: { logoHash: null } });
 
@@ -541,7 +548,7 @@ describe("a café's name, card colours and logo", () => {
     expect(rows).toEqual([
       { action: "cafe.logo_set", actor_type: "operator", changes: { hash: first } },
       { action: "cafe.logo_set", actor_type: "owner", changes: { hash: second } },
-      { action: "cafe.logo_removed", actor_type: "operator", changes: {} },
+      { action: "cafe.logo_removed", actor_type: "operator", changes: { hash: second } },
     ]);
   });
 });

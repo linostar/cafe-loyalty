@@ -16,7 +16,11 @@ import {
 } from "@cafe-loyalty/db";
 import { sql, type Kysely } from "kysely";
 import type { Logger } from "pino";
+import { DeliveryError } from "./delivery.js";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
+
+/** What the café's class was last written as (cafes.google_class_hash): a class built differently is written again. */
+const classHashOf = (loyaltyClass: unknown): Buffer => createHash("sha256").update(JSON.stringify(loyaltyClass)).digest();
 
 /** What the worker needs to build Google objects as the server does: the issuer, the site (logo, feedback links) and the QR keys. */
 export interface GooglePassSettings {
@@ -76,13 +80,37 @@ export async function writeGooglePass(
   }
   const { pass, cafe, program } = found;
   // The café's class as it now is: written again first when the café's name, logo or colour changed since the last
-  // one written (the change also marked this pass, so its write follows), and recorded once Google has it. Before the
-  // offer is recorded as told below, so a failed class write never costs the card its notification.
-  const loyaltyClass = googleLoyaltyClass(settings.issuerId, cafe, settings.publicUrl);
-  const classHash = createHash("sha256").update(JSON.stringify(loyaltyClass)).digest();
+  // one written (the change also marked one of its passes, whose job writes it), and recorded once Google has it.
+  // Before the offer is recorded as told below, so a failed class write never costs the card its notification.
+  let loyaltyClass = googleLoyaltyClass(settings.issuerId, cafe, settings.publicUrl);
+  let classHash = classHashOf(loyaltyClass);
   if (found.classHash?.equals(classHash) !== true) {
-    await wallet.saveClass(loyaltyClass);
-    await withCafe(db, job.cafeId, (trx) => trx.updateTable("cafes").set({ google_class_hash: classHash }).where("id", "=", job.cafeId).execute());
+    // Another job of the café may write a class built before or after this one, its write landing at Google in any
+    // order. Rather than hold a transaction (and the café's row) open across Google's answer, each job reads the café
+    // again once its write has landed: if the class it wrote is not the café's now, it writes the current one. So the
+    // last write to land is always followed by a check that sees the latest change (a change after that check marks
+    // a pass again, whose job writes it).
+    for (let attempt = 1; ; attempt += 1) {
+      await wallet.saveClass(loyaltyClass);
+      const written = classHash;
+      const now = await withCafe(db, job.cafeId, async (trx) => {
+        const latest = googleLoyaltyClass(settings.issuerId, await loadCafeBranding(trx, job.cafeId), settings.publicUrl);
+        const latestHash = classHashOf(latest);
+        if (latestHash.equals(written)) {
+          await trx.updateTable("cafes").set({ google_class_hash: written }).where("id", "=", job.cafeId).execute();
+        }
+        return { latest, latestHash };
+      });
+      if (now.latestHash.equals(written)) {
+        break;
+      }
+      if (attempt === 3) {
+        // The café keeps changing: pg-boss retries the job later.
+        throw new DeliveryError("The café's card changed while its Google class was written.", "google_class_changed");
+      }
+      loyaltyClass = now.latest;
+      classHash = now.latestHash;
+    }
     logger.info("google class written");
   }
   const current = pass.epoch === pass.card_epoch;

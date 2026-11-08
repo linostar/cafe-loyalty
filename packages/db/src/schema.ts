@@ -461,16 +461,21 @@ export interface ApplePassRegistrationsTable {
   updated_at: UpdatedAt;
 }
 
-/** A café's logo in the sizes its cards use; hash is the SHA-256 of the square PNG, served at /logos/<hash>.png. */
+/**
+ * A café's logo in the sizes its cards use; hash is the SHA-256 of the square PNG, served at /logos/<hash>.png. All
+ * null once removed. The previous logo, kept by a trigger on each change, is still served until the next one.
+ */
 export interface CafeLogosTable {
   cafe_id: ColumnType<string, string, never>;
-  hash: ColumnType<Buffer, Buffer, Buffer>;
+  hash: ColumnType<Buffer | null, Buffer, Buffer | null>;
   /** A square PNG (the Google class and the web card). */
-  square: ColumnType<Buffer, Buffer, Buffer>;
+  square: ColumnType<Buffer | null, Buffer, Buffer | null>;
   /** Apple's logo.png at 1x, 2x and 3x. */
-  apple_1x: ColumnType<Buffer, Buffer, Buffer>;
-  apple_2x: ColumnType<Buffer, Buffer, Buffer>;
-  apple_3x: ColumnType<Buffer, Buffer, Buffer>;
+  apple_1x: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  apple_2x: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  apple_3x: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  previous_hash: ColumnType<Buffer | null, never, never>;
+  previous_square: ColumnType<Buffer | null, never, never>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -709,7 +714,7 @@ export const TABLE_COLUMNS = {
     "offer_notified_at",
     "created_at",
   ],
-  cafe_logos: ["cafe_id", "hash", "square", "apple_1x", "apple_2x", "apple_3x", "created_at", "updated_at"],
+  cafe_logos: ["cafe_id", "hash", "square", "apple_1x", "apple_2x", "apple_3x", "previous_hash", "previous_square", "created_at", "updated_at"],
   operators: ["id", "email", "password_hash", "password_changed_at", "created_at"],
   operator_sessions: ["id", "operator_id", "token_hash", "created_at", "last_seen_at", "expires_at"],
   cafe_payments: ["id", "cafe_id", "amount_cents", "paid_on", "method", "reference", "operator_id", "created_at"],

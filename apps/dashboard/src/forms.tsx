@@ -19,6 +19,8 @@ interface FieldProps {
   onChange: (value: string) => void;
   /** Help shown under the field, such as a length rule (an example in another language marked with its `lang`). */
   hint?: ReactNode;
+  /** The id of text elsewhere in the form that describes the field too, such as a rule several fields share; read first. */
+  describedBy?: string;
   error?: string | undefined;
   minLength?: number;
   maxLength?: number;
@@ -112,12 +114,30 @@ const FIELD_AR = { Show: "إظهار" } as const;
  * A password or PIN has a Show toggle (aria-pressed; named only "Show", so the field's label still finds just the input,
  * and described by that label, so repeated fields' toggles differ).
  */
-export function Field({ label, name, type, autoComplete, value, onChange, hint, error, minLength, maxLength, min, max, inputMode, lang, optional = false, onKeyDown }: FieldProps) {
+export function Field({
+  label,
+  name,
+  type,
+  autoComplete,
+  value,
+  onChange,
+  hint,
+  describedBy: described,
+  error,
+  minLength,
+  maxLength,
+  min,
+  max,
+  inputMode,
+  lang,
+  optional = false,
+  onKeyDown,
+}: FieldProps) {
   const t = useT(FIELD_AR);
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
-  const describedBy = [hint === undefined ? null : hintId, error === undefined ? null : errorId].filter((part) => part !== null).join(" ");
+  const describedBy = [described ?? null, hint === undefined ? null : hintId, error === undefined ? null : errorId].filter((part) => part !== null).join(" ");
   const api = useApiText();
   const input = useFocusWhenInvalid(error !== undefined);
   const [shown, setShown] = useState(false);

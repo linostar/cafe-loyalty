@@ -291,6 +291,7 @@ function CardForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
         name={key}
         type="color"
         value={colors[key]}
+        describedBy={hintId}
         onChange={(value) => {
           setColors((current) => ({ ...current, [key]: value }));
           setProblems((current) => Object.fromEntries(Object.entries(current).filter(([field]) => field !== path)));

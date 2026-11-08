@@ -86,14 +86,15 @@ export const CUSTOMER_CSP = customerCsp();
 
 /**
  * The stylesheet giving a card face its café's colours (customer.css reads them), or undefined for a café on the
- * product's colours, whose card stays as it always looked. Only #rrggbb values (as the database keeps them) go in.
+ * product's colours, whose card stays as it always looked. Only #rrggbb values (as the database keeps them) go in. The
+ * copper glow goes: over the café's own background it would lower the 4.5:1 the operator was promised.
  */
 export function cardStyle(colors: CardColors): string | undefined {
   const isDefault = colors.background === DEFAULT_CARD_COLORS.background && colors.foreground === DEFAULT_CARD_COLORS.foreground && colors.label === DEFAULT_CARD_COLORS.label;
   if (isDefault || ![colors.background, colors.foreground, colors.label].every((color) => /^#[0-9a-f]{6}$/.test(color))) {
     return undefined;
   }
-  return `.card-face{--card-background:${colors.background};--card-foreground:${colors.foreground};--card-label:${colors.label}}`;
+  return `.card-face{--card-background:${colors.background};--card-foreground:${colors.foreground};--card-label:${colors.label};--card-glow:transparent}`;
 }
 
 /** Strings for the customer pages. `{name}` style placeholders are filled by `t`. */

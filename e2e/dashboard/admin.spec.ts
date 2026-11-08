@@ -805,7 +805,10 @@ test("names the café and picks its card colours, checked for contrast, with a l
   // Text nearly the background's colour: refused here, by its field, before anything is sent.
   await form.getByLabel("Text colour").fill("#55302e");
   await form.getByRole("button", { name: "Save card" }).click();
-  await expect(form.getByLabel("Text colour")).toHaveAccessibleDescription("Pick a text colour that stands out more from the background: at least 4.5 to 1.");
+  // Read with the rule, then its own message.
+  await expect(form.getByLabel("Text colour")).toHaveAccessibleDescription(
+    /^Text and labels need at least 4\.5 to 1 contrast .* Pick a text colour that stands out more from the background: at least 4\.5 to 1\.$/,
+  );
   await expect(form.getByLabel("Text colour")).toBeFocused();
   expect(sent).toEqual([]);
   await form.getByLabel("Text colour").fill("#ffffff");
@@ -836,4 +839,5 @@ test("names the café and picks its card colours, checked for contrast, with a l
   expect(sent[2]?.method).toBe("DELETE");
   await expect(face.locator("img")).toHaveCount(0);
   await expect(logo.getByRole("button", { name: "Remove logo" })).toHaveCount(0);
+  await expect(logo.getByLabel("Logo")).toBeFocused();
 });

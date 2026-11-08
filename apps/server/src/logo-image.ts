@@ -12,6 +12,11 @@ export const LOGO_UPLOADS_PER_HOUR = 20;
 export const LOGO_MIN_SIDE = 64;
 /** The square logo's side: Google's recommended class logo size, also shown on the web card. */
 export const LOGO_SQUARE_SIDE = 660;
+/**
+ * The largest image cafe_logos stores (its CHECKs, migration 0024): the worst case, a square of noise PNG cannot
+ * compress, is 660 × 660 × 4 bytes and a little, about 1.75 MB; Apple's largest is 480 × 150 × 4.
+ */
+export const LOGO_STORED_MAX_BYTES = 2 * 1024 * 1024;
 /** Apple's logo area, in points: the image is fitted inside it at 1x, 2x and 3x. */
 const APPLE_LOGO_POINTS = { width: 160, height: 50 };
 /** Decoding stops on anything larger, so a small file that unpacks to a huge image is refused, not decoded. */

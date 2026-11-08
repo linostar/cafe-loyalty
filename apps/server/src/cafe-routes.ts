@@ -80,7 +80,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       setupFinishedAt: cafe.setup_finished_at?.toISOString() ?? null,
       signupQrPrintedAt: cafe.signup_qr_printed_at?.toISOString() ?? null,
       cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
-      logoHash: logo?.hash.toString("hex") ?? null,
+      logoHash: logo?.hash?.toString("hex") ?? null,
     },
     program:
       program === undefined

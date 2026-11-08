@@ -390,7 +390,7 @@ describe("web card", () => {
     await context.admin.query("UPDATE app.cafes SET card_background = '#1f5a85', card_foreground = '#ffffff', card_label = '#e5eff7' WHERE id = $1", [owner.cafeId]);
     await context.admin.query("INSERT INTO app.cafe_logos (cafe_id, hash, square, apple_1x, apple_2x, apple_3x) VALUES ($1, $2, $3, $3, $3, $3)", [owner.cafeId, hash, Buffer.from([0])]);
     const branded = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
-    const style = ".card-face{--card-background:#1f5a85;--card-foreground:#ffffff;--card-label:#e5eff7}";
+    const style = ".card-face{--card-background:#1f5a85;--card-foreground:#ffffff;--card-label:#e5eff7;--card-glow:transparent}";
     expect(branded.body).toContain(`<style>${style}</style>`);
     expect(branded.body).toContain(`<img class="card-logo" src="/logos/${hash.toString("hex")}.png" alt="" width="56" height="56">`);
     expect(String(branded.headers["content-security-policy"])).toContain(`'sha256-${createHash("sha256").update(style).digest("base64")}'`);

@@ -253,7 +253,7 @@ test("saves the minimum margin campaigns must keep", async ({ page }) => {
   await expect(margin.getByRole("status")).toHaveText("");
 });
 
-test("shows the card in the café's colours and uploads the owner's logo, which the preview then shows", async ({ page }) => {
+test("shows the card in the café's colours and uploads the owner's logo, which the preview then shows, then removes it", async ({ page }) => {
   const HASH = "cd".repeat(32);
   const png = await readFile(ICON_PNG_PATH);
   const colours = { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" };
@@ -266,6 +266,11 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
     "PUT /api/cafe/logo": async (route) => {
       uploads.push(json(route));
       setup = { ...setup, cafe: { ...setup.cafe, logoHash: HASH } };
+      await route.fulfill({ json: setup });
+    },
+    "DELETE /api/cafe/logo": async (route) => {
+      uploads.push("removed");
+      setup = { ...setup, cafe: { ...setup.cafe, logoHash: null } };
       await route.fulfill({ json: setup });
     },
     [`GET /api/logos/${HASH}.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
@@ -281,6 +286,14 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
   await expect(logo.getByRole("status")).toHaveText("Saved. Cards in wallets show it within a few minutes.");
   expect(uploads).toEqual([{ image: png.toString("base64") }]);
   await expect(section.locator(".card-preview-face img")).toHaveAttribute("src", `/api/logos/${HASH}.png`);
+
+  await logo.getByRole("button", { name: "Remove logo" }).click();
+  await expect(logo.getByRole("status")).toHaveText("Logo removed.");
+  expect(uploads).toEqual([{ image: png.toString("base64") }, "removed"]);
+  await expect(section.locator(".card-preview-face img")).toHaveCount(0);
+  await expect(logo.getByRole("button", { name: "Remove logo" })).toHaveCount(0);
+  // The button went with the logo: the keyboard is on the file field, not dropped to the page (WCAG 2.4.3).
+  await expect(logo.getByLabel("Logo")).toBeFocused();
 });
 
 test("says nothing is saved when the field changed while its save was on its way", async ({ page }) => {

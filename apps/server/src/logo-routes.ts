@@ -22,17 +22,26 @@ export function registerLogoFiles(app: FastifyInstance, db: Kysely<Database>, op
   app.get("/logos/:file", { ...(options.config === undefined ? {} : { config: options.config }) }, async (request, reply) => {
     const params = fileParams.safeParse(request.params);
     const hash = params.success ? Buffer.from(params.data.file.slice(0, 64), "hex") : undefined;
-    const logo =
+    // The current logo, or the one it replaced (Google's class and open web cards show it until their update arrives).
+    const found =
       hash === undefined
         ? undefined
-        : await withLookup(db, { secretHash: hash }, (trx) => trx.selectFrom("cafe_logos").select("square").where("hash", "=", hash).limit(1).executeTakeFirst());
-    if (logo === undefined) {
+        : await withLookup(db, { secretHash: hash }, (trx) =>
+            trx
+              .selectFrom("cafe_logos")
+              .select(["hash", "square", "previous_square"])
+              .where((where) => where.or([where("hash", "=", hash), where("previous_hash", "=", hash)]))
+              .limit(1)
+              .executeTakeFirst(),
+          );
+    const logo = found === undefined ? undefined : hash !== undefined && found.hash?.equals(hash) === true ? found.square : found.previous_square;
+    if (logo === undefined || logo === null) {
       return reply.code(404).header("content-type", "text/plain; charset=utf-8").send("Not found");
     }
     if (options.immutable) {
       void reply.header("cache-control", "public, max-age=31536000, immutable");
     }
-    return reply.code(200).header("content-type", "image/png").header("x-content-type-options", "nosniff").send(logo.square);
+    return reply.code(200).header("content-type", "image/png").header("x-content-type-options", "nosniff").send(logo);
   });
 }
 
@@ -42,9 +51,10 @@ export async function setLogo(trx: Transaction<Database>, cafeId: string, images
   await audit(trx, { cafeId, ...actor, action: "cafe.logo_set", entityType: "cafe", entityId: cafeId, changes: { hash: images.hash.toString("hex") } });
 }
 
-/** Removes a café's logo, its cards going back to the product's; audited when there was one. */
+/** Removes a café's logo, its cards going back to the product's; audited, with the removed image's hash, when there was one. */
 export async function unsetLogo(trx: Transaction<Database>, cafeId: string, actor: LogoActor): Promise<void> {
-  if (await removeCafeLogo(trx, cafeId)) {
-    await audit(trx, { cafeId, ...actor, action: "cafe.logo_removed", entityType: "cafe", entityId: cafeId, changes: {} });
+  const removed = await removeCafeLogo(trx, cafeId);
+  if (removed !== undefined) {
+    await audit(trx, { cafeId, ...actor, action: "cafe.logo_removed", entityType: "cafe", entityId: cafeId, changes: { hash: removed.toString("hex") } });
   }
 }
