@@ -50,7 +50,7 @@ const AR = {
   "Plan of {name}": "خطة {name}",
   "Save plan": "حفظ الخطة",
   "Choose another plan to save.": "اختر خطة أخرى لحفظها.",
-  "Year-month-day, such as {day}.": "سنة-شهر-يوم، مثل {day}.",
+  "Pick the day the café paid.": "اختر اليوم الذي دفع فيه المقهى.",
   "Enter an amount in dollars over 0, such as 25 or 25.00.": "أدخل مبلغاً بالدولار أكبر من 0، مثل 25 أو 25.00.",
   "Recorded {amount} from {name}, paid by {method} on {day}.": "سُجّل مبلغ {amount} من {name}، بتاريخ {day}، طريقة الدفع: {method}.",
   "Record a payment": "تسجيل دفعة",
@@ -269,7 +269,12 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   const [reference, setReference] = useState("");
   // Kept until the payment is recorded, so sending the form again after a lost response records it once.
   const [paymentId, setPaymentId] = useState(() => crypto.randomUUID());
-  const [problems, setProblems] = useState<Record<string, string>>({});
+  // Built when shown, so a language switch after a failed send changes them too.
+  const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
+  // A field's own message goes once it is edited, so a corrected field is not still marked wrong.
+  const clearProblem = (name: string) => {
+    setProblems((shown) => Object.fromEntries(Object.entries(shown).filter(([field]) => field !== name)));
+  };
   const titleId = `payment-title-${cafe.id}`;
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
@@ -278,8 +283,12 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
       onSubmit={(event) => {
         event.preventDefault();
         const amountCents = parseUsdInput(amount);
-        if (amountCents === null || amountCents < 1) {
-          setProblems({ amountCents: t("Enter an amount in dollars over 0, such as 25 or 25.00.") });
+        const found: Record<string, Later<typeof AR>> = {};
+        if (amountCents === null || amountCents < 1) found.amountCents = (say) => say("Enter an amount in dollars over 0, such as 25 or 25.00.");
+        // The picker's value is already the server's YYYY-MM-DD; it is "" when cleared or only partly entered.
+        if (paidOn === "") found.paidOn = (say) => say("Pick the day the café paid.");
+        if (amountCents === null || amountCents < 1 || paidOn === "") {
+          setProblems(found);
           return;
         }
         setProblems({});
@@ -321,13 +330,13 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         type="text"
         inputMode="decimal"
         value={amount}
-        onChange={setAmount}
-        error={problems.amountCents ?? fieldErrors.amountCents}
+        onChange={(value) => {
+          setAmount(value);
+          clearProblem("amountCents");
+        }}
+        error={problems.amountCents?.(t, lang) ?? fieldErrors.amountCents}
       />
-      {/*
-        Text, not a date picker: the picker draws the day in the computer's own date format, which can show a weekday
-        it leaves blank (", 15 Oct 2026") or a time; the server checks the day and says how to write it.
-      */}
+      {/* A date picker offering the days the server takes (2026 up to today); it still checks them and says why. */}
       <Field
         label={
           <>
@@ -336,12 +345,15 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
           </>
         }
         name="paidOn"
-        type="text"
+        type="date"
+        min="2026-01-01"
+        max={today()}
         value={paidOn}
-        onChange={setPaidOn}
-        // The example is a placeholder, isolated in Arabic: after Arabic letters its digits would otherwise read right to left.
-        hint={t("Year-month-day, such as {day}.", { day: "2026-10-01" })}
-        error={fieldErrors.paidOn}
+        onChange={(value) => {
+          setPaidOn(value);
+          clearProblem("paidOn");
+        }}
+        error={problems.paidOn?.(t, lang) ?? fieldErrors.paidOn}
       />
       <fieldset>
         <legend>
