@@ -12,6 +12,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
+import { CardPreview, LogoForm } from "./card-branding.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import type { UnsavedChanges } from "./unsaved-changes.js";
 import { useLang, useT, type Later, type Translate } from "./i18n.js";
@@ -89,6 +90,8 @@ const AR = {
   Menu: "القائمة",
   "Offers and welcome-back": "العروض وعرض العودة",
   "Signup and reviews": "التسجيل والتقييمات",
+  Card: "البطاقة",
+  "The card's colours are set by the service's operator: ask them to change them.": "يحدّد مشغّل الخدمة ألوان البطاقة: اطلب منه تغييرها.",
   "No order types yet. Add what baristas stamp, such as an espresso drink.": "لا أنواع طلبات بعد. أضف ما يمنح الباريستا عليه أختاماً، مثل مشروب إسبريسو.",
 } as const;
 
@@ -97,7 +100,7 @@ const STAMPS = {
   ar: { zero: "بلا أختام", one: "ختم واحد", two: "ختمان", few: "{n} أختام", many: "{n} ختماً", other: "{n} ختم" },
 };
 
-type Save = (method: "PATCH" | "PUT" | "POST", path: string, body: unknown) => Promise<boolean>;
+type Save = (method: "PATCH" | "PUT" | "POST" | "DELETE", path: string, body: unknown) => Promise<boolean>;
 
 function CafeNameForm({ name, save }: { name: string; save: Save }) {
   const t = useT(AR);
@@ -621,6 +624,7 @@ function SignupQr() {
  */
 const SECTIONS = [
   ["cafe", "Name"],
+  ["card", "Card"],
   ["program", "Program"],
   ["menu", "Menu"],
   ["offers", "Offers and welcome-back"],
@@ -670,6 +674,18 @@ export function CafePage() {
       {/* One section per part of the café, each card full width under the one before (never side by side). */}
       <SettingsSection id="cafe" title="Name">
         <CafeNameForm name={setup.cafe.name} save={save} />
+      </SettingsSection>
+      <SettingsSection id="card" title="Card">
+        <div className="card">
+          <CardPreview name={setup.cafe.name} colors={setup.cafe.cardColors} logoHash={setup.cafe.logoHash} />
+          <p className="hint">{t("The card's colours are set by the service's operator: ask them to change them.")}</p>
+          <LogoForm
+            cafeName={setup.cafe.name}
+            logoHash={setup.cafe.logoHash}
+            upload={(image) => save("PUT", "/api/cafe/logo", { image })}
+            remove={() => save("DELETE", "/api/cafe/logo", {})}
+          />
+        </div>
       </SettingsSection>
       <SettingsSection id="program" title="Program">
         <ProgramForm program={setup.program} save={save} />

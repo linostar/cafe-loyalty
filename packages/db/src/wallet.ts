@@ -1,6 +1,7 @@
 import { createPrivateKey, createSign } from "node:crypto";
 import { formatUsd } from "@cafe-loyalty/shared";
 import { z } from "zod";
+import { cafeLogoPath, type CafeBranding } from "./branding.js";
 import { offerKey, type CardOffer } from "./offers.js";
 
 /**
@@ -99,7 +100,7 @@ export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: stri
   };
 }
 
-/** The passes' background colour (RGB), on Apple and Google alike. */
+/** The product's espresso (RGB): its Google class logo, for cafés without a logo of their own. */
 export const PASS_BACKGROUND = [74, 44, 42] as const;
 
 /** Google Wallet settings (GOOGLE_WALLET_* variables). */
@@ -167,15 +168,18 @@ const textModule = (id: string, header: ReturnType<typeof localized>, body: Retu
   localizedBody: body,
 });
 
-/** A café's loyalty class: its name and logo. Written when it does not exist yet, never updated afterwards. */
-export function googleLoyaltyClass(issuerId: string, cafe: { id: string; name: string }, logoUrl: string) {
+/**
+ * A café's loyalty class: its name, logo (its own, or the product's) and card background; Google picks the text colour.
+ * Written with the café's first object, and again by the worker whenever it is built differently (cafes.google_class_hash).
+ */
+export function googleLoyaltyClass(issuerId: string, cafe: Pick<CafeBranding, "id" | "name" | "colors" | "logoHash">, publicUrl: string) {
   return {
     id: googleClassId(issuerId, cafe.id),
     issuerName: cafe.name,
     programName: PASS_TEXT.en.passProgramName,
     localizedProgramName: passText("passProgramName"),
-    programLogo: { sourceUri: { uri: logoUrl } },
-    hexBackgroundColor: `#${PASS_BACKGROUND.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`,
+    programLogo: { sourceUri: { uri: cafe.logoHash === null ? googleLogoUrl(publicUrl) : new URL(cafeLogoPath(cafe.logoHash), publicUrl).toString() } },
+    hexBackgroundColor: cafe.colors.background,
     reviewStatus: "UNDER_REVIEW",
   };
 }

@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import {
   feedbackUrl,
-  googleLogoUrl,
   googleLoyaltyClass,
   googleLoyaltyObject,
   googleOfferMessage,
+  loadCafeBranding,
   loadCardOffer,
   loadFeedbackRequest,
   offerKey,
@@ -53,7 +54,8 @@ export async function writeGooglePass(
     }
     return {
       pass,
-      cafe: await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", job.cafeId).executeTakeFirstOrThrow(),
+      cafe: await loadCafeBranding(trx, job.cafeId),
+      classHash: (await trx.selectFrom("cafes").select("google_class_hash").where("id", "=", job.cafeId).executeTakeFirstOrThrow()).google_class_hash,
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, pass.card_id),
       feedback: await loadFeedbackRequest(trx, pass.card_id),
@@ -73,6 +75,16 @@ export async function writeGooglePass(
     return { result: "gone" };
   }
   const { pass, cafe, program } = found;
+  // The café's class as it now is: written again first when the café's name, logo or colour changed since the last
+  // one written (the change also marked this pass, so its write follows), and recorded once Google has it. Before the
+  // offer is recorded as told below, so a failed class write never costs the card its notification.
+  const loyaltyClass = googleLoyaltyClass(settings.issuerId, cafe, settings.publicUrl);
+  const classHash = createHash("sha256").update(JSON.stringify(loyaltyClass)).digest();
+  if (found.classHash?.equals(classHash) !== true) {
+    await wallet.saveClass(loyaltyClass);
+    await withCafe(db, job.cafeId, (trx) => trx.updateTable("cafes").set({ google_class_hash: classHash }).where("id", "=", job.cafeId).execute());
+    logger.info("google class written");
+  }
   const current = pass.epoch === pass.card_epoch;
   const offer = current ? found.offers.offer : undefined;
   // Only a pass that existed when the offer was announced (one saved since, on a new phone, shows it silently), and
@@ -98,7 +110,7 @@ export async function writeGooglePass(
   });
   let result: SaveResult;
   try {
-    result = await wallet.save(googleLoyaltyClass(settings.issuerId, cafe, googleLogoUrl(settings.publicUrl)), object, current, notify ? googleOfferMessage(offer) : undefined);
+    result = await wallet.save(loyaltyClass, object, current, notify ? googleOfferMessage(offer) : undefined);
   } catch (error) {
     if (notify) {
       // Recorded as told already, so the retry writes the offer silently: unless Google applied the write and only its

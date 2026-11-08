@@ -1,7 +1,9 @@
 import {
   CAFE_PLANS,
+  MIN_CARD_CONTRAST,
   OPERATOR_PASSWORD_MIN_LENGTH,
   PAYMENT_METHODS,
+  contrastRatio,
   adminCafeSchema,
   adminCafesSchema,
   adminInviteSchema,
@@ -13,12 +15,14 @@ import {
   type AdminInvite,
   type AdminPayment,
   type CafePlan,
+  type CardColors,
   type OperatorSession,
   type PaymentMethod,
   type Lang,
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale } from "./api.js";
+import { CardPreview, LogoForm } from "./card-branding.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useSubmit, type SubmitState } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
@@ -27,6 +31,13 @@ import { PageStatus, SessionEndedContext, useApiData } from "./session.js";
 import { useUnsavedChanges } from "./unsaved-changes.js";
 
 const AR = {
+  "Card and name": "البطاقة والاسم",
+  "Background colour": "لون الخلفية",
+  "Text colour": "لون النص",
+  "Label colour": "لون العناوين",
+  "Text and labels need at least 4.5 to 1 contrast against the background. Every card in customers' wallets takes a new name or colours within a few minutes, without a notification.":
+    "يحتاج النص والعناوين إلى تباين بنسبة 4.5 إلى 1 على الأقل مع الخلفية. تأخذ كل البطاقات في محافظ الزبائن الاسم أو الألوان الجديدة خلال دقائق، دون إشعار.",
+  "Save card": "حفظ البطاقة",
   Pilot: "تجريبية",
   Active: "فعّالة",
   Suspended: "موقوفة",
@@ -255,6 +266,77 @@ function PlanForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
           {t("Choose another plan to save.")}
         </p>
       ) : null}
+    </Form>
+  );
+}
+
+/**
+ * The café's name and card colours, saved together, with a preview of the card as customers see it. A text or label
+ * colour that would not stand out from the background is caught here, with the server's own messages (it checks again).
+ */
+function CardForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCafe) => void }) {
+  const t = useT(AR);
+  const [name, setName] = useState(cafe.name);
+  const [colors, setColors] = useState<CardColors>(cafe.cardColors);
+  // In English, as the API words them, by the API's field paths; translated when shown.
+  const [problems, setProblems] = useState<Record<string, string>>({});
+  const { pending, error, fieldErrors, done, clearDone, submit } = useSubmit();
+  const titleId = `card-title-${cafe.id}`;
+  const hintId = `card-hint-${cafe.id}`;
+  const colorField = (key: keyof CardColors, label: string) => {
+    const path = `cardColors.${key}`;
+    return (
+      <Field
+        label={label}
+        name={key}
+        type="color"
+        value={colors[key]}
+        onChange={(value) => {
+          setColors((current) => ({ ...current, [key]: value }));
+          setProblems((current) => Object.fromEntries(Object.entries(current).filter(([field]) => field !== path)));
+        }}
+        error={problems[path] ?? fieldErrors[path]}
+      />
+    );
+  };
+  return (
+    <Form
+      aria-labelledby={titleId}
+      onChange={clearDone}
+      onSubmit={(event) => {
+        event.preventDefault();
+        const found: Record<string, string> = {};
+        if (contrastRatio(colors.foreground, colors.background) < MIN_CARD_CONTRAST) {
+          found["cardColors.foreground"] = apiText("Pick a text colour that stands out more from the background: at least 4.5 to 1.");
+        }
+        if (contrastRatio(colors.label, colors.background) < MIN_CARD_CONTRAST) {
+          found["cardColors.label"] = apiText("Pick a label colour that stands out more from the background: at least 4.5 to 1.");
+        }
+        setProblems(found);
+        if (Object.keys(found).length > 0) {
+          return;
+        }
+        void submit(() => apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { name, cardColors: colors })).then((result) => {
+          if (result.ok) {
+            onSaved(result.value);
+          }
+        });
+      }}
+    >
+      <h3 id={titleId}>{t("Card and name")}</h3>
+      <p id={hintId} className="hint">
+        {t("Text and labels need at least 4.5 to 1 contrast against the background. Every card in customers' wallets takes a new name or colours within a few minutes, without a notification.")}
+      </p>
+      <FormError message={error} />
+      <Field label={t("Café name")} name="name" type="text" value={name} onChange={setName} maxLength={120} error={fieldErrors.name} />
+      {colorField("background", t("Background colour"))}
+      {colorField("foreground", t("Text colour"))}
+      {colorField("label", t("Label colour"))}
+      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} />
+      <button type="submit" aria-disabled={pending || undefined}>
+        {pending ? t("Saving…") : t("Save card")}
+      </button>
+      <Notice>{done ? t("Saved.") : null}</Notice>
     </Form>
   );
 }
@@ -984,6 +1066,26 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           }}
         />
         {invite === null ? null : <InviteLink key={invite.link} cafe={cafe} invite={invite} />}
+      </div>
+      <div className="card">
+        <CardForm
+          cafe={cafe}
+          onSaved={(saved) => {
+            put(saved.id, { name: saved.name, cardColors: saved.cardColors }, null);
+          }}
+        />
+        <LogoForm
+          cafeName={cafe.name}
+          logoHash={cafe.logoHash}
+          upload={async (image) => {
+            const saved = await apiRequest("PUT", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema, { image });
+            put(saved.id, { logoHash: saved.logoHash }, null);
+          }}
+          remove={async () => {
+            const saved = await apiRequest("DELETE", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema);
+            put(saved.id, { logoHash: saved.logoHash }, null);
+          }}
+        />
       </div>
       <div className="card">
         <PlanForm

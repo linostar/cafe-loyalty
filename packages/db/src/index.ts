@@ -1,4 +1,5 @@
 export { bootstrap, withDatabase, type BootstrapLog, type BootstrapOptions } from "./bootstrap.js";
+export { cafeLogoPath, loadAppleLogo, loadCafeBranding, removeCafeLogo, saveCafeLogo, type CafeBranding, type CafeLogoImages } from "./branding.js";
 export { currentKey, keyringSchema, signCardQr, verifyCardQr, type Keyring } from "./card-qr.js";
 export { checkMigrations, findBreakingStatements, findForbiddenStatements, type MigrationCheckContext, type MigrationProblem } from "./check-migrations.js";
 export {

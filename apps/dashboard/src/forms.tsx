@@ -9,8 +9,11 @@ interface FieldProps {
   /** Text, or text with a visually hidden part that tells repeated fields apart. */
   label: ReactNode;
   name: string;
-  /** A date's value is always YYYY-MM-DD, whatever format the computer shows it in, and "" while empty or incomplete. */
-  type: "date" | "email" | "password" | "text" | "url";
+  /**
+   * A date's value is always YYYY-MM-DD, whatever format the computer shows it in, and "" while empty or incomplete; a
+   * colour's is always #rrggbb in lowercase.
+   */
+  type: "color" | "date" | "email" | "password" | "text" | "url";
   autoComplete?: "email" | "username" | "current-password" | "new-password" | "off";
   value: string;
   onChange: (value: string) => void;

@@ -233,7 +233,7 @@ export function SetupWizard({
   // A list that did not load leaves its step looking not done: said, with Try again, rather than shown as empty.
   const unchecked = step.key === "barista" && staff.status === "failed" ? { ...staff, retry: retryStaff } : step.key === "phone" && devices.status === "failed" ? { ...devices, retry: retryDevices } : null;
 
-  const save = async (method: "PATCH" | "PUT" | "POST", path: string, body: unknown) => {
+  const save = async (method: "PATCH" | "PUT" | "POST" | "DELETE", path: string, body: unknown) => {
     onSetup(await apiRequest(method, path, cafeSetupSchema, body));
     return true;
   };

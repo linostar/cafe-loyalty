@@ -36,6 +36,13 @@ export const API_MESSAGES_AR = {
     "البريد الإلكتروني أو كلمة المرور غير صحيحة. حاول مجدداً، أو اطلب كلمة مرور جديدة عبر create-operator.",
   "This café no longer exists. Reload the list.": "هذا المقهى لم يعد موجوداً. أعد تحميل القائمة.",
   "Use the day the café paid, from 2026 up to today.": "استخدم يوم الدفع، من سنة 2026 حتى اليوم.",
+  // A café's card: its colours (the operator) and its logo (the operator or the owner).
+  "Use a colour as #rrggbb, such as #4a2c2a.": "استخدم لوناً بصيغة ‎#rrggbb، مثل ‎#4a2c2a.",
+  "Pick a text colour that stands out more from the background: at least 4.5 to 1.": "اختر لوناً للنص يتميّز أكثر عن الخلفية: بنسبة 4.5 إلى 1 على الأقل.",
+  "Pick a label colour that stands out more from the background: at least 4.5 to 1.": "اختر لوناً للعناوين يتميّز أكثر عن الخلفية: بنسبة 4.5 إلى 1 على الأقل.",
+  "Upload the logo as a PNG or JPEG image.": "ارفع الشعار كصورة PNG أو JPEG.",
+  "Use a logo of at most 2 MB.": "استخدم شعاراً بحجم 2 ميغابايت كحد أقصى.",
+  "Use a logo at least 64 pixels wide and high.": "استخدم شعاراً بعرض وارتفاع 64 بكسل على الأقل.",
   "This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one.":
     "سُجّلت هذه الدفعة سابقاً بتفاصيل أخرى. أعد تحميل الصفحة لرؤيتها، ثم سجّل أي دفعة أخرى كدفعة جديدة.",
   "Choose pilot, active or suspended.": "اختر تجريبية أو فعّالة أو موقوفة.",

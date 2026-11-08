@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { ICON_PNG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Route } from "@playwright/test";
 import { SESSION, UNAUTHENTICATED, mockApi, reply } from "./api-mock.js";
 
@@ -249,6 +251,36 @@ test("saves the minimum margin campaigns must keep", async ({ page }) => {
   // Typing again clears the old confirmation.
   await margin.getByLabel("Minimum margin over cost (%)").fill("36");
   await expect(margin.getByRole("status")).toHaveText("");
+});
+
+test("shows the card in the café's colours and uploads the owner's logo, which the preview then shows", async ({ page }) => {
+  const HASH = "cd".repeat(32);
+  const png = await readFile(ICON_PNG_PATH);
+  const colours = { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" };
+  let setup = { cafe: { ...CAFE, cardColors: colours, logoHash: null as string | null }, program: PROGRAM, orderTypes: [ESPRESSO] };
+  const uploads: unknown[] = [];
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "PUT /api/cafe/logo": async (route) => {
+      uploads.push(json(route));
+      setup = { ...setup, cafe: { ...setup.cafe, logoHash: HASH } };
+      await route.fulfill({ json: setup });
+    },
+    [`GET /api/logos/${HASH}.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
+  });
+  await page.goto("/cafe");
+  const section = page.getByRole("region", { name: "Card" });
+  // The colours the operator set; the owner sees them, and is told who changes them.
+  await expect(section.locator(".card-preview-face")).toHaveCSS("background-color", "rgb(31, 90, 133)");
+  await expect(section.getByText("The card's colours are set by the service's operator: ask them to change them.")).toBeVisible();
+  const logo = section.getByRole("form", { name: `Logo of ${CAFE.name}` });
+  await logo.getByLabel("Logo").setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: png });
+  await logo.getByRole("button", { name: "Upload logo" }).click();
+  await expect(logo.getByRole("status")).toHaveText("Saved. Cards in wallets show it within a few minutes.");
+  expect(uploads).toEqual([{ image: png.toString("base64") }]);
+  await expect(section.locator(".card-preview-face img")).toHaveAttribute("src", `/api/logos/${HASH}.png`);
 });
 
 test("says nothing is saved when the field changed while its save was on its way", async ({ page }) => {

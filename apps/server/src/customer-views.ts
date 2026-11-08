@@ -1,4 +1,5 @@
-import { count, html, page, t, type Lang, type SafeHtml } from "./customer-html.js";
+import type { CardColors } from "@cafe-loyalty/shared";
+import { cardStyle, count, html, page, t, type Lang, type SafeHtml } from "./customer-html.js";
 
 /**
  * The customer pages' markup (AC 4, 7, 8, 9), from plain data: the routes in customer-pages.ts load what a page needs
@@ -75,6 +76,9 @@ export type WalletLink = { kind: "apple"; href: string } | { kind: "google"; hre
 export interface CardView {
   path: string;
   cafeName: string;
+  /** The café's card colours (the face's own stylesheet, cardStyle) and its logo's address, or null for none. */
+  colors: CardColors;
+  logoPath: string | null;
   stamps: number;
   program: ProgramView | undefined;
   /** The card's signed QR, as an image data URL. */
@@ -112,6 +116,7 @@ export function cardView(lang: Lang, view: CardView): string {
     t(lang, "cardTitle", { cafe: view.cafeName }),
     html`<article class="loyalty-card" aria-labelledby="card-title">
 <div class="card-face">
+${view.logoPath === null ? null : html`<img class="card-logo" src="${view.logoPath}" alt="" width="56" height="56">`}
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1 id="card-title">${t(lang, "cardTitle", { cafe: view.cafeName })}</h1>
 <p class="stamps">${program === undefined ? count(lang, "stamps", stamps) : t(lang, "stampsProgress", { stamps, required: count(lang, "stamps", program.stampsRequired) })}</p>
@@ -156,6 +161,7 @@ ${view.feedbackHref === undefined
 </section>`}
 <p class="link-row"><a class="link-button next" href="${view.path}/settings?lang=${lang}"><span>${t(lang, "settingsLink")}</span>${chevron("forward")}</a></p>`,
     view.otherLangHref,
+    cardStyle(view.colors),
   );
 }
 

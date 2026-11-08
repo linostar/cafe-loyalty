@@ -9,6 +9,7 @@ import { cafeRoutes } from "./cafe-routes.js";
 import { campaignRoutes } from "./campaign-routes.js";
 import { deviceRoutes } from "./device-routes.js";
 import { feedbackRoutes } from "./feedback-routes.js";
+import { registerLogoFiles } from "./logo-routes.js";
 import type { Mailer } from "./mailer.js";
 import { ownerAuthRoutes } from "./owner-auth.js";
 import { resultsRoutes } from "./results-routes.js";
@@ -46,6 +47,8 @@ export function apiRoutes(app: FastifyInstance, options: ApiOptions, done: (erro
   void app.register(resultsRoutes, { db: options.db });
   void app.register(deviceRoutes, { db: options.db, counterUrl: options.counterUrl, releaseBuiltAt: options.releaseBuiltAt });
   void app.register(syncRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs });
+  // Cafés' logos for the dashboard's previews (its domain forwards only /api to the server).
+  registerLogoFiles(app, options.db, { config: { access: "public" }, immutable: false });
   void app.register(stampingRoutes, { db: options.db, secrets: options.secrets, jobs: options.jobs, releaseBuiltAt: options.releaseBuiltAt });
   done();
 }

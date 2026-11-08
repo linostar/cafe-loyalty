@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, feedbackUrl, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -10,10 +10,11 @@ import { APPLE_PASS_LAYOUT_VERSION, applePassToken, buildApplePass, type ApplePa
 import type { BackgroundTasks } from "./background.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, encryptPhone, phoneLookup, signCardQr, type CustomerSecrets } from "./customer-crypto.js";
-import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, count, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
+import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, cardStyle, count, customerCsp, pickLang, t, type Lang, type MessageKey } from "./customer-html.js";
 import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView, type JoinView, type NextStep, type SettingsSection } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
+import { registerLogoFiles } from "./logo-routes.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
@@ -480,7 +481,12 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const { secret } = request.params as { secret: string };
     const lang = langOf(request);
     const card = await cardOrGone(secret);
-    return sendPage(reply, 200, await cardPage(request, lang, secret, card));
+    const { document, style } = await cardPage(request, lang, secret, card);
+    if (style !== undefined) {
+      // The card face's own stylesheet (the café's colours) is allowed by its hash too.
+      void reply.header("content-security-policy", customerCsp(style));
+    }
+    return sendPage(reply, 200, document);
   });
 
   /**
@@ -517,9 +523,14 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     });
   }
 
-  async function cardPage(request: FastifyRequest, lang: Lang, secret: string, card: NonNullable<Awaited<ReturnType<typeof findCard>>>): Promise<string> {
+  async function cardPage(
+    request: FastifyRequest,
+    lang: Lang,
+    secret: string,
+    card: NonNullable<Awaited<ReturnType<typeof findCard>>>,
+  ): Promise<{ document: string; style: string | undefined }> {
     const { cafe, program, offers, feedback } = await withCafe(db, card.cafe_id, async (trx) => ({
-      cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
+      cafe: await loadCafeBranding(trx, card.cafe_id),
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, card.id),
       feedback: await openFeedbackRequest(trx, card.id),
@@ -528,9 +539,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4, ecc: "M" }))}`;
     const path = `/c/${secret}`;
     const apple = onAppleDevice(request);
-    return cardView(lang, {
+    const document = cardView(lang, {
       path,
       cafeName: cafe.name,
+      colors: cafe.colors,
+      logoPath: cafe.logoHash === null ? null : cafeLogoPath(cafe.logoHash),
       stamps: card.stamps,
       program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
       qr,
@@ -547,6 +560,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
             : null,
       otherLangHref: otherLang(path, lang),
     });
+    return { document, style: cardStyle(cafe.colors) };
   }
 
   /**
@@ -571,7 +585,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       return {
         pass: await trx.selectFrom("apple_passes").select("id").where("card_id", "=", card.id).where("epoch", "=", card.epoch).executeTakeFirstOrThrow(),
         stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
-        cafe: await trx.selectFrom("cafes").select("name").where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
+        cafe: await loadCafeBranding(trx, card.cafe_id),
+        logo: await loadAppleLogo(trx, card.cafe_id),
         program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
         offers: await loadCardOffer(trx, card.id),
         feedback: await loadFeedbackRequest(trx, card.id),
@@ -581,6 +596,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       serialNumber: found.pass.id,
       authenticationToken: token,
       cafeName: found.cafe.name,
+      colors: found.cafe.colors,
+      logo: found.logo,
       stamps: found.stamps,
       program:
         found.program === undefined
@@ -619,7 +636,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       }
       return {
         stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
-        cafe: await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", card.cafe_id).executeTakeFirstOrThrow(),
+        cafe: await loadCafeBranding(trx, card.cafe_id),
         program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       };
     });
@@ -640,6 +657,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     request.log.info({ cafeId: card.cafe_id }, "google pass save link opened");
     return reply.code(303).header("location", location).send();
   });
+
+  // Cafés' own logos, by hash (the Google class and the web card show them).
+  registerLogoFiles(app, db, { immutable: true });
 
   /** The Google class logo, fetched by Google (public, no secrets). */
   app.get("/wallet/logo.png", async (_request, reply) => {

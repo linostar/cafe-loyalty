@@ -2,9 +2,10 @@ import { withCafe, withLookup, withOperator, type Database } from "@cafe-loyalty
 import {
   ADMIN_PAYMENTS_SHOWN,
   ApiError,
+  adminCafeUpdateSchema,
   cafeCreateSchema,
-  cafePlanUpdateSchema,
   loginRequestSchema,
+  logoUploadSchema,
   operatorPasswordChangeRequestSchema,
   paymentRecordSchema,
   paymentVoidSchema,
@@ -22,6 +23,8 @@ import { clearedOperatorCookie, hashPassword, hashToken, newToken, operatorSessi
 import { audit, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { insertInvite, inviteLink } from "./invites.js";
+import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo } from "./logo-image.js";
+import { setLogo, unsetLogo } from "./logo-routes.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 export interface AdminRoutesOptions {
@@ -60,10 +63,15 @@ async function loadSession(trx: Transaction<Database>, operatorId: string): Prom
 
 /** A café as the admin screen shows it, read inside its withCafe; undefined when it does not exist. */
 async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<AdminCafe | undefined> {
-  const cafe = await trx.selectFrom("cafes").select(["id", "name", "plan", "created_at"]).where("id", "=", cafeId).executeTakeFirst();
+  const cafe = await trx
+    .selectFrom("cafes")
+    .select(["id", "name", "plan", "created_at", "card_background", "card_foreground", "card_label"])
+    .where("id", "=", cafeId)
+    .executeTakeFirst();
   if (cafe === undefined) {
     return undefined;
   }
+  const logo = await trx.selectFrom("cafe_logos").select("hash").where("cafe_id", "=", cafeId).executeTakeFirst();
   const payments = await trx
     .selectFrom("cafe_payments")
     .leftJoin("cafe_payment_voids", "cafe_payment_voids.payment_id", "cafe_payments.id")
@@ -102,6 +110,8 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     name: cafe.name,
     plan: cafe.plan,
     createdAt: cafe.created_at.toISOString(),
+    cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
+    logoHash: logo?.hash.toString("hex") ?? null,
     paidCents: Number(paid.total),
     payments: payments.map((payment) => ({
       id: payment.id,
@@ -135,6 +145,7 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     loginFailuresPerAccountAndIp: new RateLimiter(5, 15 * MINUTE * 1000),
     loginFailuresPerAccount: new RateLimiter(50, HOUR * 1000),
     passwordChangePerOperator: new RateLimiter(10, 15 * MINUTE * 1000),
+    logoUploadsPerOperator: new RateLimiter(LOGO_UPLOADS_PER_HOUR, HOUR * 1000),
   };
 
   function enforce(limiter: RateLimiter, key: string, reply: FastifyReply): void {
@@ -316,20 +327,66 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     return cafe;
   });
 
-  /** Sets a café's plan; suspending it stops new customers joining (AC 39), its counter still syncs. */
+  /**
+   * Changes a café: its plan (suspending it stops new customers joining, AC 39; its counter still syncs), its name and
+   * its card colours, each optional. A new name or colours reach every pass of the café (its trigger marks them).
+   */
   app.patch("/cafes/:id", { config: { access: "operator" } }, async (request) => {
     const operator = operatorOf(request);
     const { id } = parseInput(idParams, request.params);
-    const body = parseInput(cafePlanUpdateSchema, request.body);
+    const body = parseInput(adminCafeUpdateSchema, request.body);
+    const actor = { cafeId: id, actorType: "operator" as const, actorId: operator.operatorId, entityType: "cafe", entityId: id };
     const cafe = await withListedCafe(id, async (trx) => {
-      const before = await trx.selectFrom("cafes").select("plan").where("id", "=", id).executeTakeFirstOrThrow();
-      if (before.plan !== body.plan) {
+      const before = await trx.selectFrom("cafes").select(["plan", "name", "card_background", "card_foreground", "card_label"]).where("id", "=", id).executeTakeFirstOrThrow();
+      if (body.plan !== undefined && before.plan !== body.plan) {
         await trx.updateTable("cafes").set({ plan: body.plan }).where("id", "=", id).execute();
-        await audit(trx, { cafeId: id, actorType: "operator", actorId: operator.operatorId, action: "cafe.plan_changed", entityType: "cafe", entityId: id, changes: { from: before.plan, to: body.plan } });
+        await audit(trx, { ...actor, action: "cafe.plan_changed", changes: { from: before.plan, to: body.plan } });
+      }
+      const colors = body.cardColors;
+      const colorsChanged =
+        colors !== undefined && (colors.background !== before.card_background || colors.foreground !== before.card_foreground || colors.label !== before.card_label);
+      const nameChanged = body.name !== undefined && body.name !== before.name;
+      if (nameChanged || colorsChanged) {
+        await trx
+          .updateTable("cafes")
+          .set({
+            ...(nameChanged ? { name: body.name } : {}),
+            ...(colorsChanged ? { card_background: colors.background, card_foreground: colors.foreground, card_label: colors.label } : {}),
+          })
+          .where("id", "=", id)
+          .execute();
+        await audit(trx, { ...actor, action: "cafe.updated", changes: { ...(nameChanged ? { name: body.name } : {}), ...(colorsChanged ? { cardColors: colors } : {}) } });
       }
       return loadCafe(trx, id);
     });
-    request.log.info({ cafeId: id, operatorId: operator.operatorId, plan: body.plan }, "cafe plan set");
+    request.log.info({ cafeId: id, operatorId: operator.operatorId, plan: body.plan, renamed: body.name !== undefined, colors: body.cardColors !== undefined }, "cafe changed");
+    return cafe;
+  });
+
+  /** Sets a café's logo for every card (checked and resized before the transaction, logo-image.ts). */
+  app.put("/cafes/:id/logo", { config: { access: "operator" }, bodyLimit: LOGO_BODY_LIMIT_BYTES }, async (request, reply) => {
+    const operator = operatorOf(request);
+    enforce(limits.logoUploadsPerOperator, operator.operatorId, reply);
+    const { id } = parseInput(idParams, request.params);
+    const body = parseInput(logoUploadSchema, request.body);
+    const images = await processLogo(body.image);
+    const cafe = await withListedCafe(id, async (trx) => {
+      await setLogo(trx, id, images, { actorType: "operator", actorId: operator.operatorId });
+      return loadCafe(trx, id);
+    });
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe logo set");
+    return cafe;
+  });
+
+  /** Removes a café's logo: its cards show the product's again. */
+  app.delete("/cafes/:id/logo", { config: { access: "operator" } }, async (request) => {
+    const operator = operatorOf(request);
+    const { id } = parseInput(idParams, request.params);
+    const cafe = await withListedCafe(id, async (trx) => {
+      await unsetLogo(trx, id, { actorType: "operator", actorId: operator.operatorId });
+      return loadCafe(trx, id);
+    });
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe logo removed");
     return cafe;
   });
 

@@ -474,8 +474,8 @@ for (const { lang, locale } of LANGS) {
 
 /** The Café page's sections, the Review page's short labels and the admin café page's layout (redesign AC 8, 9, 10), in both languages. */
 const LAYOUT_TEXT = {
-  en: { sections: "Sections of this page", names: ["Name", "Program", "Menu", "Offers and welcome-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
-  ar: { sections: "أقسام هذه الصفحة", names: ["الاسم", "البرنامج", "القائمة", "العروض وعرض العودة", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
+  en: { sections: "Sections of this page", names: ["Name", "Card", "Program", "Menu", "Offers and welcome-back", "Signup and reviews"], accept: "Accept", discard: "Discard" },
+  ar: { sections: "أقسام هذه الصفحة", names: ["الاسم", "البطاقة", "البرنامج", "القائمة", "العروض وعرض العودة", "التسجيل والتقييمات"], accept: "قبول", discard: "إهمال" },
 } as const;
 
 for (const { lang, locale } of LANGS) {
@@ -512,9 +512,9 @@ for (const { lang, locale } of LANGS) {
         const widest = await page.locator(".settings-section input:not([type='radio'], [type='checkbox'])").evaluateAll((inputs) => Math.max(...inputs.map((input) => input.getBoundingClientRect().width)));
         expect(widest).toBeLessThanOrEqual(480);
         // A link in the list takes the page to its section.
-        await links.nth(2).click();
+        await links.nth(3).click();
         await expect(page).toHaveURL(/#menu$/);
-        await expect(page.getByRole("heading", { level: 3, name: text.names[2], exact: true })).toBeInViewport();
+        await expect(page.getByRole("heading", { level: 3, name: text.names[3], exact: true })).toBeInViewport();
         // The café's name is in the first section, Name, and only the page's own region is named Café.
         await expect(page.locator("section#cafe").getByRole("form", { name: lang === "ar" ? "اسم المقهى" : "Café name" })).toBeVisible();
         await expect(page.getByRole("region", { name: lang === "ar" ? "المقهى" : "Café", exact: true })).toHaveCount(1);

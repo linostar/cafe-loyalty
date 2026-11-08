@@ -60,9 +60,17 @@ class FakeGoogleWallet implements GoogleWallet {
   readonly saved: { loyaltyClass: GoogleLoyaltyClass; object: GoogleLoyaltyObject; create: boolean; message: GoogleOfferMessage | undefined }[] = [];
   answer: SaveResult | Error = "updated";
 
+  /** Every class written on its own (a café's name, logo or colour changed). */
+  readonly classes: GoogleLoyaltyClass[] = [];
+
   save(loyaltyClass: GoogleLoyaltyClass, object: GoogleLoyaltyObject, create: boolean, message?: GoogleOfferMessage): Promise<SaveResult> {
     this.saved.push({ loyaltyClass, object, create, message });
     return this.answer instanceof Error ? Promise.reject(this.answer) : Promise.resolve(this.answer);
+  }
+
+  saveClass(loyaltyClass: GoogleLoyaltyClass): Promise<void> {
+    this.classes.push(loyaltyClass);
+    return Promise.resolve();
   }
 }
 
@@ -424,6 +432,31 @@ describe("job queue", () => {
     } finally {
       await task.stop();
     }
+  });
+
+  it("writes the café's class again only after its name, logo or colour changed, with its own logo and background", async () => {
+    const pass = await googlePass();
+    const wallet = new FakeGoogleWallet();
+    const logger = pino({ level: "silent" });
+    const job = { cafeId: pass.cafeId, passId: pass.passId };
+    await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job);
+    expect(wallet.classes).toEqual([expect.objectContaining({ issuerName: "Café Najjar", hexBackgroundColor: "#4a2c2a" })]);
+    // Nothing about the café changed: the object alone is written.
+    await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job);
+    expect(wallet.classes).toHaveLength(1);
+
+    const hash = randomBytes(32);
+    const image = Buffer.from([0]);
+    await admin.query("UPDATE app.cafes SET name = 'Café Nour', card_background = '#1f5a85' WHERE id = $1", [pass.cafeId]);
+    await admin.query("INSERT INTO app.cafe_logos (cafe_id, hash, square, apple_1x, apple_2x, apple_3x) VALUES ($1, $2, $3, $3, $3, $3)", [pass.cafeId, hash, image]);
+    await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job);
+    expect(wallet.classes).toHaveLength(2);
+    expect(wallet.classes[1]).toMatchObject({
+      issuerName: "Café Nour",
+      hexBackgroundColor: "#1f5a85",
+      programLogo: { sourceUri: { uri: `https://card.example.test/logos/${hash.toString("hex")}.png` } },
+    });
+    expect(wallet.saved[2]?.loyaltyClass).toEqual(wallet.classes[1]);
   });
 
   it("writes an earlier epoch's Google object INACTIVE, without the QR, and only if it exists (AC 8)", async () => {
