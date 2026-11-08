@@ -785,11 +785,17 @@ test("picks the café's stamp shape, which the card preview then shows", async (
   // A café from before shapes (or a server that sends none) draws circles.
   const shapes = page.getByRole("form", { name: "Stamp shape" });
   await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
+  const stamp = page.getByRole("form", { name: "Card and name" }).locator(".card-preview-stamps .is-filled path").first();
+  const circle = await stamp.getAttribute("d");
   await shapes.getByRole("radio", { name: "Cup" }).check();
   await shapes.getByRole("button", { name: "Save shape" }).click();
   await expect(shapes.getByRole("status")).toHaveText("Saved. Cards in wallets show the new shape within a few minutes.");
   expect(sent).toEqual([{ stampShape: "cup" }]);
-  await expect(page.getByRole("form", { name: "Card and name" }).locator(".card-preview-stamps .is-filled")).toHaveCount(4);
+  // The preview draws the saved shape.
+  await expect(stamp).not.toHaveAttribute("d", circle ?? "");
+  // A new pick says nothing is saved until it is.
+  await shapes.getByRole("radio", { name: "Plate" }).check();
+  await expect(shapes.getByRole("status")).toHaveText("");
 });
 
 test("names the café and picks its card colours, checked for contrast, with a live preview, then uploads and removes its logo", async ({ page }) => {

@@ -41,9 +41,16 @@ const PASS_QUEUES = { apple: APPLE_PASS_UPDATE_QUEUE, google: GOOGLE_PASS_UPDATE
  * change was made while the server had no job queue, or by an older release that does not queue that wallet. A pass
  * whose update is still waiting or retrying is skipped (one waiting job per pass, its singletonKey). Like the purge,
  * not a café's own job: the function runs as the owner role and returns ids only (migration 0009); each update job
- * then runs inside withCafe for its pass's café.
+ * then runs inside withCafe for its pass's café. First, passes on an older layout than this release's are marked
+ * changed (mark_outdated_passes, migration 0025), so they are among them: a sweep runs only on the new release's
+ * worker, after the old release's server has stopped, so no old server builds the passes it marks.
  */
 export async function resendUndeliveredPasses(boss: PgBoss, logger: Logger): Promise<{ found: number; queued: number }> {
+  const marked = await boss.getDb().executeSql("SELECT app.mark_outdated_passes($1) AS marked", [RESEND_BATCH]);
+  const outdated = (marked.rows[0] as { marked: number } | undefined)?.marked ?? 0;
+  if (outdated > 0) {
+    logger.info({ outdated }, "passes on an older layout marked changed");
+  }
   const { rows } = await boss.getDb().executeSql("SELECT wallet, cafe_id, pass_id FROM app.undelivered_passes($1)", [RESEND_BATCH]);
   let queued = 0;
   for (const row of rows as { wallet: keyof typeof PASS_QUEUES; cafe_id: string; pass_id: string }[]) {

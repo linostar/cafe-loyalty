@@ -39,3 +39,41 @@ CREATE TRIGGER cafes_touch_google_passes AFTER UPDATE OF stamp_shape, card_backg
   EXECUTE FUNCTION touch_cafe_google_passes();
 
 REVOKE ALL ON FUNCTION touch_cafe_google_passes() FROM PUBLIC;
+
+-- Pass layouts (APPLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_LAYOUT_VERSION in packages/db wallet.ts): the stamp picture is
+-- Apple layout 3 and Google layout 2. Google passes now record theirs too; every one made before is layout 1.
+ALTER TABLE google_passes ADD COLUMN layout_version integer NOT NULL DEFAULT 1 CHECK (layout_version >= 1);
+
+-- The worker's sweep (every 15 minutes, before it queues undelivered passes) marks passes on an older layout changed
+-- and records the new one, at most max_rows of each wallet a run, so a pass nobody stamps or fetches gets the new
+-- layout too, once. Runs as cl_owner, which sees and changes only such passes through the policies below, and returns
+-- a count only; the app role may only call it. Voided passes are included: they are rebuilt voided, as before.
+-- A future layout bump replaces these policies and the function with its own numbers.
+CREATE POLICY outdated_layout ON apple_passes FOR ALL TO cl_owner USING (layout_version < 3) WITH CHECK (layout_version = 3);
+CREATE POLICY outdated_layout ON google_passes FOR ALL TO cl_owner USING (layout_version < 2) WITH CHECK (layout_version = 2);
+
+CREATE FUNCTION mark_outdated_passes(max_rows integer) RETURNS integer
+  -- STRICT: a null max_rows marks nothing. The filters repeat the policies' own.
+  LANGUAGE plpgsql STRICT SECURITY DEFINER SET search_path = app, pg_temp
+  AS $$
+DECLARE
+  apple integer;
+  google integer;
+BEGIN
+  UPDATE apple_passes
+     SET layout_version = 3,
+         updated_xid = pg_current_xact_id(),
+         modified_at = greatest(date_trunc('second', now()), apple_passes.modified_at + interval '1 second')
+   WHERE id IN (SELECT id FROM apple_passes WHERE layout_version < 3 ORDER BY id LIMIT max_rows);
+  GET DIAGNOSTICS apple = ROW_COUNT;
+  UPDATE google_passes
+     SET layout_version = 2,
+         updated_xid = pg_current_xact_id()
+   WHERE id IN (SELECT id FROM google_passes WHERE layout_version < 2 ORDER BY id LIMIT max_rows);
+  GET DIAGNOSTICS google = ROW_COUNT;
+  RETURN apple + google;
+END
+$$;
+
+REVOKE ALL ON FUNCTION mark_outdated_passes(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mark_outdated_passes(integer) TO cl_app;

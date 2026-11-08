@@ -85,7 +85,7 @@ const clock = (minute: number): string => `${String(Math.floor(minute / 60) % 24
 export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: string; details: string } {
   const text = PASS_TEXT[lang];
   const locale = LOCALES[lang];
-  // In Latin digits in both languages, like the pass's stamps ("4/9") and hours.
+  // In Latin digits in both languages, like the hours.
   const discount = offer.discount.kind === "percent" ? `${String(offer.discount.value)}%` : formatUsd(offer.discount.value, "en");
   if (offer.kind === "win_back") {
     // The day as stored, read as a UTC date: the café's time zone already chose it.
@@ -110,6 +110,15 @@ export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: stri
 
 /** The product's espresso (RGB): its Google class logo, for cafés without a logo of their own. */
 export const PASS_BACKGROUND = [74, 44, 42] as const;
+
+/**
+ * The pass layouts this release builds, stored per pass (AC 12): bump one when its wallet's layout changes. The
+ * worker's sweep (mark_outdated_passes, migration 0025) marks every pass on an older layout changed and records the
+ * new one, so passes nobody updates otherwise get it too (Apple: 3 drew the stamps on a strip; Google: 2 made them the
+ * hero image). An Apple pass on another layout also counts as changed when next fetched (passkit-routes.ts).
+ */
+export const APPLE_PASS_LAYOUT_VERSION = 3;
+export const GOOGLE_PASS_LAYOUT_VERSION = 2;
 
 /** Google Wallet settings (GOOGLE_WALLET_* variables). */
 export interface GoogleWalletConfig {

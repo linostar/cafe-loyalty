@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -229,6 +229,10 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
   };
   /** Stamp pictures drawn lately, by file name, oldest first. ponytail: one process's memory, 256 pictures (about 10 MB). */
   const stampPictures = new Map<string, Buffer>();
+  /** Stamp pictures being drawn, by file name: one drawing per picture, however many ask for it at once. */
+  const drawingStampPictures = new Map<string, Promise<Buffer>>();
+  /** At most this many pictures are drawn at once (sharp shares libuv's pool with crypto and files); more wait for Google's retry. */
+  const MAX_STAMP_DRAWINGS = 4;
 
   function enforce(limiter: RateLimiter, key: string): void {
     const wait = limiter.hit(key);
@@ -635,7 +639,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const found = await withCafe(db, card.cafe_id, async (trx) => {
       await trx
         .insertInto("google_passes")
-        .values({ cafe_id: card.cafe_id, card_id: card.id, epoch: card.epoch })
+        .values({ cafe_id: card.cafe_id, card_id: card.id, epoch: card.epoch, layout_version: GOOGLE_PASS_LAYOUT_VERSION })
         .onConflict((conflict) => conflict.columns(["card_id", "epoch"]).doNothing())
         .execute();
       const pass = await trx.selectFrom("google_passes").select("id").where("card_id", "=", card.id).where("epoch", "=", card.epoch).executeTakeFirstOrThrow();
@@ -684,13 +688,28 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
     let png = stampPictures.get(file);
     if (png === undefined) {
-      enforce(limits.stampPicturesPerIp, clientKey(request.ip));
-      // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
-      png = await stampPicturePng(picture, 3);
-      stampPictures.set(file, png);
-      if (stampPictures.size > 256) {
-        stampPictures.delete(stampPictures.keys().next().value ?? file);
+      let drawing = drawingStampPictures.get(file);
+      if (drawing === undefined) {
+        enforce(limits.stampPicturesPerIp, clientKey(request.ip));
+        if (drawingStampPictures.size >= MAX_STAMP_DRAWINGS) {
+          void reply.header("retry-after", "5");
+          throw new PageError(503, "failed");
+        }
+        // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
+        drawing = stampPicturePng(picture, 3)
+          .then((drawn) => {
+            stampPictures.set(file, drawn);
+            if (stampPictures.size > 256) {
+              stampPictures.delete(stampPictures.keys().next().value ?? file);
+            }
+            return drawn;
+          })
+          .finally(() => {
+            drawingStampPictures.delete(file);
+          });
+        drawingStampPictures.set(file, drawing);
       }
+      png = await drawing;
     }
     return reply.code(200).header("content-type", "image/png").header("cache-control", "public, max-age=31536000, immutable").send(png);
   });

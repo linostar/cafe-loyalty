@@ -38,6 +38,8 @@ export { loadCardOffer, offerKey, type CardOffer } from "./offers.js";
 export { base64PemSchema, keyFitsCertificate } from "./pem.js";
 export { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 export {
+  APPLE_PASS_LAYOUT_VERSION,
+  GOOGLE_PASS_LAYOUT_VERSION,
   PASS_BACKGROUND,
   PASS_TEXT,
   googleClassId,

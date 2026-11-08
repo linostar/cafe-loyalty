@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { crc32, deflateSync } from "node:zlib";
-import { offerText, stampsText, type CardOffer } from "@cafe-loyalty/db";
+import { APPLE_PASS_LAYOUT_VERSION, offerText, stampsText, type CardOffer } from "@cafe-loyalty/db";
 import type { CardColors, StampShape } from "@cafe-loyalty/shared";
 import { PKPass } from "passkit-generator";
 import type { CustomerSecrets } from "./customer-crypto.js";
@@ -15,12 +15,8 @@ export interface ApplePassConfig {
   certificates: { signerCert: string; signerKey: string; wwdr: string };
 }
 
-/**
- * The pass layout this release builds, stored per pass (AC 12). A pass on another layout counts as changed when next
- * fetched, so every device of it gets the new layout; bump this when the layout changes (and, to reach passes nobody
- * fetches, push those whose layout_version is older).
- */
-export const APPLE_PASS_LAYOUT_VERSION = 3;
+// The pass layout this release builds (packages/db wallet.ts, where the worker's sweep reads it too).
+export { APPLE_PASS_LAYOUT_VERSION };
 
 /**
  * The authenticationToken of a card's pass at the epoch of `webSecret` (AC 11): 256 bits keyed with the pepper from

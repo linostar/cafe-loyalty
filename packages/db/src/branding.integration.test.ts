@@ -65,7 +65,7 @@ async function marked(change: () => Promise<unknown>): Promise<{ a: string[]; b:
   return { a: moved(before.a, after.a), b: moved(before.b, after.b) };
 }
 
-/** Every current Apple pass, and one current Google pass (its job writes the café's class; objects show nothing of the café). */
+/** Every current Apple pass, and one current Google pass (its job writes the café's class, which shows the name, logo and background). */
 const CURRENT = ["apple-x-2", "apple-y-2", "google-current"];
 /** Every current pass of both wallets: each Google object's stamp picture shows the shape, background and text colour. */
 const EVERY = ["apple-x-2", "apple-y-2", "google-current", "google-current"];

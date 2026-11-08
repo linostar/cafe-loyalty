@@ -138,6 +138,11 @@ describe("signup", () => {
     expect(response.body).toContain(`value="${phone}"`);
     expect(response.body).toContain('name="offers" value="yes" checked');
     expect(response.body).toMatch(/name="privacy" value="yes" required aria-describedby="privacy-text" checked/);
+    // Offers start ticked, but a customer who unticked them gets the form back unticked (AC 4).
+    const unticked = await join(app, code, uniquePhone(), { email: "nour@example" });
+    expect(unticked.statusCode).toBe(400);
+    expect(unticked.body).toContain('<input type="checkbox" name="offers" value="yes"> ');
+    expect(unticked.body).not.toContain('name="offers" value="yes" checked');
     expect(await auditActions(owner.cafeId)).not.toContain("card.created");
   });
 
@@ -407,6 +412,10 @@ describe("web card", () => {
     expect(picture.rawPayload.subarray(1, 4).toString("latin1")).toBe("PNG");
     // Asked again: the same picture, from memory.
     expect((await app.inject({ method: "GET", url: "/stamps/bean-1f5a85-ffffff-4-9.png" })).rawPayload.equals(picture.rawPayload)).toBe(true);
+    // Asked for at once before it is drawn: one drawing answers them all.
+    const together = await Promise.all([1, 2, 3].map(() => app.inject({ method: "GET", url: "/stamps/cup-1f5a85-ffffff-5-9.png" })));
+    expect(together.map((response) => response.statusCode)).toEqual([200, 200, 200]);
+    expect(together.every((response) => response.rawPayload.equals(together[0]?.rawPayload ?? Buffer.alloc(0)))).toBe(true);
     for (const file of ["star-1f5a85-ffffff-4-9.png", "bean-1f5a85-ffffff-10-9.png", "bean-1f5a85-ffffff-4-51.png", "bean-1F5A85-ffffff-4-9.png", "bean-1f5a85-ffffff-4-9.svg"]) {
       expect((await app.inject({ method: "GET", url: `/stamps/${file}` })).statusCode, file).toBe(404);
     }

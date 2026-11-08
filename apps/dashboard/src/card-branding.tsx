@@ -85,20 +85,18 @@ export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shap
   const t = useT(AR);
   const id = useId();
   const [picked, setPicked] = useState(shape);
-  const [saved, setSaved] = useState(false);
   const sending = useSubmit();
   return (
     <Form
       aria-label={t("Stamp shape")}
+      // A pick while a save is on its way: "Saved." would claim the new pick was saved.
+      onChange={sending.clearDone}
       onSubmit={(event) => {
         event.preventDefault();
         if (sending.pending) {
           return;
         }
-        setSaved(false);
-        void sending.submit(() => save(picked)).then((result) => {
-          setSaved(result.ok);
-        });
+        void sending.submit(() => save(picked));
       }}
     >
       <FormError message={sending.error} />
@@ -117,7 +115,6 @@ export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shap
                 checked={picked === option}
                 onChange={() => {
                   setPicked(option);
-                  setSaved(false);
                 }}
               />{" "}
               <StampIcon shape={option} full />
@@ -131,7 +128,7 @@ export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shap
           {sending.pending ? t("Saving…") : t("Save shape")}
         </button>
       </div>
-      <Notice>{saved ? t("Saved. Cards in wallets show the new shape within a few minutes.") : null}</Notice>
+      <Notice>{sending.done ? t("Saved. Cards in wallets show the new shape within a few minutes.") : null}</Notice>
     </Form>
   );
 }

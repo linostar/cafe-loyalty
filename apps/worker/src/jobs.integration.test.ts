@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
+  APPLE_PASS_LAYOUT_VERSION,
   APPLE_PASS_UPDATE_QUEUE,
+  GOOGLE_PASS_LAYOUT_VERSION,
   GOOGLE_PASS_UPDATE_QUEUE,
   createJobQueue,
   loadCardOffer,
@@ -118,10 +120,10 @@ async function passWithDevices(devices: number): Promise<{ cafeId: string; passI
   const passId = randomUUID();
   await admin.query("INSERT INTO app.cafes (id, name) VALUES ($1, 'Café')", [cafeId]);
   await admin.query("INSERT INTO app.cards (id, cafe_id, web_secret_hash, privacy_accepted_at) VALUES ($1, $2, $3, now())", [cardId, cafeId, randomBytes(32)]);
-  // Delivered, so a scheduled sweep during the tests leaves it alone.
+  // Delivered and on the current layout, so a scheduled sweep during the tests leaves it alone.
   await admin.query(
-    "INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, 1, pg_current_xact_id())",
-    [passId, cafeId, cardId, randomBytes(32)],
+    "INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, $5, pg_current_xact_id())",
+    [passId, cafeId, cardId, randomBytes(32), APPLE_PASS_LAYOUT_VERSION],
   );
   const tokens: string[] = [];
   for (let device = 0; device < devices; device += 1) {
@@ -150,11 +152,12 @@ async function googlePass({ epoch = 1, cardEpoch = 1 } = {}): Promise<{ cafeId: 
     randomBytes(32),
     cardEpoch,
   ]);
-  await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch, delivered_xid) VALUES ($1, $2, $3, $4, pg_current_xact_id())", [
+  await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch, layout_version, delivered_xid) VALUES ($1, $2, $3, $4, $5, pg_current_xact_id())", [
     passId,
     cafeId,
     cardId,
     epoch,
+    GOOGLE_PASS_LAYOUT_VERSION,
   ]);
   return { cafeId, cardId, passId };
 }
@@ -230,13 +233,18 @@ async function offerCard(cafeId: string, { optedIn = true, passes = false, onDev
   const googlePassId = randomUUID();
   const token = onDevice ? randomBytes(32).toString("hex") : "";
   await admin.query(
-    "INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, 2, pg_current_xact_id())",
-    [applePassId, cafeId, cardId, randomBytes(32)],
+    "INSERT INTO app.apple_passes (id, cafe_id, card_id, epoch, auth_token_hash, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, $5, pg_current_xact_id())",
+    [applePassId, cafeId, cardId, randomBytes(32), APPLE_PASS_LAYOUT_VERSION],
   );
   if (onDevice) {
     await admin.query("INSERT INTO app.apple_pass_registrations (cafe_id, pass_id, device_library_hash, push_token) VALUES ($1, $2, $3, $4)", [cafeId, applePassId, randomBytes(32), token]);
   }
-  await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch, delivered_xid) VALUES ($1, $2, $3, 1, pg_current_xact_id())", [googlePassId, cafeId, cardId]);
+  await admin.query("INSERT INTO app.google_passes (id, cafe_id, card_id, epoch, layout_version, delivered_xid) VALUES ($1, $2, $3, 1, $4, pg_current_xact_id())", [
+    googlePassId,
+    cafeId,
+    cardId,
+    GOOGLE_PASS_LAYOUT_VERSION,
+  ]);
   return { cardId, applePassId, googlePassId, token };
 }
 
@@ -603,6 +611,43 @@ describe("job queue", () => {
       expect(pusher.pushed).not.toContain(settled.tokens[0]);
       expect(wallet.saved.map((save) => save.object.id)).toEqual([`${GOOGLE.issuerId}.card-${google.cardId}-1`]);
       // Delivered now: the next sweep finds nothing.
+      const again = (await boss.send(RESEND_QUEUE)) ?? "";
+      expect(await finished(boss, RESEND_QUEUE, again, "completed")).toMatchObject({ output: { found: 0, queued: 0 } });
+    } finally {
+      await task.stop();
+    }
+  });
+
+  it("moves passes on an older layout onto this release's, once, so a pass nobody stamps gets the new layout too", async () => {
+    const apple = await passWithDevices(1);
+    const google = await googlePass();
+    // As an earlier release left them: delivered, on its layouts.
+    await admin.query("UPDATE app.apple_passes SET layout_version = $2 WHERE id = $1", [apple.passId, APPLE_PASS_LAYOUT_VERSION - 1]);
+    await admin.query("UPDATE app.google_passes SET layout_version = 1 WHERE id = $1", [google.passId]);
+    const modifiedAt = async () => (await admin.query<{ modified_at: Date }>("SELECT modified_at FROM app.apple_passes WHERE id = $1", [apple.passId])).rows[0]?.modified_at;
+    const before = await modifiedAt();
+    const { boss, task, pusher, wallet } = jobQueue();
+    await task.start();
+    try {
+      const id = (await boss.send(RESEND_QUEUE)) ?? "";
+      expect(await finished(boss, RESEND_QUEUE, id, "completed")).toMatchObject({ output: { found: 2, queued: 2 } });
+      await vi.waitFor(
+        async () => {
+          expect(await deliveryState("apple_passes", apple.passId)).toMatchObject({ delivered: true });
+          expect(await deliveryState("google_passes", google.passId)).toMatchObject({ delivered: true });
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      expect(pusher.pushed).toEqual(apple.tokens);
+      expect(wallet.saved.map((save) => save.object)).toEqual([expect.objectContaining({ heroImage: expect.anything() as unknown })]);
+      // Recorded on the passes (the migration's numbers are this release's), and a newer Last-Modified, so devices fetch it.
+      const { rows } = await admin.query<{ apple: number; google: number }>(
+        "SELECT (SELECT layout_version FROM app.apple_passes WHERE id = $1) AS apple, (SELECT layout_version FROM app.google_passes WHERE id = $2) AS google",
+        [apple.passId, google.passId],
+      );
+      expect(rows).toEqual([{ apple: APPLE_PASS_LAYOUT_VERSION, google: GOOGLE_PASS_LAYOUT_VERSION }]);
+      expect((await modifiedAt())?.getTime()).toBeGreaterThan(before?.getTime() ?? Infinity);
+      // Once: the next sweep finds nothing.
       const again = (await boss.send(RESEND_QUEUE)) ?? "";
       expect(await finished(boss, RESEND_QUEUE, again, "completed")).toMatchObject({ output: { found: 0, queued: 0 } });
     } finally {
