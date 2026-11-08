@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import {
   feedbackUrl,
-  googleLogoUrl,
   googleLoyaltyClass,
   googleLoyaltyObject,
   googleOfferMessage,
+  loadCafeBranding,
   loadCardOffer,
   loadFeedbackRequest,
   offerKey,
@@ -15,7 +16,11 @@ import {
 } from "@cafe-loyalty/db";
 import { sql, type Kysely } from "kysely";
 import type { Logger } from "pino";
+import { DeliveryError } from "./delivery.js";
 import type { GoogleWallet, SaveResult } from "./google-wallet.js";
+
+/** What the café's class was last written as (cafes.google_class_hash): a class built differently is written again. */
+const classHashOf = (loyaltyClass: unknown): Buffer => createHash("sha256").update(JSON.stringify(loyaltyClass)).digest();
 
 /** What the worker needs to build Google objects as the server does: the issuer, the site (logo, feedback links) and the QR keys. */
 export interface GooglePassSettings {
@@ -53,7 +58,8 @@ export async function writeGooglePass(
     }
     return {
       pass,
-      cafe: await trx.selectFrom("cafes").select(["id", "name"]).where("id", "=", job.cafeId).executeTakeFirstOrThrow(),
+      cafe: await loadCafeBranding(trx, job.cafeId),
+      classHash: (await trx.selectFrom("cafes").select("google_class_hash").where("id", "=", job.cafeId).executeTakeFirstOrThrow()).google_class_hash,
       program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
       offers: await loadCardOffer(trx, pass.card_id),
       feedback: await loadFeedbackRequest(trx, pass.card_id),
@@ -73,6 +79,43 @@ export async function writeGooglePass(
     return { result: "gone" };
   }
   const { pass, cafe, program } = found;
+  // The café's class as it now is: written again first when the café's name, logo or colour changed since the last
+  // one written (the change also marked one of its passes, whose job writes it), and recorded once Google has it.
+  // Before the offer is recorded as told below, so a failed class write never costs the card its notification.
+  let loyaltyClass = googleLoyaltyClass(settings.issuerId, cafe, settings.publicUrl);
+  let classHash = classHashOf(loyaltyClass);
+  if (found.classHash?.equals(classHash) !== true) {
+    // Another job of the café may write a class built before or after this one, its write landing at Google in any
+    // order. Rather than hold a transaction (and the café's row) open across Google's answer, each job reads the café
+    // again once its write has landed: if the class it wrote is not the café's now, it writes the current one. So the
+    // last write to land is always followed by a check that sees the latest change (a change after that check marks
+    // a pass again, whose job writes it).
+    for (let attempt = 1; ; attempt += 1) {
+      await wallet.saveClass(loyaltyClass);
+      const written = classHash;
+      const now = await withCafe(db, job.cafeId, async (trx) => {
+        const latest = googleLoyaltyClass(settings.issuerId, await loadCafeBranding(trx, job.cafeId), settings.publicUrl);
+        const latestHash = classHashOf(latest);
+        if (latestHash.equals(written)) {
+          await trx.updateTable("cafes").set({ google_class_hash: written }).where("id", "=", job.cafeId).execute();
+        }
+        return { latest, latestHash };
+      });
+      if (now.latestHash.equals(written)) {
+        break;
+      }
+      if (attempt === 3) {
+        // The café keeps changing: pg-boss retries the job later. The recorded class is forgotten first: a newer job
+        // may have recorded its class while this one's last write landed after it, so whichever job runs next writes
+        // the class again rather than trusting that record.
+        await withCafe(db, job.cafeId, (trx) => trx.updateTable("cafes").set({ google_class_hash: null }).where("id", "=", job.cafeId).execute());
+        throw new DeliveryError("The café's card changed while its Google class was written.", "google_class_changed");
+      }
+      loyaltyClass = now.latest;
+      classHash = now.latestHash;
+    }
+    logger.info("google class written");
+  }
   const current = pass.epoch === pass.card_epoch;
   const offer = current ? found.offers.offer : undefined;
   // Only a pass that existed when the offer was announced (one saved since, on a new phone, shows it silently), and
@@ -98,7 +141,7 @@ export async function writeGooglePass(
   });
   let result: SaveResult;
   try {
-    result = await wallet.save(googleLoyaltyClass(settings.issuerId, cafe, googleLogoUrl(settings.publicUrl)), object, current, notify ? googleOfferMessage(offer) : undefined);
+    result = await wallet.save(loyaltyClass, object, current, notify ? googleOfferMessage(offer) : undefined);
   } catch (error) {
     if (notify) {
       // Recorded as told already, so the retry writes the offer silently: unless Google applied the write and only its

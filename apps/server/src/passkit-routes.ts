@@ -1,4 +1,4 @@
-import { feedbackUrl, loadCardOffer, loadFeedbackRequest, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
+import { feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Kysely } from "kysely";
 import { APPLE_PASS_LAYOUT_VERSION, buildApplePass, type ApplePassConfig } from "./apple-pass.js";
@@ -186,9 +186,17 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
         return undefined;
       }
       const card = await trx.selectFrom("cards").select(["epoch", "stamps"]).where("id", "=", pass.card_id).executeTakeFirstOrThrow();
-      const cafe = await trx.selectFrom("cafes").select("name").where("id", "=", pass.cafe_id).executeTakeFirstOrThrow();
+      const cafe = await loadCafeBranding(trx, pass.cafe_id);
       const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
-      return { modifiedAt: row.modified_at, card, cafeName: cafe.name, program, offers: await loadCardOffer(trx, pass.card_id), feedback: await loadFeedbackRequest(trx, pass.card_id) };
+      return {
+        modifiedAt: row.modified_at,
+        card,
+        cafe,
+        logo: await loadAppleLogo(trx, pass.cafe_id),
+        program,
+        offers: await loadCardOffer(trx, pass.card_id),
+        feedback: await loadFeedbackRequest(trx, pass.card_id),
+      };
     });
     if (found === undefined) {
       return reply.code(304).send();
@@ -197,7 +205,9 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
     const pkpass = buildApplePass(apple, options.publicUrl, {
       serialNumber: pass.id,
       authenticationToken: pass.token,
-      cafeName: found.cafeName,
+      cafeName: found.cafe.name,
+      colors: found.cafe.colors,
+      logo: found.logo,
       stamps: found.card.stamps,
       program:
         found.program === undefined

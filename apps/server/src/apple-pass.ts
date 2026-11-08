@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { crc32, deflateSync } from "node:zlib";
-import { PASS_BACKGROUND, offerText, type CardOffer } from "@cafe-loyalty/db";
+import { offerText, type CardOffer } from "@cafe-loyalty/db";
+import type { CardColors } from "@cafe-loyalty/shared";
 import { PKPass } from "passkit-generator";
 import type { CustomerSecrets } from "./customer-crypto.js";
 import { count, t, type Lang } from "./customer-html.js";
@@ -33,6 +34,10 @@ export interface ApplePassContent {
   serialNumber: string;
   authenticationToken: string;
   cafeName: string;
+  /** The café's card colours (#rrggbb). */
+  colors: CardColors;
+  /** The café's logo as Apple's logo.png at 1x, 2x and 3x, or undefined: the pass then shows the café's name alone. */
+  logo: { apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined;
   stamps: number;
   program: { stampsRequired: number; rewardNameAr: string; rewardNameEn: string } | undefined;
   /** The card's QR token, or null for a pass of an earlier epoch (the card moved to another phone): voided. */
@@ -72,8 +77,20 @@ export function solidPng(size: number, rgb: readonly [number, number, number]): 
   ]);
 }
 
-/** Apple's icon sizes: 29 points at 1x, 2x and 3x. */
-const ICONS = { "icon.png": solidPng(29, PASS_BACKGROUND), "icon@2x.png": solidPng(58, PASS_BACKGROUND), "icon@3x.png": solidPng(87, PASS_BACKGROUND) };
+/** A #rrggbb colour's channels. */
+const channels = (hex: string): [number, number, number] => {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+};
+
+/** A #rrggbb colour as pass.json takes it. */
+const rgb = (hex: string): string => `rgb(${channels(hex).join(", ")})`;
+
+/** Apple's icon sizes, 29 points at 1x, 2x and 3x: squares of the card's background. */
+const icons = (background: string) => {
+  const fill = channels(background);
+  return { "icon.png": solidPng(29, fill), "icon@2x.png": solidPng(58, fill), "icon@3x.png": solidPng(87, fill) };
+};
 
 /** A value for a pass.strings file, which passkit-generator writes between quotes as given. */
 const stringsValue = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
@@ -150,9 +167,10 @@ export function buildApplePass(config: ApplePassConfig, publicUrl: string, conte
     description: "description",
     logoText: content.cafeName,
     sharingProhibited: true,
-    backgroundColor: `rgb(${PASS_BACKGROUND.join(", ")})`,
-    foregroundColor: "rgb(255, 255, 255)",
-    labelColor: "rgb(235, 214, 190)",
+    // The café's colours: no field takes a changeMessage from them, so a new colour reaches the pass silently (AC 14).
+    backgroundColor: rgb(content.colors.background),
+    foregroundColor: rgb(content.colors.foreground),
+    labelColor: rgb(content.colors.label),
     ...(content.qr === null ? { voided: true } : { barcodes: [{ format: "PKBarcodeFormatQR", message: content.qr, messageEncoding: "iso-8859-1" }] }),
     storeCard: {
       primaryFields: [{ key: "stamps", label: "stamps_label", value: "stamps_value" }],
@@ -166,7 +184,8 @@ export function buildApplePass(config: ApplePassConfig, publicUrl: string, conte
       ],
     },
   };
-  const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...ICONS }, config.certificates);
+  const logo = content.logo === undefined ? {} : { "logo.png": content.logo.apple1x, "logo@2x.png": content.logo.apple2x, "logo@3x.png": content.logo.apple3x };
+  const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...icons(content.colors.background), ...logo }, config.certificates);
   for (const lang of ["ar", "en"] as const) {
     pass.localize(lang, passStrings(lang, content));
   }

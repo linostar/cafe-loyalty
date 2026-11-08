@@ -371,3 +371,47 @@ a.action-link:hover {
   border-color: var(--color-accent-hover);
   background: var(--color-accent-hover);
 }
+
+/*
+ * A preview of a café's card face (its colours, logo and name), as customers see the web card and their wallets. Its
+ * colours are the café's, given as --card-background, --card-foreground and --card-label on the face; the product's
+ * espresso otherwise.
+ */
+.card-preview {
+  max-inline-size: var(--content-narrow);
+  margin: 0;
+}
+
+.card-preview-face {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--card-background, var(--color-espresso));
+  color: var(--card-foreground, var(--color-on-espresso));
+}
+
+.card-preview-face img {
+  display: block;
+  margin-block-end: var(--space-2);
+  object-fit: contain;
+}
+
+.card-preview-face p {
+  margin: 0;
+}
+
+.card-preview-label {
+  color: var(--card-label, var(--color-on-espresso-muted));
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+}
+
+.card-preview-name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.card-preview .hint {
+  margin-block-start: var(--space-2);
+}

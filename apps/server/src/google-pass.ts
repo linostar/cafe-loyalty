@@ -1,4 +1,4 @@
-import { PASS_BACKGROUND, googleLogoUrl, googleLoyaltyClass, googleLoyaltyObject, signJwt, type GoogleLoyaltyObject, type GooglePassContent, type GoogleWalletConfig } from "@cafe-loyalty/db";
+import { PASS_BACKGROUND, googleLoyaltyClass, googleLoyaltyObject, signJwt, type CafeBranding, type GoogleLoyaltyObject, type GooglePassContent, type GoogleWalletConfig } from "@cafe-loyalty/db";
 import { readFileSync } from "node:fs";
 import { solidPng } from "./apple-pass.js";
 import type { Lang } from "./customer-html.js";
@@ -21,7 +21,7 @@ function saveLinkObject(object: GoogleLoyaltyObject) {
  * and texts, which the write queued with the link adds seconds later (or the worker's sweep, without a job queue):
  * Google advises save links under about 1,800 characters, and the whole bilingual object is nearly twice that.
  */
-export function googleSaveUrl(config: GoogleWalletConfig, publicUrl: string, cafe: { id: string; name: string }, content: GooglePassContent): string {
+export function googleSaveUrl(config: GoogleWalletConfig, publicUrl: string, cafe: CafeBranding, content: GooglePassContent): string {
   const jwt = signJwt(
     {
       iss: config.serviceAccount.email,
@@ -31,7 +31,7 @@ export function googleSaveUrl(config: GoogleWalletConfig, publicUrl: string, caf
       // A link, not Google's JavaScript button, so no page origins.
       origins: [],
       payload: {
-        loyaltyClasses: [googleLoyaltyClass(config.issuerId, cafe, googleLogoUrl(publicUrl))],
+        loyaltyClasses: [googleLoyaltyClass(config.issuerId, cafe, publicUrl)],
         loyaltyObjects: [saveLinkObject(googleLoyaltyObject(config.issuerId, content))],
       },
     },

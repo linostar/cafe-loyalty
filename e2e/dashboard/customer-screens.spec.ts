@@ -3,7 +3,8 @@ import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { expectEveryControlNamed, expectLanguageAndFit, expectNoAxeViolations, expectTextSpacing, expectTextZoom, expectTouchTargets, expectUsableInForcedColors } from "../a11y.js";
 import { renderSVG } from "uqr";
-import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, t, type Lang } from "../../apps/server/src/customer-html.js";
+import { DEFAULT_CARD_COLORS } from "@cafe-loyalty/shared";
+import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, cardStyle, customerCsp, t, type Lang } from "../../apps/server/src/customer-html.js";
 import {
   cardSettingsView,
   cardView,
@@ -44,6 +45,8 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
   cardView(lang, {
     path: "/c/fake",
     cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
+    colors: { ...DEFAULT_CARD_COLORS },
+    logoPath: null,
     stamps: 4,
     program: PROGRAM[lang],
     qr: QR,
@@ -92,8 +95,15 @@ const feedback = (lang: Lang, overrides: Partial<FeedbackView> = {}) =>
     ...overrides,
   });
 
-/** Every customer page and state, each rendered in both languages (named `<view>-<lang>`), messages from the real catalog. */
-const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
+/** A café with colours and a logo of its own (set by the operator; the logo is served at its hash's address). */
+const BRANDED = { colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logoPath: `/logos/${"ab".repeat(32)}.png` };
+
+/**
+ * Every customer page and state, each rendered in both languages (named `<view>-<lang>`), messages from the real catalog,
+ * with the policy the server sends it (a card with the café's own colours allows its own stylesheet too).
+ */
+const VIEWS: readonly [name: string, view: (lang: Lang) => string, csp?: string][] = [
+  ["card-branded", (lang) => card(lang, BRANDED), customerCsp(cardStyle(BRANDED.colors))],
   ["join", (lang) => join(lang)],
   ["join-errors", (lang) => join(lang, { phone: t(lang, "phoneInvalid"), email: t(lang, "emailInvalid"), privacy: t(lang, "privacyRequired") })],
   ["card", (lang) => card(lang)],
@@ -141,10 +151,10 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string][] = [
   ),
 ];
 
-const PAGES = VIEWS.flatMap(([name, view]) => (["en", "ar"] as const).map((lang) => ({ name: `${name}-${lang}`, html: view(lang), lang })));
+const PAGES = VIEWS.flatMap(([name, view, csp = CUSTOMER_CSP]) => (["en", "ar"] as const).map((lang) => ({ name: `${name}-${lang}`, html: view(lang), lang, csp })));
 
-/** Serves `html` at the origin's root as the server would, with the customer pages' fonts and logo next to it. */
-async function serve(page: Page, html: string): Promise<{ blocked: string[] }> {
+/** Serves `html` at the origin's root as the server would, with its policy, and the customer pages' fonts and logos next to it. */
+async function serve(page: Page, html: string, csp = CUSTOMER_CSP): Promise<{ blocked: string[] }> {
   const blocked: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error" && /Content Security Policy/i.test(message.text())) {
@@ -160,10 +170,11 @@ async function serve(page: Page, html: string): Promise<{ blocked: string[] }> {
         : route.fulfill({ status: 200, contentType: file.endsWith(".woff2") ? "font/woff2" : "font/woff", body: await readFile(file) }));
     } else if (pathname === LOGO_PATH) {
       await route.fulfill({ status: 200, contentType: "image/svg+xml", body: await readFile(LOGO_SVG_PATH) });
-    } else if (pathname === ICON_PATH) {
+    } else if (pathname === ICON_PATH || pathname.startsWith("/logos/")) {
+      // A café's logo is a square PNG: the product's icon stands in for one.
       await route.fulfill({ status: 200, contentType: "image/png", body: await readFile(ICON_PNG_PATH) });
     } else {
-      await route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", headers: { "content-security-policy": CUSTOMER_CSP }, body: html });
+      await route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", headers: { "content-security-policy": csp }, body: html });
     }
   });
   return { blocked };
@@ -180,9 +191,9 @@ for (const width of [1440, 1024, 390, 320] as const) {
   test.describe(`customer pages at ${String(width)} px`, () => {
     test.use({ viewport: { width, height: width <= 390 ? 844 : 900 }, isMobile: width <= 390, hasTouch: width <= 390 });
 
-    for (const { name, html, lang } of PAGES) {
+    for (const { name, html, lang, csp } of PAGES) {
       test(name, async ({ page }, testInfo) => {
-        const { blocked } = await serve(page, html);
+        const { blocked } = await serve(page, html, csp);
         await page.goto(`${ORIGIN}/`);
         // Every page, error pages included, has one level-one heading.
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

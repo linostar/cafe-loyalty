@@ -78,8 +78,16 @@ describe("Google Wallet objects", () => {
     expect(googleObjectId(ISSUER, CONTENT.cardId, 2)).toMatch(/^\d+\.[A-Za-z0-9._-]+$/);
   });
 
+  it("builds the café's class with its own logo and background, or the product's logo", () => {
+    const hash = Buffer.alloc(32, 0xab);
+    expect(
+      googleLoyaltyClass(ISSUER, { id: CONTENT.cafeId, name: "Café Nour", colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logoHash: hash }, "https://card.example.test"),
+    ).toMatchObject({ issuerName: "Café Nour", hexBackgroundColor: "#1f5a85", programLogo: { sourceUri: { uri: `https://card.example.test/logos/${"ab".repeat(32)}.png` } } });
+  });
+
   it("builds the café's class in both languages", () => {
-    expect(googleLoyaltyClass(ISSUER, { id: CONTENT.cafeId, name: "Café Najjar" }, "https://card.example.test/wallet/logo.png")).toEqual({
+    const branding = { id: CONTENT.cafeId, name: "Café Najjar", colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null };
+    expect(googleLoyaltyClass(ISSUER, branding, "https://card.example.test")).toEqual({
       id: googleClassId(ISSUER, CONTENT.cafeId),
       issuerName: "Café Najjar",
       programName: "Loyalty card",

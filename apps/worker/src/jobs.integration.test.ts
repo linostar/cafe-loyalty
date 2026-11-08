@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   APPLE_PASS_UPDATE_QUEUE,
   GOOGLE_PASS_UPDATE_QUEUE,
@@ -60,9 +60,22 @@ class FakeGoogleWallet implements GoogleWallet {
   readonly saved: { loyaltyClass: GoogleLoyaltyClass; object: GoogleLoyaltyObject; create: boolean; message: GoogleOfferMessage | undefined }[] = [];
   answer: SaveResult | Error = "updated";
 
+  /** Every class written on its own (a café's name, logo or colour changed). */
+  readonly classes: GoogleLoyaltyClass[] = [];
+
   save(loyaltyClass: GoogleLoyaltyClass, object: GoogleLoyaltyObject, create: boolean, message?: GoogleOfferMessage): Promise<SaveResult> {
     this.saved.push({ loyaltyClass, object, create, message });
     return this.answer instanceof Error ? Promise.reject(this.answer) : Promise.resolve(this.answer);
+  }
+
+  /** Run while the next class is being written: a change another job reads meanwhile. */
+  whileWritingClass: (() => Promise<unknown>) | undefined;
+
+  async saveClass(loyaltyClass: GoogleLoyaltyClass): Promise<void> {
+    this.classes.push(loyaltyClass);
+    const meanwhile = this.whileWritingClass;
+    this.whileWritingClass = undefined;
+    await meanwhile?.();
   }
 }
 
@@ -424,6 +437,70 @@ describe("job queue", () => {
     } finally {
       await task.stop();
     }
+  });
+
+  it("writes the café's class again only after its name, logo or colour changed, with its own logo and background", async () => {
+    const pass = await googlePass();
+    const wallet = new FakeGoogleWallet();
+    const logger = pino({ level: "silent" });
+    const job = { cafeId: pass.cafeId, passId: pass.passId };
+    await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job);
+    expect(wallet.classes).toEqual([expect.objectContaining({ issuerName: "Café Najjar", hexBackgroundColor: "#4a2c2a" })]);
+    // Nothing about the café changed: the object alone is written.
+    await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job);
+    expect(wallet.classes).toHaveLength(1);
+
+    const hash = randomBytes(32);
+    const image = Buffer.from([0]);
+    await admin.query("UPDATE app.cafes SET name = 'Café Nour', card_background = '#1f5a85' WHERE id = $1", [pass.cafeId]);
+    await admin.query("INSERT INTO app.cafe_logos (cafe_id, hash, square, apple_1x, apple_2x, apple_3x) VALUES ($1, $2, $3, $3, $3, $3)", [pass.cafeId, hash, image]);
+    await writeGooglePass(db.app.db, wallet, GOOGLE, logger, job);
+    expect(wallet.classes).toHaveLength(2);
+    expect(wallet.classes[1]).toMatchObject({
+      issuerName: "Café Nour",
+      hexBackgroundColor: "#1f5a85",
+      programLogo: { sourceUri: { uri: `https://card.example.test/logos/${hash.toString("hex")}.png` } },
+    });
+    expect(wallet.saved[2]?.loyaltyClass).toEqual(wallet.classes[1]);
+    // Written here without a job, so recorded as delivered by hand: the sweep tests count every undelivered pass.
+    await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE id = $1", [pass.passId]);
+  });
+
+  it("writes the café's class again when the café changed while Google took it, so an older class never stays", async () => {
+    const pass = await googlePass();
+    const wallet = new FakeGoogleWallet();
+    // Renamed while the class built from the old name is on its way: another job writes the new one meanwhile, and
+    // this one's write may land after it.
+    wallet.whileWritingClass = () => admin.query("UPDATE app.cafes SET name = 'Café Nour' WHERE id = $1", [pass.cafeId]);
+    await writeGooglePass(db.app.db, wallet, GOOGLE, pino({ level: "silent" }), { cafeId: pass.cafeId, passId: pass.passId });
+    expect(wallet.classes.map((loyaltyClass) => loyaltyClass.issuerName)).toEqual(["Café Najjar", "Café Nour"]);
+    expect(wallet.saved[0]?.loyaltyClass).toEqual(wallet.classes[1]);
+    // Only the class the café has now is recorded as written.
+    const { rows } = await admin.query<{ google_class_hash: Buffer }>("SELECT google_class_hash FROM app.cafes WHERE id = $1", [pass.cafeId]);
+    expect(rows[0]?.google_class_hash).toEqual(createHash("sha256").update(JSON.stringify(wallet.classes[1])).digest());
+    await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE cafe_id = $1", [pass.cafeId]);
+  });
+
+  it("gives up on a café that changes under every class write, forgetting the recorded class so the retry writes it", async () => {
+    const pass = await googlePass();
+    await admin.query("UPDATE app.cafes SET google_class_hash = $2 WHERE id = $1", [pass.cafeId, randomBytes(32)]);
+    const wallet = new FakeGoogleWallet();
+    let renames = 0;
+    // A rename during every write (the hook disarms itself after each one, so it arms itself again).
+    const rename = () => {
+      renames += 1;
+      wallet.whileWritingClass = rename;
+      return admin.query("UPDATE app.cafes SET name = $2 WHERE id = $1", [pass.cafeId, `Café ${String(renames)}`]);
+    };
+    wallet.whileWritingClass = rename;
+    await expect(writeGooglePass(db.app.db, wallet, GOOGLE, pino({ level: "silent" }), { cafeId: pass.cafeId, passId: pass.passId })).rejects.toMatchObject({
+      code: "google_class_changed",
+    });
+    expect(wallet.classes).toHaveLength(3);
+    expect(wallet.saved).toHaveLength(0);
+    const { rows } = await admin.query<{ google_class_hash: Buffer | null }>("SELECT google_class_hash FROM app.cafes WHERE id = $1", [pass.cafeId]);
+    expect(rows[0]?.google_class_hash).toBeNull();
+    await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE cafe_id = $1", [pass.cafeId]);
   });
 
   it("writes an earlier epoch's Google object INACTIVE, without the QR, and only if it exists (AC 8)", async () => {

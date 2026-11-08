@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { PASS_TEXT } from "@cafe-loyalty/db";
-import { PRODUCT_NAME } from "@cafe-loyalty/shared";
+import { DEFAULT_CARD_COLORS, PRODUCT_NAME, type CardColors } from "@cafe-loyalty/shared";
 import { selfHostedFonts, stylesheets, tokenValue } from "@cafe-loyalty/ui";
 
 export type Lang = "ar" | "en";
@@ -64,16 +64,38 @@ export const FONT_FILES = fonts.files;
  */
 const STYLE = `${fonts.css}\n${stylesheets(["tokens", "base", "customer"])}`;
 
-/** Content-Security-Policy for every customer page: no scripts, no outside resources, only our own forms, fonts and logo. */
-export const CUSTOMER_CSP = [
-  "default-src 'none'",
-  `style-src 'sha256-${createHash("sha256").update(STYLE).digest("base64")}'`,
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "form-action 'self'",
-  "base-uri 'none'",
-  "frame-ancestors 'none'",
-].join("; ");
+const styleHash = (style: string): string => `'sha256-${createHash("sha256").update(style).digest("base64")}'`;
+
+/**
+ * Content-Security-Policy for a customer page: no scripts, no outside resources, only our own forms, fonts and images
+ * (the logos included), and only the one stylesheet, plus `extraStyle` when the page has one (a café's card colours).
+ */
+export const customerCsp = (extraStyle?: string): string =>
+  [
+    "default-src 'none'",
+    `style-src ${[STYLE, ...(extraStyle === undefined ? [] : [extraStyle])].map(styleHash).join(" ")}`,
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "form-action 'self'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+
+/** The policy of every customer page without a stylesheet of its own. */
+export const CUSTOMER_CSP = customerCsp();
+
+/**
+ * The stylesheet giving a card face its café's colours (customer.css reads them), or undefined for a café on the
+ * product's colours, whose card stays as it always looked. Only #rrggbb values (as the database keeps them) go in. The
+ * copper glow goes: over the café's own background it would lower the 4.5:1 the operator was promised.
+ */
+export function cardStyle(colors: CardColors): string | undefined {
+  const isDefault = colors.background === DEFAULT_CARD_COLORS.background && colors.foreground === DEFAULT_CARD_COLORS.foreground && colors.label === DEFAULT_CARD_COLORS.label;
+  if (isDefault || ![colors.background, colors.foreground, colors.label].every((color) => /^#[0-9a-f]{6}$/.test(color))) {
+    return undefined;
+  }
+  return `.card-face{--card-background:${colors.background};--card-foreground:${colors.foreground};--card-label:${colors.label};--card-glow:transparent}`;
+}
 
 /** Strings for the customer pages. `{name}` style placeholders are filled by `t`. */
 const MESSAGES = {
@@ -326,7 +348,7 @@ export function count(lang: Lang, noun: keyof typeof COUNTED, n: number): string
  * switch unless `otherLangHref` is null (a page that cannot be loaded again, such as freshly restored card links), and
  * the product's name in the footer.
  */
-export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: string | null): string {
+export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: string | null, extraStyle?: string): string {
   return `<!doctype html>${html`<html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}">
 <head>
 <meta charset="utf-8">
@@ -339,6 +361,7 @@ export function page(lang: Lang, title: string, body: SafeHtml, otherLangHref: s
 <link rel="apple-touch-icon" href="${ICON_PATH}">
 <meta name="theme-color" content="${THEME_COLOR}">
 <style>${new SafeHtml(STYLE)}</style>
+${extraStyle === undefined ? null : html`<style>${new SafeHtml(extraStyle)}</style>`}
 </head>
 <body>
 <main>

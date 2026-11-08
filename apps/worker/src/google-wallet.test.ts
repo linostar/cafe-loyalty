@@ -10,7 +10,11 @@ const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 20
 const SERVICE_ACCOUNT = { email: "wallet@example-test.iam.gserviceaccount.com", privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString() };
 const ISSUER = "3388000000012345678";
 const QR = "test-qr-token-that-must-never-be-logged";
-const CLASS = googleLoyaltyClass(ISSUER, { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", name: "Café Najjar" }, "https://card.example.test/wallet/logo.png");
+const CLASS = googleLoyaltyClass(
+  ISSUER,
+  { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", name: "Café Najjar", colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null },
+  "https://card.example.test",
+);
 const OBJECT = googleLoyaltyObject(ISSUER, { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", epoch: 1, stamps: 2, program: undefined, qr: QR, offer: undefined, feedbackUrl: undefined });
 const MESSAGE = googleOfferMessage({
   kind: "campaign",
@@ -104,6 +108,30 @@ describe("Google Wallet client", () => {
     expect(await google.wallet.save(CLASS, OBJECT, true)).toBe("created");
     expect(await google.wallet.save(CLASS, OBJECT, false)).toBe("missing");
     expect(google.api()).toEqual([`PUT ${objectPath}`, "POST /walletobjects/v1/loyaltyClass", "POST /walletobjects/v1/loyaltyObject", `PUT ${objectPath}`]);
+  });
+
+  it("replaces a café's class with the whole of it, creating it when Google has none", async () => {
+    const classPath = `/walletobjects/v1/loyaltyClass/${encodeURIComponent(CLASS.id)}`;
+    const google = await fakeGoogle([{ status: 200 }, { status: 404 }, { status: 200 }, { status: 404 }, { status: 409 }, { status: 200 }]);
+    await google.wallet.saveClass(CLASS);
+    await google.wallet.saveClass(CLASS);
+    // Made by another job in the meantime, maybe from older branding: replaced with this class.
+    await google.wallet.saveClass(CLASS);
+    expect(google.api()).toEqual([
+      `PUT ${classPath}`,
+      `PUT ${classPath}`,
+      "POST /walletobjects/v1/loyaltyClass",
+      `PUT ${classPath}`,
+      "POST /walletobjects/v1/loyaltyClass",
+      `PUT ${classPath}`,
+    ]);
+    expect(JSON.parse(google.seen.find((request) => request.method === "PUT")?.body ?? "{}")).toEqual(CLASS);
+    expect(CLASS).toMatchObject({ hexBackgroundColor: "#4a2c2a", programLogo: { sourceUri: { uri: "https://card.example.test/wallet/logo.png" } } });
+  });
+
+  it("fails a class write Google refuses, with its status as the code", async () => {
+    const google = await fakeGoogle([{ status: 403, body: { error: { status: "PERMISSION_DENIED" } } }]);
+    await expect(google.wallet.saveClass(CLASS)).rejects.toMatchObject({ code: "google_403_PERMISSION_DENIED" });
   });
 
   it("updates an object the customer saved between its update and its insert", async () => {

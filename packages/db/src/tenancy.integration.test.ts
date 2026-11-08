@@ -225,6 +225,11 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .values({ cafe_id: cafeId, pass_id: idOf("applePass", cafeId), device_library_hash: randomBytes(32), push_token: "ab".repeat(32) })
       .execute(),
   google_passes: (trx, cafeId) => trx.insertInto("google_passes").values({ cafe_id: cafeId, card_id: idOf("card", cafeId), epoch: 1 }).execute(),
+  cafe_logos: (trx, cafeId) =>
+    trx
+      .insertInto("cafe_logos")
+      .values({ cafe_id: cafeId, hash: randomBytes(32), square: randomBytes(8), apple_1x: randomBytes(8), apple_2x: randomBytes(8), apple_3x: randomBytes(8) })
+      .execute(),
   card_lapses: (trx, cafeId) =>
     trx
       .insertInto("card_lapses")

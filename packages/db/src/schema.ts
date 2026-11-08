@@ -27,6 +27,12 @@ export interface CafesTable {
   setup_finished_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
   /** When the signup QR was first printed from the dashboard (D6, D22), or null. */
   signup_qr_printed_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  /** The card's background, text and label colours (#rrggbb, lowercase), set by the operator; today's espresso by default. */
+  card_background: Generated<string>;
+  card_foreground: Generated<string>;
+  card_label: Generated<string>;
+  /** SHA-256 of the Google loyalty class the worker last wrote for the café, or null (written again when it differs). */
+  google_class_hash: ColumnType<Buffer | null, never, Buffer | null>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -455,6 +461,25 @@ export interface ApplePassRegistrationsTable {
   updated_at: UpdatedAt;
 }
 
+/**
+ * A café's logo in the sizes its cards use; hash is the SHA-256 of the square PNG, served at /logos/<hash>.png. All
+ * null once removed. The previous logo, kept by a trigger on each change, is still served until the next one.
+ */
+export interface CafeLogosTable {
+  cafe_id: ColumnType<string, string, never>;
+  hash: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  /** A square PNG (the Google class and the web card). */
+  square: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  /** Apple's logo.png at 1x, 2x and 3x. */
+  apple_1x: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  apple_2x: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  apple_3x: ColumnType<Buffer | null, Buffer, Buffer | null>;
+  previous_hash: ColumnType<Buffer | null, never, never>;
+  previous_square: ColumnType<Buffer | null, never, never>;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
 export interface CustomerRecoveryTokensTable {
   id: ColumnType<string, string | undefined, never>;
   /** HMAC of the email the link was sent to; one link per email. */
@@ -499,6 +524,7 @@ export interface Database {
   apple_passes: ApplePassesTable;
   apple_pass_registrations: ApplePassRegistrationsTable;
   google_passes: GooglePassesTable;
+  cafe_logos: CafeLogosTable;
   operators: OperatorsTable;
   operator_sessions: OperatorSessionsTable;
   cafe_payments: CafePaymentsTable;
@@ -526,6 +552,10 @@ export const TABLE_COLUMNS = {
     "join_code_hash",
     "setup_finished_at",
     "signup_qr_printed_at",
+    "card_background",
+    "card_foreground",
+    "card_label",
+    "google_class_hash",
     "created_at",
     "updated_at",
   ],
@@ -684,6 +714,7 @@ export const TABLE_COLUMNS = {
     "offer_notified_at",
     "created_at",
   ],
+  cafe_logos: ["cafe_id", "hash", "square", "apple_1x", "apple_2x", "apple_3x", "previous_hash", "previous_square", "created_at", "updated_at"],
   operators: ["id", "email", "password_hash", "password_changed_at", "created_at"],
   operator_sessions: ["id", "operator_id", "token_hash", "created_at", "last_seen_at", "expires_at"],
   cafe_payments: ["id", "cafe_id", "amount_cents", "paid_on", "method", "reference", "operator_id", "created_at"],
@@ -725,6 +756,7 @@ export const TENANT_KEY: Readonly<Record<TableName, "id" | "cafe_id" | null>> = 
   apple_passes: "cafe_id",
   apple_pass_registrations: "cafe_id",
   google_passes: "cafe_id",
+  cafe_logos: "cafe_id",
   operators: null,
   operator_sessions: null,
   cafe_payments: "cafe_id",

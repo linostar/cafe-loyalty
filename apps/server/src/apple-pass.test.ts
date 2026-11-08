@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import forge from "node-forge";
+import { DEFAULT_CARD_COLORS } from "@cafe-loyalty/shared";
 import { describe, expect, it } from "vitest";
 import { applePassToken, buildApplePass, type ApplePassContent } from "./apple-pass.js";
 import { testApplePasses, unzipPass } from "./testing/certificates.js";
@@ -11,6 +12,8 @@ const content: ApplePassContent = {
   serialNumber: "5f0c6a52-6f2e-4a55-9d2a-8b1f9c3e7d10",
   authenticationToken: applePassToken(secrets, "web-secret"),
   cafeName: "Café Nour",
+  colors: { ...DEFAULT_CARD_COLORS },
+  logo: undefined,
   stamps: 4,
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "CL1.card-qr-token",
@@ -126,6 +129,20 @@ describe("buildApplePass", () => {
     expect(english).toContain('"about_value" = "This card was restored on another phone. Use the card there.";');
     expect(english).not.toContain("collect stamps");
     expect(text("ar.lproj/pass.strings")).toContain('"stamps_value" = "استخدم بطاقتك الجديدة";');
+  });
+
+  it("takes the café's colours, icons of its background and its logo at three sizes, with no change message", () => {
+    const logo = { apple1x: Buffer.from("logo-1x"), apple2x: Buffer.from("logo-2x"), apple3x: Buffer.from("logo-3x") };
+    const { json, files } = open(buildApplePass(apple, "https://card.example.test", { ...content, colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logo }));
+    expect(json).toMatchObject({ backgroundColor: "rgb(31, 90, 133)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(229, 239, 247)", logoText: "Café Nour" });
+    expect(files.get("logo.png")).toEqual(logo.apple1x);
+    expect(files.get("logo@2x.png")).toEqual(logo.apple2x);
+    expect(files.get("logo@3x.png")).toEqual(logo.apple3x);
+    expect(JSON.stringify(json)).not.toContain("changeMessage");
+    const defaults = open(buildApplePass(apple, "https://card.example.test", content));
+    expect(defaults.json).toMatchObject({ backgroundColor: "rgb(74, 44, 42)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(235, 214, 190)" });
+    expect(defaults.files.has("logo.png")).toBe(false);
+    expect(files.get("icon.png")).not.toEqual(defaults.files.get("icon.png"));
   });
 
   it("lists every file in the manifest by its SHA-1 and signs the manifest with the pass type certificate", () => {

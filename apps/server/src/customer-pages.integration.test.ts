@@ -1,4 +1,4 @@
-import { createHmac, randomInt, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { signEmailUndoToken, signFeedbackToken } from "@cafe-loyalty/db";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
@@ -375,6 +375,25 @@ describe("web card", () => {
     expect(card.body).toContain(`<a class="link-button next" href="/c/${secret}/settings?lang=en#email-title"><span>Add a recovery email</span>`);
     await app.inject({ method: "POST", url: `/c/${secret}/email`, ...formBody({ email: `maya-${randomUUID()}@example.com` }) });
     expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).not.toContain("Add a recovery email");
+  });
+
+  it("wears the café's colours and logo, the colours' stylesheet allowed by its own hash, and nothing extra for the default colours", async () => {
+    const { app, code, owner } = await cafeWithJoinCode();
+    const secret = secretOf(await join(app, code, "70 123 457"));
+    const plain = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
+    // The base stylesheet reads the colours (var(--card-background, …)); only a branded café's page sets them.
+    expect(plain.body).not.toContain("<style>.card-face{");
+    expect(plain.body).not.toContain('class="card-logo"');
+    expect(String(plain.headers["content-security-policy"]).match(/'sha256-/g)).toHaveLength(1);
+
+    const hash = randomBytes(32);
+    await context.admin.query("UPDATE app.cafes SET card_background = '#1f5a85', card_foreground = '#ffffff', card_label = '#e5eff7' WHERE id = $1", [owner.cafeId]);
+    await context.admin.query("INSERT INTO app.cafe_logos (cafe_id, hash, square, apple_1x, apple_2x, apple_3x) VALUES ($1, $2, $3, $3, $3, $3)", [owner.cafeId, hash, Buffer.from([0])]);
+    const branded = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
+    const style = ".card-face{--card-background:#1f5a85;--card-foreground:#ffffff;--card-label:#e5eff7;--card-glow:transparent}";
+    expect(branded.body).toContain(`<style>${style}</style>`);
+    expect(branded.body).toContain(`<img class="card-logo" src="/logos/${hash.toString("hex")}.png" alt="" width="56" height="56">`);
+    expect(String(branded.headers["content-security-policy"])).toContain(`'sha256-${createHash("sha256").update(style).digest("base64")}'`);
   });
 
   it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {

@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { ICON_PNG_PATH } from "@cafe-loyalty/ui";
+import { expect, test, type Route } from "@playwright/test";
 import { UNAUTHENTICATED, mockApi, reply } from "./api-mock.js";
 
 test.use({ timezoneId: "UTC" });
@@ -93,7 +95,7 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
   await expect(card.getByRole("button", { name: "Save plan of Café Najjar" })).toBeFocused();
   await card.getByRole("button", { name: "Save plan" }).click();
   await card.getByRole("button", { name: "Yes, suspend Café Najjar" }).click();
-  await expect(page.getByRole("status")).toHaveText("Café Najjar is now on the suspended plan.");
+  await expect(page.getByRole("status").first()).toHaveText("Café Najjar is now on the suspended plan.");
   await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toBeFocused();
   await expect(card.getByRole("heading", { level: 2, name: /Café Najjar/ })).toContainText("Suspended");
 
@@ -106,7 +108,7 @@ test("the operator signs in, opens a café, suspends it, records a payment and s
   await card.getByLabel("Whish").check();
   await card.getByLabel("Reference").fill("W-1042");
   await card.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.getByRole("status")).toHaveText("Recorded $25.00 from Café Najjar, paid by Whish on 1 Oct 2026.");
+  await expect(page.getByRole("status").first()).toHaveText("Recorded $25.00 from Café Najjar, paid by Whish on 1 Oct 2026.");
   // The day paid, then when it was recorded (the Recorded column, with its time), then the amount, method and reference.
   await expect(card.getByRole("table", { name: "Latest payments of Café Najjar" }).getByRole("row", { name: /1 Oct 2026 1 Oct 2026, 09:00 \$25\.00 Whish W-1042/ })).toBeVisible();
   await expect(card.getByLabel("Amount (USD)")).toHaveValue("");
@@ -279,7 +281,7 @@ test("sends a payment again with the same id after a failed try, and a new id fo
   await card.getByRole("button", { name: "Record payment" }).click();
   await expect(card.getByRole("alert")).toHaveText("Could not reach the server. Check your connection and try again.");
   await card.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.getByRole("status")).toContainText("Recorded $25.00 from Café Najjar");
+  await expect(page.getByRole("status").first()).toContainText("Recorded $25.00 from Café Najjar");
   await card.getByLabel("Amount (USD)").fill("10");
   await card.getByRole("button", { name: "Record payment" }).click();
   await expect.poll(() => ids.length).toBe(3);
@@ -396,7 +398,7 @@ test("voids a payment with its reason: it stays listed, struck through and out o
   await reason.fill("Typed the wrong amount");
   await page.getByRole("button", { name: "Void payment" }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Voided the payment of $25.00 paid on 1 Oct 2026.");
+  await expect(page.getByRole("status").first()).toHaveText("Voided the payment of $25.00 paid on 1 Oct 2026.");
   const row = page.getByRole("row").filter({ hasText: "$25.00" });
   await expect(row.getByRole("cell").last()).toHaveText("Voided Typed the wrong amount");
   await expect(row.getByRole("button")).toHaveCount(0);
@@ -435,7 +437,7 @@ test("says when another session voided the payment first, keeping its reason, an
   await page.getByLabel("Reason").fill("Typed the wrong amount");
   await page.getByRole("button", { name: "Void payment" }).click();
   // The first void and its reason stay: the page says so, rather than that this reason was saved.
-  await expect(page.getByRole("status")).toHaveText("The payment of $25.00 paid on 1 Oct 2026 was already voided: Paid twice");
+  await expect(page.getByRole("status").first()).toHaveText("The payment of $25.00 paid on 1 Oct 2026 was already voided: Paid twice");
   await expect(page.getByRole("row").filter({ hasText: "Paid twice" })).toHaveCount(1);
 
   await voidButtons.last().click();
@@ -766,4 +768,76 @@ test("finds a café by name and plan in the list, saying how many are shown (A3)
   await expect(page.getByText("No café matches the search and plan chosen.")).toBeVisible();
   await page.getByRole("combobox", { name: "Plan" }).selectOption({ label: "All plans" });
   await expect(rows).toHaveText([/Study Corner/]);
+});
+
+test("names the café and picks its card colours, checked for contrast, with a live preview, then uploads and removes its logo", async ({ page }) => {
+  const HASH = "ab".repeat(32);
+  const png = await readFile(ICON_PNG_PATH);
+  const sent: { method: string; body: unknown }[] = [];
+  const record = (route: Route) => {
+    sent.push({ method: route.request().method(), body: route.request().postDataJSON() });
+  };
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: async (route) => {
+      record(route);
+      const body = route.request().postDataJSON() as { name: string; cardColors: Record<string, string> };
+      await route.fulfill({ json: cafe({ name: body.name, cardColors: body.cardColors }) });
+    },
+    [`PUT /api/admin/cafes/${CAFE_ID}/logo`]: async (route) => {
+      record(route);
+      await route.fulfill({ json: cafe({ name: "Café Nour", logoHash: HASH }) });
+    },
+    [`DELETE /api/admin/cafes/${CAFE_ID}/logo`]: async (route) => {
+      record(route);
+      await route.fulfill({ json: cafe({ name: "Café Nour", logoHash: null }) });
+    },
+    [`GET /api/logos/${HASH}.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
+  });
+  await page.goto(CAFE_PAGE);
+  const form = page.getByRole("form", { name: "Card and name" });
+  const face = form.locator(".card-preview-face");
+  // Today's espresso until the operator picks colours.
+  await expect(face).toHaveCSS("background-color", "rgb(74, 44, 42)");
+
+  await form.getByLabel("Café name").fill("Café Nour");
+  // Text nearly the background's colour: refused here, by its field, before anything is sent.
+  await form.getByLabel("Text colour").fill("#55302e");
+  await form.getByRole("button", { name: "Save card" }).click();
+  // Read with the rule, then its own message.
+  await expect(form.getByLabel("Text colour")).toHaveAccessibleDescription(
+    /^Text and labels need at least 4\.5 to 1 contrast .* Pick a text colour that stands out more from the background: at least 4\.5 to 1\.$/,
+  );
+  await expect(form.getByLabel("Text colour")).toBeFocused();
+  expect(sent).toEqual([]);
+  await form.getByLabel("Text colour").fill("#ffffff");
+  await expect(form.getByLabel("Text colour")).not.toHaveAttribute("aria-invalid", "true");
+  await form.getByLabel("Background colour").fill("#1f5a85");
+  // The preview follows each pick: name, background and text as customers will see them.
+  await expect(face).toHaveCSS("background-color", "rgb(31, 90, 133)");
+  await expect(face).toContainText("Café Nour");
+  await form.getByRole("button", { name: "Save card" }).click();
+  await expect(form.getByText("Saved.")).toBeVisible();
+  expect(sent).toEqual([{ method: "PATCH", body: { name: "Café Nour", cardColors: { background: "#1f5a85", foreground: "#ffffff", label: "#ebd6be" } } }]);
+  await expect(page.getByRole("heading", { level: 2 })).toContainText("Café Nour");
+
+  const logo = page.getByRole("form", { name: "Logo of Café Nour" });
+  // Not a PNG or JPEG: said by the field, nothing sent.
+  await logo.getByLabel("Logo").setInputFiles({ name: "logo.gif", mimeType: "image/gif", buffer: Buffer.from("GIF89a") });
+  await logo.getByRole("button", { name: "Upload logo" }).click();
+  await expect(logo.getByLabel("Logo")).toHaveAccessibleDescription(/Upload the logo as a PNG or JPEG image\.$/);
+  expect(sent).toHaveLength(1);
+
+  await logo.getByLabel("Logo").setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: png });
+  await logo.getByRole("button", { name: "Upload logo" }).click();
+  await expect(logo.getByText("Saved. Cards in wallets show it within a few minutes.")).toBeVisible();
+  expect(sent[1]).toEqual({ method: "PUT", body: { image: png.toString("base64") } });
+  await expect(face.locator("img")).toHaveAttribute("src", `/api/logos/${HASH}.png`);
+  await logo.getByRole("button", { name: "Remove logo" }).click();
+  await expect(logo.getByText("Logo removed.")).toBeVisible();
+  expect(sent[2]?.method).toBe("DELETE");
+  await expect(face.locator("img")).toHaveCount(0);
+  await expect(logo.getByRole("button", { name: "Remove logo" })).toHaveCount(0);
+  await expect(logo.getByLabel("Logo")).toBeFocused();
 });

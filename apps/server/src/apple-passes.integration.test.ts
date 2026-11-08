@@ -3,6 +3,7 @@ import { verifyFeedbackToken, withCafe } from "@cafe-loyalty/db";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
 import pg from "pg";
+import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { APPLE_PASS_LAYOUT_VERSION, applePassToken } from "./apple-pass.js";
 import { hashToken, newToken } from "./credentials.js";
@@ -65,6 +66,7 @@ interface DownloadedPass {
   token: string;
   json: Record<string, unknown>;
   strings: (lang: "ar" | "en") => string;
+  files: Map<string, Buffer>;
 }
 
 function readPass(response: LightMyRequestResponse): DownloadedPass {
@@ -76,6 +78,7 @@ function readPass(response: LightMyRequestResponse): DownloadedPass {
     token: String(json.authenticationToken),
     json,
     strings: (lang) => files.get(`${lang}.lproj/pass.strings`)?.toString("utf8") ?? "",
+    files,
   };
 }
 
@@ -135,6 +138,33 @@ describe("Apple pass downloads", () => {
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: IPHONE })).body).not.toContain("apple-pass");
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}/apple-pass` })).statusCode).toBe(404);
     expect((await app.app.inject({ method: "GET", url: `/passkit/v1/devices/device-1/registrations/${PASS_TYPE}` })).statusCode).toBe(404);
+  });
+
+  it("takes a branded café's name, colours and logo, on the download and from the PassKit web service", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    const plain = await download(app, card.webSecret);
+    expect(plain.json).toMatchObject({ backgroundColor: "rgb(74, 44, 42)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(235, 214, 190)" });
+    expect(plain.files.has("logo.png")).toBe(false);
+
+    await context.admin.query("UPDATE app.cafes SET name = 'Café Nour', card_background = '#1f5a85', card_label = '#e5eff7' WHERE id = $1", [app.owner.cafeId]);
+    const image = (await sharp({ create: { width: 300, height: 120, channels: 4, background: { r: 180, g: 40, b: 40, alpha: 1 } } }).png().toBuffer()).toString("base64");
+    const uploaded = await app.app.inject({ method: "PUT", url: "/api/cafe/logo", headers: withCookie(app.owner.session), payload: { image } });
+    expect(uploaded.statusCode).toBe(200);
+    const { rows } = await context.admin.query<{ apple_1x: Buffer; apple_2x: Buffer; apple_3x: Buffer }>("SELECT apple_1x, apple_2x, apple_3x FROM app.cafe_logos WHERE cafe_id = $1", [
+      app.owner.cafeId,
+    ]);
+    const logo = rows[0];
+    // Stored, so the comparisons below are never of missing files on both sides.
+    for (const image of [logo?.apple_1x, logo?.apple_2x, logo?.apple_3x]) {
+      expect(Buffer.isBuffer(image) && image.length > 0).toBe(true);
+    }
+    for (const pass of [await download(app, card.webSecret), readPass(await latest(app, plain))]) {
+      expect(pass.json).toMatchObject({ logoText: "Café Nour", backgroundColor: "rgb(31, 90, 133)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(229, 239, 247)" });
+      expect(pass.files.get("logo.png")).toEqual(logo?.apple_1x);
+      expect(pass.files.get("logo@2x.png")).toEqual(logo?.apple_2x);
+      expect(pass.files.get("logo@3x.png")).toEqual(logo?.apple_3x);
+    }
   });
 });
 

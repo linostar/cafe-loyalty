@@ -12,6 +12,8 @@ export interface GoogleWallet {
    * an object just made is on no phone yet, so it gets none.
    */
   save(loyaltyClass: GoogleLoyaltyClass, object: GoogleLoyaltyObject, create: boolean, message?: GoogleOfferMessage): Promise<SaveResult>;
+  /** Replaces the café's class with `loyaltyClass` (its name, logo or colour changed), creating it when Google has none. */
+  saveClass(loyaltyClass: GoogleLoyaltyClass): Promise<void>;
 }
 
 export interface GoogleWalletOptions {
@@ -90,6 +92,29 @@ export function createGoogleWallet(options: GoogleWalletOptions): GoogleWallet {
   }
 
   return {
+    async saveClass(loyaltyClass) {
+      const status = await call("PUT", `/loyaltyClass/${encodeURIComponent(loyaltyClass.id)}`, loyaltyClass);
+      if (status === 200) {
+        return;
+      }
+      if (status !== 404) {
+        throw failed(status, "a class update");
+      }
+      const inserted = await call("POST", "/loyaltyClass", loyaltyClass);
+      if (inserted === 200) {
+        return;
+      }
+      if (inserted !== 409) {
+        throw failed(inserted, "a class insert");
+      }
+      // 409: another job (or an earlier try whose answer was lost) made it in the meantime, maybe from older branding:
+      // replaced with this one, so what the caller then records is what Google has.
+      const replaced = await call("PUT", `/loyaltyClass/${encodeURIComponent(loyaltyClass.id)}`, loyaltyClass);
+      if (replaced !== 200) {
+        throw failed(replaced, "a class update");
+      }
+    },
+
     async save(loyaltyClass, object, create, message) {
       const path = `/loyaltyObject/${encodeURIComponent(object.id)}`;
       const status = await call("PUT", path, object);

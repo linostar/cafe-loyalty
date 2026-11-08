@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
 import { setOperatorPassword } from "./operators.js";
@@ -28,7 +29,7 @@ function operatorToken(response: LightMyRequestResponse): string {
 async function adminApp() {
   const h = await harness();
   const owner = await signUp(h.app);
-  const asOwner = (method: "GET" | "POST" | "PUT", url: string, payload: Record<string, unknown> = {}) =>
+  const asOwner = (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", url: string, payload: Record<string, unknown> = {}) =>
     h.app.inject({ method, url, headers: withCookie(owner.session), ...(method === "GET" ? {} : { payload }) });
   const coffee =
     (await asOwner("POST", "/api/cafe/order-types", { nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1, active: true })).json<{ orderTypes: { id: string }[] }>()
@@ -40,7 +41,7 @@ async function adminApp() {
   const login = await h.app.inject({ method: "POST", url: "/api/admin/login", payload: { email, password } });
   expect(login.statusCode).toBe(200);
   const operator = operatorToken(login);
-  const asOperator = (method: "GET" | "POST" | "PATCH", url: string, payload: Record<string, unknown> = {}) =>
+  const asOperator = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload: Record<string, unknown> = {}) =>
     h.app.inject({ method, url, headers: { cookie: `__Host-cl_operator=${operator}` }, ...(method === "GET" ? {} : { payload }) });
   return { ...h, owner, asOwner, coffee, staffId, device, email, password, operator, asOperator };
 }
@@ -188,6 +189,7 @@ describe("operator accounts (AC 39)", () => {
     const app = await adminApp();
     const operatorRoutes = app.routes.filter((route) => route.access === "operator" && route.method !== "HEAD");
     expect(operatorRoutes.map((route) => `${route.method} ${route.url}`).sort()).toEqual([
+      "DELETE /api/admin/cafes/:id/logo",
       "GET /api/admin/cafes",
       "GET /api/admin/session",
       "PATCH /api/admin/cafes/:id",
@@ -197,6 +199,7 @@ describe("operator accounts (AC 39)", () => {
       "POST /api/admin/cafes/:id/payments",
       "POST /api/admin/cafes/:id/payments/:paymentId/void",
       "POST /api/admin/password",
+      "PUT /api/admin/cafes/:id/logo",
     ]);
     for (const route of operatorRoutes) {
       const call = (headers: Record<string, string>) =>
@@ -455,5 +458,97 @@ describe("the admin screen (AC 39)", () => {
 
     await app.asOperator("PATCH", `/api/admin/cafes/${app.owner.cafeId}`, { plan: "active" });
     expect((await app.app.inject({ method: "GET", url: `/join/${code}?lang=en` })).statusCode).toBe(200);
+  });
+});
+
+/** A plain PNG logo, base64 as the dashboard sends it. */
+const pngLogo = async (width = 300, height = 120, red = 180) =>
+  (await sharp({ create: { width, height, channels: 4, background: { r: red, g: 40, b: 40, alpha: 1 } } }).png().toBuffer()).toString("base64");
+
+describe("a café's name, card colours and logo", () => {
+  it("are renamed and recoloured by the operator, lowercased, in the café's audit log, refusing colours that do not stand out", async () => {
+    const app = await adminApp();
+    const url = `/api/admin/cafes/${app.owner.cafeId}`;
+    const listed = (await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: { id: string }[] }>().cafes.find((cafe) => cafe.id === app.owner.cafeId);
+    expect(listed).toMatchObject({ cardColors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null });
+
+    const changed = await app.asOperator("PATCH", url, { name: "  Café Najjar ", cardColors: { background: "#1F5A85", foreground: "#FFFFFF", label: "#E5EFF7" } });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json()).toMatchObject({ name: "Café Najjar", plan: "pilot", cardColors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" } });
+    // The owner's dashboard reads the same.
+    expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { name: "Café Najjar", cardColors: { background: "#1f5a85" }, logoHash: null } });
+
+    const dim = await app.asOperator("PATCH", url, { cardColors: { background: "#ffffff", foreground: "#777777", label: "#000000" } });
+    expect(dim.statusCode).toBe(400);
+    expect(dim.json<{ details: { path: string }[] }>().details.map((detail) => detail.path)).toEqual(["cardColors.foreground"]);
+    expect((await app.asOperator("PATCH", url, { cardColors: { background: "blue", foreground: "#ffffff", label: "#ffffff" } })).statusCode).toBe(400);
+    expect((await app.asOperator("PATCH", url, { name: "" })).statusCode).toBe(400);
+    expect((await app.asOperator("PATCH", url, {})).statusCode).toBe(400);
+    // The same values again change nothing and write no entry.
+    await app.asOperator("PATCH", url, { name: "Café Najjar", cardColors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" } });
+
+    const operatorId = (await app.asOperator("GET", "/api/admin/session")).json<{ operator: { id: string } }>().operator.id;
+    const { rows } = await context.admin.query<{ actor_type: string; actor_id: string; changes: unknown }>(
+      "SELECT actor_type, actor_id, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'cafe.updated' AND actor_type = 'operator' ORDER BY id",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([
+      { actor_type: "operator", actor_id: operatorId, changes: { name: "Café Najjar", cardColors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" } } },
+    ]);
+  });
+
+  it("get a logo from the operator or the owner, served by its hash on both addresses until the change after the one that replaced or removed it", async () => {
+    const app = await adminApp();
+    const set = await app.asOperator("PUT", `/api/admin/cafes/${app.owner.cafeId}/logo`, { image: await pngLogo() });
+    expect(set.statusCode).toBe(200);
+    const first = set.json<{ logoHash: string }>().logoHash;
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    const served = await app.app.inject({ method: "GET", url: `/logos/${first}.png` });
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["content-type"]).toBe("image/png");
+    expect(served.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(createHash("sha256").update(served.rawPayload).digest("hex")).toBe(first);
+    const forDashboard = await app.app.inject({ method: "GET", url: `/api/logos/${first}.png` });
+    expect(forDashboard.statusCode).toBe(200);
+    expect(forDashboard.rawPayload).toEqual(served.rawPayload);
+
+    // The owner replaces it: the old address still serves the old image (Google's class and open web cards show it
+    // until their update arrives), until the next change.
+    const replaced = await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo(200, 200, 90) });
+    expect(replaced.statusCode).toBe(200);
+    const second = replaced.json<{ cafe: { logoHash: string } }>().cafe.logoHash;
+    expect(second).not.toBe(first);
+    const previous = await app.app.inject({ method: "GET", url: `/logos/${first}.png` });
+    expect(previous.statusCode).toBe(200);
+    expect(previous.rawPayload).toEqual(served.rawPayload);
+    const current = await app.app.inject({ method: "GET", url: `/logos/${second}.png` });
+    expect(current.statusCode).toBe(200);
+    expect(createHash("sha256").update(current.rawPayload).digest("hex")).toBe(second);
+    expect((await app.app.inject({ method: "GET", url: "/logos/not-a-hash.png" })).statusCode).toBe(404);
+
+    const notImage = await app.asOwner("PUT", "/api/cafe/logo", { image: Buffer.from("not an image").toString("base64") });
+    expect(notImage.statusCode).toBe(400);
+    expect(notImage.json<{ details: { path: string; issue: string }[] }>().details).toEqual([{ path: "image", issue: "Upload the logo as a PNG or JPEG image." }]);
+    // A 1.9 MB upload fits the route's raised body limit (the default 1 MB would refuse it) and is refused only as not an image.
+    const large = await app.asOwner("PUT", "/api/cafe/logo", { image: Buffer.alloc(1_900_000, 1).toString("base64") });
+    expect(large.json<{ details: { path: string; issue: string }[] }>().details).toEqual([{ path: "image", issue: "Upload the logo as a PNG or JPEG image." }]);
+
+    const removed = await app.asOperator("DELETE", `/api/admin/cafes/${app.owner.cafeId}/logo`);
+    expect(removed.json()).toMatchObject({ logoHash: null });
+    // The removed logo is the previous one now; the one before it is gone.
+    expect((await app.app.inject({ method: "GET", url: `/logos/${second}.png` })).statusCode).toBe(200);
+    expect((await app.app.inject({ method: "GET", url: `/logos/${first}.png` })).statusCode).toBe(404);
+    // Removing it again changes nothing.
+    expect((await app.asOwner("DELETE", "/api/cafe/logo")).json()).toMatchObject({ cafe: { logoHash: null } });
+
+    const { rows } = await context.admin.query<{ action: string; actor_type: string; changes: unknown }>(
+      "SELECT action, actor_type, changes FROM app.audit_log WHERE cafe_id = $1 AND action LIKE 'cafe.logo_%' ORDER BY id",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([
+      { action: "cafe.logo_set", actor_type: "operator", changes: { hash: first } },
+      { action: "cafe.logo_set", actor_type: "owner", changes: { hash: second } },
+      { action: "cafe.logo_removed", actor_type: "operator", changes: { hash: second } },
+    ]);
   });
 });

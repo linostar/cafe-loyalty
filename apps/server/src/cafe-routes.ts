@@ -4,6 +4,7 @@ import {
   REPEATED_DELIVERY_FAILURES,
   VISIT_HOURS_WEEKS,
   cafeUpdateSchema,
+  logoUploadSchema,
   loyaltyProgramSchema,
   orderTypeCreateSchema,
   orderTypeUpdateSchema,
@@ -19,7 +20,10 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { ownerOf } from "./access.js";
 import { audit } from "./db-helpers.js";
-import { parseInput } from "./http-errors.js";
+import { parseInput, rateLimited } from "./http-errors.js";
+import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo } from "./logo-image.js";
+import { RateLimiter } from "./rate-limit.js";
+import { setLogo, unsetLogo } from "./logo-routes.js";
 
 export interface CafeRoutesOptions {
   db: Kysely<Database>;
@@ -50,9 +54,13 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       "plan",
       "setup_finished_at",
       "signup_qr_printed_at",
+      "card_background",
+      "card_foreground",
+      "card_label",
     ])
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
+  const logo = await trx.selectFrom("cafe_logos").select("hash").where("cafe_id", "=", cafeId).executeTakeFirst();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
   const orderTypes = await trx
     .selectFrom("order_types")
@@ -71,6 +79,8 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       plan: cafe.plan,
       setupFinishedAt: cafe.setup_finished_at?.toISOString() ?? null,
       signupQrPrintedAt: cafe.signup_qr_printed_at?.toISOString() ?? null,
+      cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
+      logoHash: logo?.hash?.toString("hex") ?? null,
     },
     program:
       program === undefined
@@ -123,6 +133,7 @@ export async function memberVisitHours(trx: Transaction<Database>, cafeId: strin
 /** The owner's café, loyalty program and order types (AC 1). Every change is audit-logged. */
 export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, done: (error?: Error) => void): void {
   const { db, jobs } = options;
+  const logoUploads = new RateLimiter(LOGO_UPLOADS_PER_HOUR, 60 * 60 * 1000);
 
   app.get("/cafe", { config: { access: "owner" } }, async (request) => {
     const { cafeId } = ownerOf(request);
@@ -233,6 +244,36 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         changes: { name: body.name, minMarginPercent: body.minMarginPercent, googleReviewUrl: body.googleReviewUrl },
       });
       request.log.info({ cafeId: owner.cafeId }, "cafe updated");
+      return loadSetup(trx, owner.cafeId);
+    });
+  });
+
+  /**
+   * Sets the café's logo, shown on every card (Apple pass, Google class, web card): a PNG or JPEG, base64 in the JSON
+   * body, checked and resized before the transaction (logo-image.ts). Its trigger marks the café's passes changed.
+   */
+  app.put("/cafe/logo", { config: { access: "owner" }, bodyLimit: LOGO_BODY_LIMIT_BYTES }, async (request, reply) => {
+    const owner = ownerOf(request);
+    // Decoding an image takes memory and time: a few uploads an hour are plenty.
+    const wait = logoUploads.hit(owner.ownerId);
+    if (wait > 0) {
+      throw rateLimited(reply, wait);
+    }
+    const body = parseInput(logoUploadSchema, request.body);
+    const images = await processLogo(body.image);
+    return withCafe(db, owner.cafeId, async (trx) => {
+      await setLogo(trx, owner.cafeId, images, { actorType: "owner", actorId: owner.ownerId });
+      request.log.info({ cafeId: owner.cafeId }, "cafe logo set");
+      return loadSetup(trx, owner.cafeId);
+    });
+  });
+
+  /** Removes the café's logo: its cards show the product's again. */
+  app.delete("/cafe/logo", { config: { access: "owner" } }, async (request) => {
+    const owner = ownerOf(request);
+    return withCafe(db, owner.cafeId, async (trx) => {
+      await unsetLogo(trx, owner.cafeId, { actorType: "owner", actorId: owner.ownerId });
+      request.log.info({ cafeId: owner.cafeId }, "cafe logo removed");
       return loadSetup(trx, owner.cafeId);
     });
   });

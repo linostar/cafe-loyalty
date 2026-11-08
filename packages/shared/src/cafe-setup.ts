@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { apiMessage, apiText } from "./api-messages.js";
-import { cafePlanSchema } from "./admin.js";
+import { cafePlanSchema, cardColorsShapeSchema, logoHashSchema } from "./admin.js";
+import { DEFAULT_CARD_COLORS } from "./card-colors.js";
 import { WIN_BACK_MAX_COOLDOWN_DAYS, WIN_BACK_OFFER_DAYS } from "./campaigns.js";
 import { centsSchema } from "./money.js";
 import { syncSignatureSchema } from "./sync.js";
@@ -119,6 +120,9 @@ export const cafeSetupSchema = z.object({
     // A server from before them sends neither: no wizard and no checklist then (undefined), rather than either again.
     setupFinishedAt: timestamp.nullable().optional(),
     signupQrPrintedAt: timestamp.nullable().default(null),
+    // The card's colours (set by the operator) and logo (null: the product's); defaults for a server from before them.
+    cardColors: cardColorsShapeSchema.default({ ...DEFAULT_CARD_COLORS }),
+    logoHash: logoHashSchema.nullable().default(null),
   }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),

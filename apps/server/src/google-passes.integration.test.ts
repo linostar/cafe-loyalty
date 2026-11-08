@@ -1,6 +1,7 @@
-import { createVerify, randomUUID } from "node:crypto";
+import { createHash, createVerify, randomUUID } from "node:crypto";
 import { GOOGLE_PASS_UPDATE_QUEUE } from "@cafe-loyalty/db";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, signCardQr } from "./customer-crypto.js";
@@ -156,6 +157,28 @@ describe("Google pass save links", () => {
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: ANDROID })).body).not.toContain("google-pass");
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}/google-pass` })).statusCode).toBe(404);
     expect((await app.app.inject({ method: "GET", url: "/wallet/logo.png" })).statusCode).toBe(404);
+  });
+
+  it("carries a branded café's name, background and logo in the save link's class", async () => {
+    const app = await cafeApp();
+    const card = await issueCard(app.owner.cafeId);
+    await context.admin.query("UPDATE app.cafes SET name = 'Café Nour', card_background = '#1f5a85', card_label = '#e5eff7' WHERE id = $1", [app.owner.cafeId]);
+    const image = (await sharp({ create: { width: 300, height: 120, channels: 4, background: { r: 180, g: 40, b: 40, alpha: 1 } } }).png().toBuffer()).toString("base64");
+    const uploaded = await app.as("PUT", "/api/cafe/logo", { image });
+    expect(uploaded.statusCode).toBe(200);
+    const logoHash = uploaded.json<{ cafe: { logoHash: string } }>().cafe.logoHash;
+
+    const link = await openSaveLink(app, card.webSecret);
+    expect(link.loyaltyClass).toMatchObject({
+      id: `${ISSUER}.cafe-${app.owner.cafeId}`,
+      issuerName: "Café Nour",
+      hexBackgroundColor: "#1f5a85",
+      programLogo: { sourceUri: { uri: `${PUBLIC_URL}/logos/${logoHash}.png` } },
+    });
+    // Google fetches the logo there.
+    const logo = await app.app.inject({ method: "GET", url: `/logos/${logoHash}.png` });
+    expect(logo.statusCode).toBe(200);
+    expect(createHash("sha256").update(logo.rawPayload).digest("hex")).toBe(logoHash);
   });
 
   it("serves the class logo Google fetches as a PNG", async () => {
