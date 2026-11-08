@@ -361,7 +361,9 @@ describe("web card", () => {
     const card = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
     expect(card.statusCode).toBe(200);
     expect(card.body).toContain("Your card at \u2068Café Test\u2069");
-    expect(card.body).toContain("0 stamps");
+    // No program yet: a card cannot collect stamps, so it shows none (no grid, no count).
+    expect(card.body).not.toContain('class="stamp-grid"');
+    expect(card.body).not.toContain("0 stamps");
     // The apostrophe is escaped in the attribute.
     expect(card.body).toMatch(/<img class="qr" src="data:image\/svg\+xml;charset=utf-8,[^"]+" alt="Your card&#39;s QR code/);
     expect(card.body).not.toContain("<script");
