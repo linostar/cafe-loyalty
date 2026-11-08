@@ -307,6 +307,11 @@ test("shows a refused payment's reason by its field, and a failed sign-out in th
   await card.getByRole("button", { name: "Record payment" }).click();
   await expect(card.getByLabel("Paid on")).toHaveAccessibleDescription("Pick the day the café paid.");
   await expect(card.getByLabel("Paid on")).toBeFocused();
+  // Picking a day takes its message away at once, before any send; cleared again for the next check.
+  await card.getByLabel("Paid on").fill("2026-10-01");
+  await expect(card.getByLabel("Paid on")).not.toHaveAttribute("aria-invalid", "true");
+  await expect(card.getByText("Pick the day the café paid.")).toHaveCount(0);
+  await card.getByLabel("Paid on").fill("");
   // The form's own messages follow a language switch (kept untranslated until shown).
   await card.getByLabel("Amount (USD)").fill("0");
   await card.getByRole("button", { name: "Record payment" }).click();

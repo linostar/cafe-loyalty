@@ -271,6 +271,10 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
   const [paymentId, setPaymentId] = useState(() => crypto.randomUUID());
   // Built when shown, so a language switch after a failed send changes them too.
   const [problems, setProblems] = useState<Record<string, Later<typeof AR>>>({});
+  // A field's own message goes once it is edited, so a corrected field is not still marked wrong.
+  const clearProblem = (name: string) => {
+    setProblems((shown) => Object.fromEntries(Object.entries(shown).filter(([field]) => field !== name)));
+  };
   const titleId = `payment-title-${cafe.id}`;
   const { pending, error, fieldErrors, submit } = useSubmit();
   return (
@@ -326,7 +330,10 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         type="text"
         inputMode="decimal"
         value={amount}
-        onChange={setAmount}
+        onChange={(value) => {
+          setAmount(value);
+          clearProblem("amountCents");
+        }}
         error={problems.amountCents?.(t, lang) ?? fieldErrors.amountCents}
       />
       {/* A date picker offering the days the server takes (2026 up to today); it still checks them and says why. */}
@@ -342,7 +349,10 @@ function PaymentForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: Admin
         min="2026-01-01"
         max={today()}
         value={paidOn}
-        onChange={setPaidOn}
+        onChange={(value) => {
+          setPaidOn(value);
+          clearProblem("paidOn");
+        }}
         error={problems.paidOn?.(t, lang) ?? fieldErrors.paidOn}
       />
       <fieldset>
