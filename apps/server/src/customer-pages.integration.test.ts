@@ -381,7 +381,8 @@ describe("web card", () => {
     const { app, code, owner } = await cafeWithJoinCode();
     const secret = secretOf(await join(app, code, "70 123 457"));
     const plain = await app.inject({ method: "GET", url: `/c/${secret}?lang=en` });
-    expect(plain.body).not.toContain("--card-background");
+    // The base stylesheet reads the colours (var(--card-background, …)); only a branded café's page sets them.
+    expect(plain.body).not.toContain("<style>.card-face{");
     expect(plain.body).not.toContain('class="card-logo"');
     expect(String(plain.headers["content-security-policy"]).match(/'sha256-/g)).toHaveLength(1);
 

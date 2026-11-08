@@ -457,6 +457,8 @@ describe("job queue", () => {
       programLogo: { sourceUri: { uri: `https://card.example.test/logos/${hash.toString("hex")}.png` } },
     });
     expect(wallet.saved[2]?.loyaltyClass).toEqual(wallet.classes[1]);
+    // Written here without a job, so recorded as delivered by hand: the sweep tests count every undelivered pass.
+    await admin.query("UPDATE app.google_passes SET delivered_xid = updated_xid WHERE id = $1", [pass.passId]);
   });
 
   it("writes an earlier epoch's Google object INACTIVE, without the QR, and only if it exists (AC 8)", async () => {
