@@ -250,14 +250,14 @@ describe("PassKit web service (AC 11)", () => {
     const pass = await download(app, card.webSecret);
     const first = await latest(app, pass);
     expect(first.statusCode).toBe(200);
-    expect(readPass(first).strings("en")).toContain('"stamps_value" = "⁨0⁩ of ⁨2 stamps⁩";');
+    expect(readPass(first).strings("en")).toContain('"stamps_value" = "0 of 2 stamps";');
     const lastModified = String(first.headers["last-modified"]);
     expect((await latest(app, pass, { "if-modified-since": lastModified })).statusCode).toBe(304);
 
     expect(await stamp(app, card.qr)).toBe("OK");
     const updated = await latest(app, pass, { "if-modified-since": lastModified });
     expect(updated.statusCode).toBe(200);
-    expect(readPass(updated).strings("en")).toContain('"stamps_value" = "⁨1⁩ of ⁨2 stamps⁩";');
+    expect(readPass(updated).strings("en")).toContain('"stamps_value" = "1 of 2 stamps";');
     expect(Date.parse(String(updated.headers["last-modified"]))).toBeGreaterThan(Date.parse(lastModified));
   });
 
@@ -286,7 +286,7 @@ describe("PassKit web service (AC 11)", () => {
     await context.admin.query("UPDATE app.cards SET stamps = 1 WHERE id = $1", [card.cardId]);
     const updated = await latest(app, pass, { "if-modified-since": lastModified });
     expect(updated.statusCode).toBe(200);
-    expect(readPass(updated).strings("en")).toContain('"stamps_value" = "⁨1⁩ of ⁨2 stamps⁩";');
+    expect(readPass(updated).strings("en")).toContain('"stamps_value" = "1 of 2 stamps";');
   });
 
   it("shows an opted-in card's announced offer while it runs, notifying only that day, and drops the field on opting out (AC 4, 14)", async () => {
@@ -299,10 +299,11 @@ describe("PassKit web service (AC 11)", () => {
     expect(pass.json).toMatchObject({ storeCard: { auxiliaryFields: [] } });
     expect((await optIn(true)).statusCode).toBe(303);
     expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
+    // Opted in without an offer: no field says there is none.
     const none = readPass(await latest(app, pass));
-    expect(none.json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", value: "offer_value" }] } });
+    expect(none.json).toMatchObject({ storeCard: { auxiliaryFields: [] } });
     expect(JSON.stringify(none.json)).not.toContain("changeMessage");
-    expect(none.strings("en")).toContain('"offer_value" = "None right now";');
+    expect(none.strings("en")).not.toContain("offer_value");
 
     const created = await app.app.inject({
       method: "POST",
@@ -317,7 +318,7 @@ describe("PassKit web service (AC 11)", () => {
     const announced = await latest(app, pass, { "if-modified-since": lastModified });
     expect(announced.statusCode).toBe(200);
     const offer = readPass(announced);
-    expect(offer.json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", changeMessage: "offer_change" }], backFields: [{ key: "offer_details" }, { key: "about" }] } });
+    expect(offer.json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", changeMessage: "offer_change" }], backFields: [{ key: "stamps" }, { key: "offer_details" }, { key: "about" }] } });
     expect(offer.strings("en")).toContain('"offer_value" = "Afternoon · 20% off";');
     expect(offer.strings("en")).toContain('"offer_details_value" = "Every day, all day, on Coffee.";');
     // Fetched on a later day: the same offer, silently.
@@ -341,20 +342,21 @@ describe("PassKit web service (AC 11)", () => {
     expect(ended.statusCode).toBe(200);
     expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
     const over = readPass(await latest(app, pass));
-    expect(over.strings("en")).toContain('"offer_value" = "None right now";');
+    expect(over.json).toMatchObject({ storeCard: { auxiliaryFields: [] } });
+    expect(over.strings("en")).not.toContain("offer_value");
     expect(JSON.stringify(over.json)).not.toContain("changeMessage");
 
     await context.admin.query("DELETE FROM pgboss.job WHERE data->>'cafeId' = $1", [app.owner.cafeId]);
     expect((await optIn(false)).statusCode).toBe(303);
     expect(await queuedPassUpdates(app.owner.cafeId)).toEqual([{ passId: pass.serial, state: "created" }]);
-    expect(readPass(await latest(app, pass)).json).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "about" }] } });
+    expect(readPass(await latest(app, pass)).json).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "stamps" }, { key: "about" }] } });
   });
 
   it("puts a feedback request's link on the pass silently, and leaves it off a pass of an earlier epoch (AC 37)", async () => {
     const app = await cafeApp();
     const card = await issueCard(app.owner.cafeId);
     const pass = await download(app, card.webSecret);
-    expect(pass.json).toMatchObject({ storeCard: { backFields: [{ key: "about" }] } });
+    expect(pass.json).toMatchObject({ storeCard: { backFields: [{ key: "stamps" }, { key: "about" }] } });
     expect(await stamp(app, card.qr)).toBe("OK");
     const lastModified = String((await latest(app, pass)).headers["last-modified"]);
     // As the worker asks about the visit (requestFeedback): the insert marks the pass changed.
@@ -365,7 +367,7 @@ describe("PassKit web service (AC 11)", () => {
     const asked = await latest(app, pass, { "if-modified-since": lastModified });
     expect(asked.statusCode).toBe(200);
     const withLink = readPass(asked);
-    expect(withLink.json).toMatchObject({ storeCard: { backFields: [{ key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
+    expect(withLink.json).toMatchObject({ storeCard: { backFields: [{ key: "stamps" }, { key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
     expect(JSON.stringify(withLink.json)).not.toContain("changeMessage");
     const token = /"feedback_value" = "[^"]*\\n[^"]*\/f\/([^"]+)";/.exec(withLink.strings("en"))?.[1] ?? "";
     expect(verifyFeedbackToken(TEST_SECRETS, token)).toEqual({ cafeId: app.owner.cafeId, requestId: rows[0]?.id });

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import forge from "node-forge";
 import { DEFAULT_CARD_COLORS } from "@cafe-loyalty/shared";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { applePassToken, buildApplePass, type ApplePassContent } from "./apple-pass.js";
 import { testApplePasses, unzipPass } from "./testing/certificates.js";
@@ -13,6 +14,7 @@ const content: ApplePassContent = {
   authenticationToken: applePassToken(secrets, "web-secret"),
   cafeName: "Café Nour",
   colors: { ...DEFAULT_CARD_COLORS },
+  stampShape: "circle",
   logo: undefined,
   stamps: 4,
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
@@ -42,8 +44,8 @@ function open(pass: Buffer) {
 }
 
 describe("buildApplePass", () => {
-  it("builds a store card with the card's QR and stamps, updated through this server's web service (AC 10, 11)", () => {
-    const { json } = open(buildApplePass(apple, "https://card.example.test", content));
+  it("builds a store card with the card's QR and a strip of its stamps, updated through this server's web service (AC 10, 11)", async () => {
+    const { json } = open(await buildApplePass(apple, "https://card.example.test", content));
     expect(json).toMatchObject({
       formatVersion: 1,
       passTypeIdentifier: "pass.example.test",
@@ -55,10 +57,14 @@ describe("buildApplePass", () => {
       sharingProhibited: true,
       barcodes: [{ format: "PKBarcodeFormatQR", message: "CL1.card-qr-token", messageEncoding: "iso-8859-1" }],
       storeCard: {
-        primaryFields: [{ key: "stamps", label: "stamps_label", value: "stamps_value" }],
+        // No count or "Stamps" label on the front: the strip pictures them; the back says them, without a label.
+        primaryFields: [],
         secondaryFields: [{ key: "reward", label: "reward_label", value: "reward_value" }],
         auxiliaryFields: [],
-        backFields: [{ key: "about", label: "about_label", value: "about_value" }],
+        backFields: [
+          { key: "stamps", value: "stamps_value" },
+          { key: "about", label: "about_label", value: "about_value" },
+        ],
       },
     });
     expect(json).not.toHaveProperty("voided");
@@ -66,12 +72,12 @@ describe("buildApplePass", () => {
     expect(JSON.stringify(json)).not.toContain("changeMessage");
   });
 
-  it("shows an opted-in card's offer on its front and details on its back, notifying only on the day it was announced (AC 14)", () => {
-    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer } }));
+  it("shows an opted-in card's offer on its front and details on its back, notifying only on the day it was announced (AC 14)", async () => {
+    const { json, text } = open(await buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer } }));
     expect(json).toMatchObject({
       storeCard: {
         auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", changeMessage: "offer_change" }],
-        backFields: [{ key: "offer_details" }, { key: "about" }],
+        backFields: [{ key: "stamps" }, { key: "offer_details" }, { key: "about" }],
       },
     });
     const english = text("en.lproj/pass.strings");
@@ -80,76 +86,91 @@ describe("buildApplePass", () => {
     expect(english).toContain('"offer_details_value" = "Every day, 14:00–16:00, on Espresso.";');
     expect(text("ar.lproj/pass.strings")).toContain('"offer_value" = "عصرية · خصم');
     // Fetched on a later day: the same offer, silently.
-    const later = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: { ...offer, mayNotify: false } } })).json;
+    const later = open(await buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: { ...offer, mayNotify: false } } })).json;
     expect(JSON.stringify(later)).not.toContain("changeMessage");
   });
 
-  it("keeps an opted-in card's offer field without an offer, silent, so an ended offer goes away without a notification", () => {
-    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: undefined } }));
-    expect(json).toMatchObject({ storeCard: { auxiliaryFields: [{ key: "offer", value: "offer_value" }], backFields: [{ key: "about" }] } });
+  it("shows no offer field on an opted-in card without an offer, so nothing says there is none", async () => {
+    const { json, text } = open(await buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer: undefined } }));
+    expect(json).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "stamps" }, { key: "about" }] } });
     expect(JSON.stringify(json)).not.toContain("changeMessage");
-    expect(text("en.lproj/pass.strings")).toContain('"offer_value" = "None right now";');
+    expect(text("en.lproj/pass.strings")).not.toContain("offer_");
     // A voided pass shows no offer.
-    const voided = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null, offers: { optedIn: true, offer } })).json;
+    const voided = open(await buildApplePass(apple, "https://card.example.test", { ...content, qr: null, offers: { optedIn: true, offer } })).json;
     expect(voided).toMatchObject({ storeCard: { auxiliaryFields: [], backFields: [{ key: "about" }] } });
   });
 
-  it("links to the latest visit's feedback page on its back, silently, the link on a line of its own (AC 37)", () => {
+  it("links to the latest visit's feedback page on its back, silently, the link on a line of its own (AC 37)", async () => {
     const url = "https://card.example.test/f/fake-feedback-token";
-    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, feedbackUrl: url }));
-    expect(json).toMatchObject({ storeCard: { backFields: [{ key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
+    const { json, text } = open(await buildApplePass(apple, "https://card.example.test", { ...content, feedbackUrl: url }));
+    expect(json).toMatchObject({ storeCard: { backFields: [{ key: "stamps" }, { key: "feedback", label: "feedback_label", value: "feedback_value" }, { key: "about" }] } });
     expect(JSON.stringify(json)).not.toContain("changeMessage");
     expect(text("en.lproj/pass.strings")).toContain(`"feedback_value" = "Tell the café privately how your visit went.\\n${url}";`);
     expect(text("ar.lproj/pass.strings")).toContain('"feedback_label" = "كيف كانت زيارتك؟";');
     // A voided pass has no link.
-    const voided = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null, feedbackUrl: url })).json;
+    const voided = open(await buildApplePass(apple, "https://card.example.test", { ...content, qr: null, feedbackUrl: url })).json;
     expect(voided).toMatchObject({ storeCard: { backFields: [{ key: "about" }] } });
   });
 
-  it("has every text in Arabic and English (AC 10)", () => {
-    const { text } = open(buildApplePass(apple, "https://card.example.test", content));
-    expect(text("en.lproj/pass.strings")).toContain('"stamps_value" = "⁨4⁩ of ⁨9 stamps⁩";');
+  it("has every text in Arabic and English (AC 10)", async () => {
+    const { text } = open(await buildApplePass(apple, "https://card.example.test", content));
+    expect(text("en.lproj/pass.strings")).toContain('"stamps_value" = "4 of 9 stamps";');
     expect(text("en.lproj/pass.strings")).toContain('"reward_value" = "Free coffee";');
     expect(text("en.lproj/pass.strings")).toContain('"description" = "Loyalty card at ⁨Café Nour⁩";');
-    expect(text("ar.lproj/pass.strings")).toContain('"stamps_label" = "الأختام";');
+    expect(text("ar.lproj/pass.strings")).toContain('"stamps_value" = "⁨4⁩ من ⁨9⁩ أختام";');
     expect(text("ar.lproj/pass.strings")).toContain("قهوة مجانية");
+    expect(text("en.lproj/pass.strings")).not.toContain("stamps_label");
   });
 
-  it("escapes quotes and backslashes in the strings files", () => {
-    const { text } = open(buildApplePass(apple, "https://card.example.test", { ...content, cafeName: 'The "Bean" \\ Co' }));
+  it("escapes quotes and backslashes in the strings files", async () => {
+    const { text } = open(await buildApplePass(apple, "https://card.example.test", { ...content, cafeName: 'The "Bean" \\ Co' }));
     expect(text("en.lproj/pass.strings")).toContain('"description" = "Loyalty card at ⁨The \\"Bean\\" \\\\ Co⁩";');
   });
 
-  it("voids the pass of an earlier epoch, without a QR code, saying so in short on its front and in full on its back (AC 8)", () => {
-    const { json, text } = open(buildApplePass(apple, "https://card.example.test", { ...content, qr: null }));
-    expect(json).toMatchObject({ voided: true, storeCard: { secondaryFields: [] } });
+  it("voids the pass of an earlier epoch, without a QR code, saying so in short on its front and in full on its back (AC 8)", async () => {
+    const { json, text, files } = open(await buildApplePass(apple, "https://card.example.test", { ...content, qr: null }));
+    expect(json).toMatchObject({ voided: true, storeCard: { primaryFields: [{ key: "moved", label: "moved_label", value: "moved_value" }], secondaryFields: [], backFields: [{ key: "about" }] } });
     expect(json).not.toHaveProperty("barcodes");
+    expect(files.has("strip.png")).toBe(false);
     const english = text("en.lproj/pass.strings");
-    expect(english).toContain('"stamps_value" = "Use your new card";');
+    expect(english).toContain('"moved_value" = "Use your new card";');
     expect(english).toContain('"about_value" = "This card was restored on another phone. Use the card there.";');
     expect(english).not.toContain("collect stamps");
-    expect(text("ar.lproj/pass.strings")).toContain('"stamps_value" = "استخدم بطاقتك الجديدة";');
+    expect(text("ar.lproj/pass.strings")).toContain('"moved_value" = "استخدم بطاقتك الجديدة";');
   });
 
-  it("takes the café's colours, icons of its background and its logo at three sizes, with no change message", () => {
+  it("pictures the stamps on a strip at Apple's three sizes, and none without a program", async () => {
+    const { files } = open(await buildApplePass(apple, "https://card.example.test", { ...content, stampShape: "bean" }));
+    const sizes = await Promise.all(["strip.png", "strip@2x.png", "strip@3x.png"].map(async (name) => sharp(files.get(name)).metadata()));
+    expect(sizes.map(({ width, height }) => [width, height])).toEqual([
+      [375, 123],
+      [750, 246],
+      [1125, 369],
+    ]);
+    const without = open(await buildApplePass(apple, "https://card.example.test", { ...content, program: undefined }));
+    expect(without.files.has("strip.png")).toBe(false);
+    expect(without.json).toMatchObject({ storeCard: { primaryFields: [], backFields: [{ key: "about" }] } });
+  });
+
+  it("takes the café's colours, icons of its background and its logo at three sizes, with no change message", async () => {
     const logo = { apple1x: Buffer.from("logo-1x"), apple2x: Buffer.from("logo-2x"), apple3x: Buffer.from("logo-3x") };
-    const { json, files } = open(buildApplePass(apple, "https://card.example.test", { ...content, colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logo }));
+    const { json, files } = open(await buildApplePass(apple, "https://card.example.test", { ...content, colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logo }));
     expect(json).toMatchObject({ backgroundColor: "rgb(31, 90, 133)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(229, 239, 247)", logoText: "Café Nour" });
     expect(files.get("logo.png")).toEqual(logo.apple1x);
     expect(files.get("logo@2x.png")).toEqual(logo.apple2x);
     expect(files.get("logo@3x.png")).toEqual(logo.apple3x);
     expect(JSON.stringify(json)).not.toContain("changeMessage");
-    const defaults = open(buildApplePass(apple, "https://card.example.test", content));
+    const defaults = open(await buildApplePass(apple, "https://card.example.test", content));
     expect(defaults.json).toMatchObject({ backgroundColor: "rgb(74, 44, 42)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(235, 214, 190)" });
     expect(defaults.files.has("logo.png")).toBe(false);
     expect(files.get("icon.png")).not.toEqual(defaults.files.get("icon.png"));
   });
 
-  it("lists every file in the manifest by its SHA-1 and signs the manifest with the pass type certificate", () => {
-    const { files, text } = open(buildApplePass(apple, "https://card.example.test", content));
+  it("lists every file in the manifest by its SHA-1 and signs the manifest with the pass type certificate", async () => {
+    const { files, text } = open(await buildApplePass(apple, "https://card.example.test", content));
     const manifest = JSON.parse(text("manifest.json")) as Record<string, string>;
     expect(Object.keys(manifest).sort()).toEqual(
-      ["ar.lproj/pass.strings", "en.lproj/pass.strings", "icon.png", "icon@2x.png", "icon@3x.png", "pass.json"].sort(),
+      ["ar.lproj/pass.strings", "en.lproj/pass.strings", "icon.png", "icon@2x.png", "icon@3x.png", "pass.json", "strip.png", "strip@2x.png", "strip@3x.png"].sort(),
     );
     for (const [name, digest] of Object.entries(manifest)) {
       expect(createHash("sha1").update(files.get(name) ?? Buffer.alloc(0)).digest("hex"), name).toBe(digest);

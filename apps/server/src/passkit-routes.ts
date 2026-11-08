@@ -202,11 +202,12 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       return reply.code(304).send();
     }
     const current = found.card.epoch === pass.epoch;
-    const pkpass = buildApplePass(apple, options.publicUrl, {
+    const pkpass = await buildApplePass(apple, options.publicUrl, {
       serialNumber: pass.id,
       authenticationToken: pass.token,
       cafeName: found.cafe.name,
       colors: found.cafe.colors,
+      stampShape: found.cafe.stampShape,
       logo: found.logo,
       stamps: found.card.stamps,
       program:

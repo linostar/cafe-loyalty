@@ -1,3 +1,4 @@
+import type { StampShape } from "@cafe-loyalty/shared";
 import type { ColumnType, Generated } from "kysely";
 
 /** A timestamptz column the database fills in. */
@@ -31,6 +32,8 @@ export interface CafesTable {
   card_background: Generated<string>;
   card_foreground: Generated<string>;
   card_label: Generated<string>;
+  /** The stamp template the cards draw their stamps in (STAMP_SHAPES), set by the owner or the operator; 'circle' by default. */
+  stamp_shape: ColumnType<StampShape, StampShape | undefined, StampShape>;
   /** SHA-256 of the Google loyalty class the worker last wrote for the café, or null (written again when it differs). */
   google_class_hash: ColumnType<Buffer | null, never, Buffer | null>;
   created_at: CreatedAt;
@@ -555,6 +558,7 @@ export const TABLE_COLUMNS = {
     "card_background",
     "card_foreground",
     "card_label",
+    "stamp_shape",
     "google_class_hash",
     "created_at",
     "updated_at",

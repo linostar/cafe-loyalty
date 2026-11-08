@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiMessage, apiText } from "./api-messages.js";
-import { cafePlanSchema, cardColorsShapeSchema, logoHashSchema } from "./admin.js";
+import { cafePlanSchema, cardColorsShapeSchema, logoHashSchema, stampShapeShapeSchema } from "./admin.js";
 import { DEFAULT_CARD_COLORS } from "./card-colors.js";
 import { WIN_BACK_MAX_COOLDOWN_DAYS, WIN_BACK_OFFER_DAYS } from "./campaigns.js";
 import { centsSchema } from "./money.js";
@@ -123,6 +123,8 @@ export const cafeSetupSchema = z.object({
     // The card's colours (set by the operator) and logo (null: the product's); defaults for a server from before them.
     cardColors: cardColorsShapeSchema.default({ ...DEFAULT_CARD_COLORS }),
     logoHash: logoHashSchema.nullable().default(null),
+    // The stamp shape (the owner or the operator); the default for a server from before it.
+    stampShape: stampShapeShapeSchema,
   }),
   program: loyaltyProgramSchema.nullable(),
   orderTypes: z.array(orderTypeSchema),

@@ -22,7 +22,7 @@ import {
 } from "@cafe-loyalty/shared";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ApiRequestError, apiRequest, isStale } from "./api.js";
-import { CardPreview, LogoForm } from "./card-branding.js";
+import { CardPreview, LogoForm, StampShapeForm } from "./card-branding.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useSubmit, type SubmitState } from "./forms.js";
 import { dateFormat, type Later, type Translate, useApiText, useCommonT, useLang, useT } from "./i18n.js";
 import { parseUsdInput } from "./money-input.js";
@@ -333,7 +333,7 @@ function CardForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
       {colorField("background", t("Background colour"))}
       {colorField("foreground", t("Text colour"))}
       {colorField("label", t("Label colour"))}
-      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} />
+      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} stampShape={cafe.stampShape} />
       <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save card")}
       </button>
@@ -1085,6 +1085,13 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           remove={async () => {
             const saved = await apiRequest("DELETE", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema);
             put(saved.id, { logoHash: saved.logoHash }, null);
+          }}
+        />
+        <StampShapeForm
+          shape={cafe.stampShape}
+          save={async (stampShape) => {
+            const saved = await apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { stampShape });
+            put(saved.id, { stampShape: saved.stampShape }, null);
           }}
         />
       </div>

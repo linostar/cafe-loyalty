@@ -138,7 +138,8 @@ export async function writeGooglePass(
     qr: current ? signCardQr(settings, { cardId: pass.card_id, cafeId: job.cafeId, epoch: pass.epoch }) : null,
     offer,
     feedbackUrl: current && found.feedback !== undefined ? feedbackUrl(settings.publicUrl, settings, found.feedback) : undefined,
-  });
+    look: cafe,
+  }, settings.publicUrl);
   let result: SaveResult;
   try {
     result = await wallet.save(loyaltyClass, object, current, notify ? googleOfferMessage(offer) : undefined);

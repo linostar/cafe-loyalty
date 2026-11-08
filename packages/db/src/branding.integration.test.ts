@@ -37,7 +37,7 @@ async function seed(cafeId: string): Promise<void> {
 
 /**
  * Each pass's change marker, by wallet, card and epoch; a current Google pass of either card is `google-current`, since
- * a change marks just one of them, whichever.
+ * a change of the class marks just one of them, whichever (a change of the stamp picture marks both).
  */
 async function markers(cafeId: string): Promise<Record<string, string>> {
   return withCafe(testDb.app.db, cafeId, async (trx) => {
@@ -67,6 +67,8 @@ async function marked(change: () => Promise<unknown>): Promise<{ a: string[]; b:
 
 /** Every current Apple pass, and one current Google pass (its job writes the café's class; objects show nothing of the café). */
 const CURRENT = ["apple-x-2", "apple-y-2", "google-current"];
+/** Every current pass of both wallets: each Google object's stamp picture shows the shape, background and text colour. */
+const EVERY = ["apple-x-2", "apple-y-2", "google-current", "google-current"];
 const NONE = { a: [], b: [] };
 
 /** A logo's images (random bytes: the database does not decode them). */
@@ -98,8 +100,19 @@ describe("a café's branding", () => {
 
   it("marks every current pass of the café on a new name or colour, never a voided one or another café's", async () => {
     expect(await marked(update({ name: "Café Renamed" }))).toEqual({ a: CURRENT, b: [] });
-    expect(await marked(update({ card_background: "#123456" }))).toEqual({ a: CURRENT, b: [] });
-    expect(await marked(update({ card_foreground: "#fefefe", card_label: "#eeeeee" }))).toEqual({ a: CURRENT, b: [] });
+    expect(await marked(update({ card_label: "#eeeeee" }))).toEqual({ a: CURRENT, b: [] });
+    // The colours a stamp picture shows: every Google object too.
+    expect(await marked(update({ card_background: "#123456" }))).toEqual({ a: EVERY, b: [] });
+    expect(await marked(update({ card_foreground: "#fefefe", card_label: "#dddddd" }))).toEqual({ a: EVERY, b: [] });
+  });
+
+  it("starts every café on the circle and marks every current pass on a new stamp shape, refusing an unknown one", async () => {
+    const shape = () => withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafes").select("stamp_shape").executeTakeFirstOrThrow());
+    expect(await shape()).toEqual({ stamp_shape: "circle" });
+    expect(await marked(update({ stamp_shape: "cup" }))).toEqual({ a: EVERY, b: [] });
+    expect(await marked(update({ stamp_shape: "cup" }))).toEqual(NONE);
+    // @ts-expect-error: not a shape, as only SQL could send it.
+    await expect(update({ stamp_shape: "star" })()).rejects.toMatchObject({ code: "23514" });
   });
 
   it("leaves the passes alone on any other change, the same name again, or the worker's Google class record", async () => {

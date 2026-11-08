@@ -1,4 +1,4 @@
-import { apiText, type CardColors } from "@cafe-loyalty/shared";
+import { STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { useId, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
@@ -7,6 +7,16 @@ const AR = {
   "Card preview": "معاينة البطاقة",
   "Loyalty card": "بطاقة الولاء",
   "4 of 9 stamps": "4 من 9 أختام",
+  "Stamp shape": "شكل الأختام",
+  "Cards show the stamps collected as full shapes and the ones to go as outlines.": "تُظهر البطاقات الأختام المجمّعة أشكالاً ممتلئة، والباقية أشكالاً مفرّغة.",
+  Circle: "دائرة",
+  Cup: "فنجان",
+  Plate: "طبق",
+  "Coffee bean": "حبّة بن",
+  "Save shape": "حفظ الشكل",
+  "Saving…": "جارٍ الحفظ…",
+  "Saved. Cards in wallets show the new shape within a few minutes.": "تم الحفظ. يظهر الشكل الجديد على البطاقات في المحافظ خلال دقائق.",
+  "Saved. Cards in wallets show it within a few minutes.": "تم الحفظ. يظهر الشعار على البطاقات في المحافظ خلال دقائق.",
   Logo: "الشعار",
   "Logo of {name}": "شعار {name}",
   "A PNG or JPEG of at most 2 MB, at least 64 pixels on each side. A square logo fits best: Google Wallet shows it in a circle.":
@@ -15,18 +25,36 @@ const AR = {
   "Uploading…": "جارٍ الرفع…",
   "Remove logo": "إزالة الشعار",
   "Removing…": "جارٍ الإزالة…",
-  "Saved. Cards in wallets show it within a few minutes.": "تم الحفظ. يظهر الشعار على البطاقات في المحافظ خلال دقائق.",
   "Logo removed.": "أُزيل الشعار.",
 } as const;
+
+/** Each stamp shape's name, as the picker lists them. */
+const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean" } as const satisfies Record<StampShape, keyof typeof AR>;
+
+/**
+ * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full or outlined. A full stamp's
+ * inner lines take the card's background (`.stamp-icon-inner`, app.css).
+ */
+export function StampIcon({ shape, full }: { shape: StampShape; full: boolean }) {
+  const { body, extra, inner } = STAMP_SHAPE_PATHS[shape];
+  const line = { fill: "none", stroke: "currentColor", strokeWidth: STAMP_STROKE, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+  return (
+    <svg className="stamp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {full ? <path d={body} fill="currentColor" /> : <path d={body} {...line} />}
+      {extra === undefined ? null : <path d={extra} {...line} />}
+      {inner === undefined ? null : <path className={full ? "stamp-icon-inner" : undefined} d={inner} {...line} />}
+    </svg>
+  );
+}
 
 /** A café's logo as the dashboard loads it (its domain forwards only /api to the server). */
 export const logoUrl = (hash: string): string => `/api/logos/${hash}.png`;
 
 /**
- * The face of a café's card as customers see it (web card and wallets): its colours, logo and name, with sample stamps.
- * The colours are data, set through the face's custom properties (as the web card does).
+ * The face of a café's card as customers see it (web card and wallets): its colours, logo and name, with sample stamps
+ * in its shape (4 of 9). The colours are data, set through the face's custom properties (as the web card does).
  */
-export function CardPreview({ name, colors, logoHash }: { name: string; colors: CardColors; logoHash: string | null }) {
+export function CardPreview({ name, colors, logoHash, stampShape }: { name: string; colors: CardColors; logoHash: string | null; stampShape: StampShape }) {
   const t = useT(AR);
   const face = { "--card-background": colors.background, "--card-foreground": colors.foreground, "--card-label": colors.label } as CSSProperties;
   return (
@@ -35,10 +63,76 @@ export function CardPreview({ name, colors, logoHash }: { name: string; colors: 
         {logoHash === null ? null : <img src={logoUrl(logoHash)} alt="" width="48" height="48" />}
         <p className="card-preview-label">{t("Loyalty card")}</p>
         <p className="card-preview-name">{name}</p>
-        <p className="card-preview-stamps">{t("4 of 9 stamps")}</p>
+        <p className="visually-hidden">{t("4 of 9 stamps")}</p>
+        <ol className="card-preview-stamps" aria-hidden="true">
+          {Array.from({ length: 9 }, (_, index) => (
+            <li key={index} className={index < 4 ? "is-filled" : undefined}>
+              <StampIcon shape={stampShape} full={index < 4} />
+            </li>
+          ))}
+        </ol>
       </div>
       <figcaption className="hint">{t("Card preview")}</figcaption>
     </figure>
+  );
+}
+
+/**
+ * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the four
+ * templates as radio buttons, each with its picture, saved together.
+ */
+export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shape: StampShape) => Promise<unknown> }) {
+  const t = useT(AR);
+  const id = useId();
+  const [picked, setPicked] = useState(shape);
+  const [saved, setSaved] = useState(false);
+  const sending = useSubmit();
+  return (
+    <Form
+      aria-label={t("Stamp shape")}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (sending.pending) {
+          return;
+        }
+        setSaved(false);
+        void sending.submit(() => save(picked)).then((result) => {
+          setSaved(result.ok);
+        });
+      }}
+    >
+      <FormError message={sending.error} />
+      <fieldset aria-describedby={`${id}-hint`}>
+        <legend>{t("Stamp shape")}</legend>
+        <p id={`${id}-hint`} className="hint">
+          {t("Cards show the stamps collected as full shapes and the ones to go as outlines.")}
+        </p>
+        <div className="choices stamp-shapes">
+          {STAMP_SHAPES.map((option) => (
+            <label key={option}>
+              <input
+                type="radio"
+                name={`${id}-shape`}
+                value={option}
+                checked={picked === option}
+                onChange={() => {
+                  setPicked(option);
+                  setSaved(false);
+                }}
+              />{" "}
+              <StampIcon shape={option} full />
+              {t(SHAPE_NAMES[option])}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="actions">
+        <button type="submit" aria-disabled={sending.pending || undefined}>
+          {sending.pending ? t("Saving…") : t("Save shape")}
+        </button>
+      </div>
+      <Notice>{saved ? t("Saved. Cards in wallets show the new shape within a few minutes.") : null}</Notice>
+    </Form>
   );
 }
 

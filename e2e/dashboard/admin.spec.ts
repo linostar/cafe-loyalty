@@ -770,6 +770,28 @@ test("finds a café by name and plan in the list, saying how many are shown (A3)
   await expect(rows).toHaveText([/Study Corner/]);
 });
 
+test("picks the café's stamp shape, which the card preview then shows", async ({ page }) => {
+  const sent: unknown[] = [];
+  await mockApi(page, {
+    "GET /api/admin/session": reply(200, OPERATOR),
+    "GET /api/admin/cafes": reply(200, { cafes: [cafe()] }),
+    [`PATCH /api/admin/cafes/${CAFE_ID}`]: async (route) => {
+      const body = route.request().postDataJSON() as { stampShape: string };
+      sent.push(body);
+      await route.fulfill({ json: cafe({ stampShape: body.stampShape }) });
+    },
+  });
+  await page.goto(CAFE_PAGE);
+  // A café from before shapes (or a server that sends none) draws circles.
+  const shapes = page.getByRole("form", { name: "Stamp shape" });
+  await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
+  await shapes.getByRole("radio", { name: "Cup" }).check();
+  await shapes.getByRole("button", { name: "Save shape" }).click();
+  await expect(shapes.getByRole("status")).toHaveText("Saved. Cards in wallets show the new shape within a few minutes.");
+  expect(sent).toEqual([{ stampShape: "cup" }]);
+  await expect(page.getByRole("form", { name: "Card and name" }).locator(".card-preview-stamps .is-filled")).toHaveCount(4);
+});
+
 test("names the café and picks its card colours, checked for contrast, with a live preview, then uploads and removes its logo", async ({ page }) => {
   const HASH = "ab".repeat(32);
   const png = await readFile(ICON_PNG_PATH);

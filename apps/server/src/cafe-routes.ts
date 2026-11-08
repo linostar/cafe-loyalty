@@ -5,6 +5,7 @@ import {
   VISIT_HOURS_WEEKS,
   cafeUpdateSchema,
   logoUploadSchema,
+  stampShapeUpdateSchema,
   loyaltyProgramSchema,
   orderTypeCreateSchema,
   orderTypeUpdateSchema,
@@ -57,6 +58,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       "card_background",
       "card_foreground",
       "card_label",
+      "stamp_shape",
     ])
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
@@ -81,6 +83,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       signupQrPrintedAt: cafe.signup_qr_printed_at?.toISOString() ?? null,
       cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
       logoHash: logo?.hash?.toString("hex") ?? null,
+      stampShape: cafe.stamp_shape,
     },
     program:
       program === undefined
@@ -264,6 +267,25 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     return withCafe(db, owner.cafeId, async (trx) => {
       await setLogo(trx, owner.cafeId, images, { actorType: "owner", actorId: owner.ownerId });
       request.log.info({ cafeId: owner.cafeId }, "cafe logo set");
+      return loadSetup(trx, owner.cafeId);
+    });
+  });
+
+  /** Sets the shape the café's cards draw their stamps in; its triggers mark every pass of the café changed. */
+  app.put("/cafe/stamp-shape", { config: { access: "owner" } }, async (request) => {
+    const owner = ownerOf(request);
+    const { stampShape } = parseInput(stampShapeUpdateSchema, request.body);
+    return withCafe(db, owner.cafeId, async (trx) => {
+      const changed = await trx
+        .updateTable("cafes")
+        .set({ stamp_shape: stampShape })
+        .where("id", "=", owner.cafeId)
+        .where("stamp_shape", "<>", stampShape)
+        .executeTakeFirst();
+      if (changed.numUpdatedRows > 0n) {
+        await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "cafe.updated", entityType: "cafe", entityId: owner.cafeId, changes: { stampShape } });
+      }
+      request.log.info({ cafeId: owner.cafeId, stampShape }, "cafe stamp shape set");
       return loadSetup(trx, owner.cafeId);
     });
   });

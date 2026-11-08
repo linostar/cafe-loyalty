@@ -1,13 +1,17 @@
-import type { CardColors } from "@cafe-loyalty/shared";
+import type { CardColors, StampShape } from "@cafe-loyalty/shared";
 import type { Transaction } from "kysely";
 import type { Database } from "./schema.js";
 
-/** What every card of a café shows of it: its name, its card colours and its logo's hash (null: the product's logo). */
+/**
+ * What every card of a café shows of it: its name, its card colours, its logo's hash (null: the product's logo) and the
+ * shape its stamps are drawn in.
+ */
 export interface CafeBranding {
   id: string;
   name: string;
   colors: CardColors;
   logoHash: Buffer | null;
+  stampShape: StampShape;
 }
 
 /** A café's logo in the sizes its cards use, with the SHA-256 of the square PNG. */
@@ -24,11 +28,34 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
   const cafe = await trx
     .selectFrom("cafes")
     .leftJoin("cafe_logos", "cafe_logos.cafe_id", "cafes.id")
-    .select(["cafes.id", "cafes.name", "cafes.card_background", "cafes.card_foreground", "cafes.card_label", "cafe_logos.hash"])
+    .select(["cafes.id", "cafes.name", "cafes.card_background", "cafes.card_foreground", "cafes.card_label", "cafes.stamp_shape", "cafe_logos.hash"])
     .where("cafes.id", "=", cafeId)
     .executeTakeFirstOrThrow();
-  return { id: cafe.id, name: cafe.name, colors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label }, logoHash: cafe.hash };
+  return {
+    id: cafe.id,
+    name: cafe.name,
+    colors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
+    logoHash: cafe.hash,
+    stampShape: cafe.stamp_shape,
+  };
 }
+
+/** What a picture of a card's stamps shows: the shape, the card's background and text colours, and its count. */
+export interface StampPicture {
+  shape: StampShape;
+  background: string;
+  foreground: string;
+  stamps: number;
+  required: number;
+}
+
+/**
+ * Where a picture of a card's stamps is served, publicly (Google fetches it for the pass's hero image): built only from
+ * what it shows, so it names no card, café or customer, and a new count or look is a new address. A card past full
+ * (stamps keep counting) shows every stamp full.
+ */
+export const stampPicturePath = (picture: StampPicture): string =>
+  `/stamps/${picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
 
 /** The Apple logo.png images of a café's logo, or undefined without one (the pass then has the product's). */
 export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string): Promise<{ apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined> {

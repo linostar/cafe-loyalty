@@ -429,7 +429,11 @@ describe("job queue", () => {
       const [saved] = wallet.saved;
       expect(saved?.create).toBe(true);
       expect(saved?.loyaltyClass).toMatchObject({ id: `${GOOGLE.issuerId}.cafe-${pass.cafeId}`, issuerName: "Café Najjar", programLogo: { sourceUri: { uri: "https://card.example.test/wallet/logo.png" } } });
-      expect(saved?.object).toMatchObject({ id: `${GOOGLE.issuerId}.card-${pass.cardId}-1`, state: "ACTIVE", loyaltyPoints: { balance: { string: "3/9" } } });
+      expect(saved?.object).toMatchObject({
+        id: `${GOOGLE.issuerId}.card-${pass.cardId}-1`,
+        state: "ACTIVE",
+        heroImage: { sourceUri: { uri: "https://card.example.test/stamps/circle-4a2c2a-ffffff-3-9.png" }, contentDescription: { defaultValue: { value: "3 of 9 stamps" } } },
+      });
       // The card's QR, signed as the server signs it.
       const qr = saved?.object.state === "ACTIVE" ? saved.object.barcode.value : "";
       expect(verifyCardQr(GOOGLE, qr)).toEqual({ cardId: pass.cardId, cafeId: pass.cafeId, epoch: 1 });

@@ -1,5 +1,7 @@
-import type { CardColors } from "@cafe-loyalty/shared";
-import { cardStyle, count, html, page, t, type Lang, type SafeHtml } from "./customer-html.js";
+import { stampsText } from "@cafe-loyalty/db";
+import type { CardColors, StampShape } from "@cafe-loyalty/shared";
+import { SafeHtml, cardStyle, count, html, page, t, type Lang } from "./customer-html.js";
+import { stampSlotSvg } from "./stamp-picture.js";
 
 /**
  * The customer pages' markup (AC 4, 7, 8, 9), from plain data: the routes in customer-pages.ts load what a page needs
@@ -79,6 +81,8 @@ export interface CardView {
   /** The café's card colours (the face's own stylesheet, cardStyle) and its logo's address, or null for none. */
   colors: CardColors;
   logoPath: string | null;
+  /** The shape the café's stamps are drawn in. */
+  stampShape: StampShape;
   stamps: number;
   program: ProgramView | undefined;
   /** The card's signed QR, as an image data URL. */
@@ -93,13 +97,16 @@ export interface CardView {
   otherLangHref: string;
 }
 
-/** A tick for a collected stamp; drawn, so it needs no image the policy would have to allow. */
-const TICK = html`<svg viewBox="0 0 24 24" focusable="false"><path d="M6 12.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-
-/** The stamps as a grid of the program's slots, filled up to the card's count; the text beside it says the same. */
-function stampGrid(stamps: number, required: number): SafeHtml {
-  const slots = Array.from({ length: required }, (_, index) => (index < stamps ? html`<li class="stamp is-filled">${TICK}</li>` : html`<li class="stamp"></li>`));
-  return html`<ol class="stamp-grid" aria-hidden="true">${slots}</ol>`;
+/**
+ * The stamps as the program's slots in the café's shape, full up to the card's count; drawn inline, so they need no
+ * image the policy would have to allow. Screen readers get the count in words instead ("4 of 9 stamps").
+ */
+function stampGrid(lang: Lang, shape: StampShape, stamps: number, required: number): SafeHtml {
+  const slots = Array.from({ length: required }, (_, index) =>
+    index < stamps ? html`<li class="stamp is-filled">${new SafeHtml(stampSlotSvg(shape, true))}</li>` : html`<li class="stamp">${new SafeHtml(stampSlotSvg(shape, false))}</li>`,
+  );
+  return html`<p class="visually-hidden">${stampsText(lang, stamps, required)}</p>
+<ol class="stamp-grid" aria-hidden="true">${slots}</ol>`;
 }
 
 /** A chevron pointing the way reading goes (forward) or back; drawn, and turned round in right-to-left pages. */
@@ -119,8 +126,7 @@ export function cardView(lang: Lang, view: CardView): string {
 ${view.logoPath === null ? null : html`<img class="card-logo" src="${view.logoPath}" alt="" width="56" height="56">`}
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1 id="card-title">${t(lang, "cardTitle", { cafe: view.cafeName })}</h1>
-<p class="stamps">${program === undefined ? count(lang, "stamps", stamps) : t(lang, "stampsProgress", { stamps, required: count(lang, "stamps", program.stampsRequired) })}</p>
-${program === undefined ? null : stampGrid(stamps, program.stampsRequired)}
+${program === undefined ? null : stampGrid(lang, view.stampShape, stamps, program.stampsRequired)}
 ${program === undefined
   ? null
   : ready

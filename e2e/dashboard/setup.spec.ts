@@ -296,6 +296,39 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
   await expect(logo.getByLabel("Logo")).toBeFocused();
 });
 
+test("picks the shape the card's stamps are drawn in, which the preview then shows", async ({ page }) => {
+  let setup = { cafe: { ...CAFE, stampShape: "circle" }, program: PROGRAM, orderTypes: [ESPRESSO] };
+  const sent: unknown[] = [];
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    "PUT /api/cafe/stamp-shape": async (route) => {
+      const body = json(route) as { stampShape: string };
+      sent.push(body);
+      setup = { ...setup, cafe: { ...setup.cafe, stampShape: body.stampShape } };
+      await route.fulfill({ json: setup });
+    },
+  });
+  await page.goto("/cafe");
+  const section = page.getByRole("region", { name: "Card" });
+  // Sample stamps, 4 of 9, said in words to screen readers.
+  await expect(section.locator(".card-preview-stamps li")).toHaveCount(9);
+  await expect(section.locator(".card-preview-stamps .is-filled")).toHaveCount(4);
+  await expect(section.getByText("4 of 9 stamps")).toHaveClass("visually-hidden");
+  const form = section.getByRole("form", { name: "Stamp shape" });
+  const shapes = form.getByRole("group", { name: "Stamp shape" });
+  await expect(shapes.getByRole("radio")).toHaveCount(4);
+  await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
+  const circle = await section.locator(".card-preview-stamps .is-filled path").first().getAttribute("d");
+  await shapes.getByRole("radio", { name: "Coffee bean" }).check();
+  await form.getByRole("button", { name: "Save shape" }).click();
+  await expect(form.getByRole("status")).toHaveText("Saved. Cards in wallets show the new shape within a few minutes.");
+  expect(sent).toEqual([{ stampShape: "bean" }]);
+  await expect(section.locator(".card-preview-stamps .is-filled path").first()).not.toHaveAttribute("d", circle ?? "");
+  await expect(shapes.getByRole("radio", { name: "Coffee bean" })).toBeChecked();
+});
+
 test("says nothing is saved when the field changed while its save was on its way", async ({ page }) => {
   let setup = { cafe: CAFE, program: PROGRAM, orderTypes: [ESPRESSO] };
   let held = false;

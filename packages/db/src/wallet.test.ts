@@ -1,9 +1,10 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { CardOffer } from "./offers.js";
-import { PASS_TEXT, googleClassId, googleLoyaltyClass, googleLoyaltyObject, googleObjectId, googleOfferMessage, offerText, signJwt } from "./wallet.js";
+import { PASS_TEXT, googleClassId, googleLoyaltyClass, googleLoyaltyObject, googleObjectId, googleOfferMessage, offerText, signJwt, stampsText } from "./wallet.js";
 
 const ISSUER = "3388000000012345678";
+const PUBLIC_URL = "https://card.example.test";
 const CONTENT = {
   cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d",
   cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40",
@@ -13,6 +14,7 @@ const CONTENT = {
   qr: "qr-token",
   offer: undefined,
   feedbackUrl: undefined,
+  look: { colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, stampShape: "cup" as const },
 };
 
 const OFFER: CardOffer = {
@@ -98,26 +100,43 @@ describe("Google Wallet objects", () => {
     });
   });
 
-  it("builds the current card's object: QR, stamps out of the program's, reward and help, in Arabic and English (AC 10)", () => {
-    const object = googleLoyaltyObject(ISSUER, CONTENT);
+  it("builds the current card's object: QR, a picture of its stamps, reward and help, in Arabic and English (AC 10)", () => {
+    const object = googleLoyaltyObject(ISSUER, CONTENT, PUBLIC_URL);
     expect(object).toMatchObject({
       id: googleObjectId(ISSUER, CONTENT.cardId, 2),
       classId: googleClassId(ISSUER, CONTENT.cafeId),
       state: "ACTIVE",
       barcode: { type: "QR_CODE", value: "qr-token" },
-      loyaltyPoints: { label: "Stamps", balance: { string: "4/9" } },
+      // The café's shape and colours and the card's count make the address; read aloud as words.
+      heroImage: {
+        sourceUri: { uri: "https://card.example.test/stamps/cup-1f5a85-ffffff-4-9.png" },
+        contentDescription: { defaultValue: { language: "en", value: "4 of 9 stamps" }, translatedValues: [{ language: "ar", value: stampsText("ar", 4, 9) }] },
+      },
     });
+    // No count or "Stamps" label on the front: the picture shows them.
+    expect(object).not.toHaveProperty("loyaltyPoints");
     expect(object.textModulesData.map((module) => [module.id, module.localizedBody.translatedValues[0]?.value])).toEqual([
       ["reward", "قهوة مجانية"],
       ["about", PASS_TEXT.ar.passAboutText],
     ]);
     // Silent: no field asks Google to notify (AC 14).
     expect(JSON.stringify(object)).not.toContain("notifyPreference");
-    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, program: undefined })).toMatchObject({ loyaltyPoints: { balance: { int: 4 } } });
+    // Past full (stamps keep counting): every stamp full, at an address the server draws.
+    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, stamps: 11 }, PUBLIC_URL)).toMatchObject({ heroImage: { sourceUri: { uri: "https://card.example.test/stamps/cup-1f5a85-ffffff-9-9.png" } } });
+    // Without a program a card collects no stamps: no picture.
+    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, program: undefined }, PUBLIC_URL)).not.toHaveProperty("heroImage");
+  });
+
+  it("says a card's stamps out of the program's in both languages", () => {
+    expect(stampsText("en", 4, 9)).toBe("4 of 9 stamps");
+    expect(stampsText("en", 0, 1)).toBe("0 of 1 stamp");
+    expect(stampsText("ar", 4, 9)).toBe("⁨4⁩ من ⁨9⁩ أختام");
+    expect(stampsText("ar", 1, 2)).toBe("⁨1⁩ من ختمين");
+    expect(stampsText("ar", 3, 12)).toBe("⁨3⁩ من ⁨12⁩ ختمًا");
   });
 
   it("shows the card's offer first, and announces it with one notifying message named after the campaign (AC 14)", () => {
-    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, offer: OFFER });
+    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, offer: OFFER }, PUBLIC_URL);
     expect(object.textModulesData.map((module) => module.id)).toEqual(["offer", "reward", "about"]);
     expect(object.textModulesData[0]).toMatchObject({ header: "Afternoon · 20% off", body: offerText("en", OFFER).details });
     expect(object.textModulesData[0]?.localizedHeader.translatedValues[0]?.value).toBe(offerText("ar", OFFER).headline);
@@ -134,7 +153,7 @@ describe("Google Wallet objects", () => {
   });
 
   it("links to the latest visit's feedback page, in Arabic and English, without notifying (AC 37)", () => {
-    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, feedbackUrl: "https://card.example.test/f/fake-token" });
+    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, feedbackUrl: "https://card.example.test/f/fake-token" }, PUBLIC_URL);
     expect(object.state === "ACTIVE" ? object.linksModuleData?.uris : undefined).toEqual([
       {
         id: "feedback",
@@ -144,11 +163,11 @@ describe("Google Wallet objects", () => {
       },
     ]);
     expect(JSON.stringify(object)).not.toContain("notifyPreference");
-    expect(googleLoyaltyObject(ISSUER, CONTENT)).not.toHaveProperty("linksModuleData");
+    expect(googleLoyaltyObject(ISSUER, CONTENT, PUBLIC_URL)).not.toHaveProperty("linksModuleData");
   });
 
   it("builds an earlier epoch's object INACTIVE, without the QR or stamps (AC 8)", () => {
-    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, qr: null, offer: OFFER });
+    const object = googleLoyaltyObject(ISSUER, { ...CONTENT, qr: null, offer: OFFER }, PUBLIC_URL);
     expect(object).toEqual({
       id: googleObjectId(ISSUER, CONTENT.cardId, 2),
       classId: googleClassId(ISSUER, CONTENT.cafeId),

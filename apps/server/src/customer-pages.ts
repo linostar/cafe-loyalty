@@ -18,6 +18,7 @@ import { registerLogoFiles } from "./logo-routes.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
+import { parseStampPicture, stampPicturePng } from "./stamp-picture.js";
 
 const MINUTE = 60;
 /** A feedback message's longest length, in characters (the column's check, migration 0015). */
@@ -223,7 +224,11 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     // Guesses at the old address of an undo link.
     emailUndoPerIp: new RateLimiter(10, 15 * MINUTE * 1000),
     feedbackPerIp: new RateLimiter(20, HOUR * 1000),
+    // Each new stamp picture is drawn (sharp, on the shared thread pool); ones drawn lately are served from memory.
+    stampPicturesPerIp: new RateLimiter(300, HOUR * 1000),
   };
+  /** Stamp pictures drawn lately, by file name, oldest first. ponytail: one process's memory, 256 pictures (about 10 MB). */
+  const stampPictures = new Map<string, Buffer>();
 
   function enforce(limiter: RateLimiter, key: string): void {
     const wait = limiter.hit(key);
@@ -380,7 +385,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     if (cafe === undefined) {
       throw new PageError(404, "joinGone");
     }
-    return sendPage(reply, 200, joinPage(lang, `/join/${code}`, cafe.name, await programOf(cafe.id), {}, {}));
+    // Offers start ticked (AC 4); a form sent back with an error keeps the customer's own choice.
+    return sendPage(reply, 200, joinPage(lang, `/join/${code}`, cafe.name, await programOf(cafe.id), { offers: "yes" }, {}));
   });
 
   /**
@@ -544,6 +550,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       cafeName: cafe.name,
       colors: cafe.colors,
       logoPath: cafe.logoHash === null ? null : cafeLogoPath(cafe.logoHash),
+      stampShape: cafe.stampShape,
       stamps: card.stamps,
       program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
       qr,
@@ -592,11 +599,12 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         feedback: await loadFeedbackRequest(trx, card.id),
       };
     });
-    const pkpass = buildApplePass(apple, options.publicUrl, {
+    const pkpass = await buildApplePass(apple, options.publicUrl, {
       serialNumber: found.pass.id,
       authenticationToken: token,
       cafeName: found.cafe.name,
       colors: found.cafe.colors,
+      stampShape: found.cafe.stampShape,
       logo: found.logo,
       stamps: found.stamps,
       program:
@@ -653,6 +661,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       // Texts are left out of the link (googleSaveUrl); the write queued above adds the offer and the feedback link.
       offer: undefined,
       feedbackUrl: undefined,
+      look: found.cafe,
     });
     request.log.info({ cafeId: card.cafe_id }, "google pass save link opened");
     return reply.code(303).header("location", location).send();
@@ -660,6 +669,31 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
 
   // Cafés' own logos, by hash (the Google class and the web card show them).
   registerLogoFiles(app, db, { immutable: true });
+
+  /**
+   * A picture of a card's stamps, Google's hero image on the pass (stampPicturePath): public, built only from what the
+   * address names, which names no card, café or customer. Anything but a picture a card could show is not found,
+   * without drawing; a new count or look is a new address, so each one is cached for good. Drawing is limited per
+   * address (any colours make a new address); a picture drawn lately is served again without drawing or counting.
+   */
+  app.get("/stamps/:file", async (request, reply) => {
+    const { file } = request.params as { file: string };
+    const picture = parseStampPicture(file);
+    if (picture === undefined) {
+      throw new PageError(404, "notFound");
+    }
+    let png = stampPictures.get(file);
+    if (png === undefined) {
+      enforce(limits.stampPicturesPerIp, clientKey(request.ip));
+      // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
+      png = await stampPicturePng(picture, 3);
+      stampPictures.set(file, png);
+      if (stampPictures.size > 256) {
+        stampPictures.delete(stampPictures.keys().next().value ?? file);
+      }
+    }
+    return reply.code(200).header("content-type", "image/png").header("cache-control", "public, max-age=31536000, immutable").send(png);
+  });
 
   /** The Google class logo, fetched by Google (public, no secrets). */
   app.get("/wallet/logo.png", async (_request, reply) => {

@@ -40,7 +40,8 @@ export const API_MESSAGES_AR = {
   "Use a colour as #rrggbb, such as #4a2c2a.": "استخدم لوناً بصيغة ‎#rrggbb، مثل ‎#4a2c2a.",
   "Pick a text colour that stands out more from the background: at least 4.5 to 1.": "اختر لوناً للنص يتميّز أكثر عن الخلفية: بنسبة 4.5 إلى 1 على الأقل.",
   "Pick a label colour that stands out more from the background: at least 4.5 to 1.": "اختر لوناً للعناوين يتميّز أكثر عن الخلفية: بنسبة 4.5 إلى 1 على الأقل.",
-  "Upload the logo as a PNG or JPEG image.": "ارفع الشعار كصورة PNG أو JPEG.",
+  "Pick one of the stamp shapes.": "اختر أحد أشكال الأختام.",
+  "Upload the logo as a PNG or JPEG image.":"ارفع الشعار كصورة PNG أو JPEG.",
   "Use a logo of at most 2 MB.": "استخدم شعاراً بحجم 2 ميغابايت كحد أقصى.",
   "Use a logo at least 64 pixels wide and high.": "استخدم شعاراً بعرض وارتفاع 64 بكسل على الأقل.",
   "This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one.":

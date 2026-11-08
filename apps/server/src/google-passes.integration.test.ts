@@ -111,8 +111,10 @@ describe("Google pass save links", () => {
       classId: `${ISSUER}.cafe-${app.owner.cafeId}`,
       state: "ACTIVE",
       barcode: { type: "QR_CODE", value: card.qr },
-      loyaltyPoints: { balance: { string: "1/2" } },
+      // The picture of the card's stamps in the café's shape and colours (the defaults here); its description comes with the write.
+      heroImage: { sourceUri: { uri: `${PUBLIC_URL}/stamps/circle-4a2c2a-ffffff-1-2.png` } },
     });
+    expect(link.object).not.toHaveProperty("loyaltyPoints");
     // Short enough for every browser (Google advises under about 1,800 characters); the queued write adds the texts.
     expect(link.url.length).toBeLessThan(1_800);
     expect(link.object).not.toHaveProperty("textModulesData");

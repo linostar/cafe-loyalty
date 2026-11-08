@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { signEmailUndoToken, signFeedbackToken } from "@cafe-loyalty/db";
+import { STAMP_SHAPE_PATHS } from "@cafe-loyalty/shared";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
@@ -90,12 +91,11 @@ describe("signup", () => {
     expect(await auditActions(owner.cafeId)).toContain("card.created");
   });
 
-  it("asks for offers with an unticked box, and turns them on only when it is ticked (AC 4)", async () => {
+  it("asks for offers with a box ticked at first, and turns them on only when it is sent ticked (AC 4)", async () => {
     const { app, code, owner } = await cafeWithJoinCode();
     for (const lang of ["en", "ar"]) {
       const page = await app.inject({ method: "GET", url: `/join/${code}?lang=${lang}` });
-      expect(page.body).toContain('<input type="checkbox" name="offers" value="yes"> ');
-      expect(page.body).not.toContain('name="offers" value="yes" checked');
+      expect(page.body).toContain('<input type="checkbox" name="offers" value="yes" checked> ');
       // The privacy notice names who keeps the data, and says the café may show offers.
       expect(page.body).toContain(`\u2068${OPERATOR_NAME}\u2069`);
     }
@@ -396,6 +396,20 @@ describe("web card", () => {
     expect(String(branded.headers["content-security-policy"])).toContain(`'sha256-${createHash("sha256").update(style).digest("base64")}'`);
   });
 
+  it("serves a picture of stamps for any address a card could show, cached for good, and nothing for any other", async () => {
+    const { app } = await cafeWithJoinCode();
+    const picture = await app.inject({ method: "GET", url: "/stamps/bean-1f5a85-ffffff-4-9.png" });
+    expect(picture.statusCode).toBe(200);
+    expect(picture.headers["content-type"]).toBe("image/png");
+    expect(picture.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(picture.rawPayload.subarray(1, 4).toString("latin1")).toBe("PNG");
+    // Asked again: the same picture, from memory.
+    expect((await app.inject({ method: "GET", url: "/stamps/bean-1f5a85-ffffff-4-9.png" })).rawPayload.equals(picture.rawPayload)).toBe(true);
+    for (const file of ["star-1f5a85-ffffff-4-9.png", "bean-1f5a85-ffffff-10-9.png", "bean-1f5a85-ffffff-4-51.png", "bean-1F5A85-ffffff-4-9.png", "bean-1f5a85-ffffff-4-9.svg"]) {
+      expect((await app.inject({ method: "GET", url: `/stamps/${file}` })).statusCode, file).toBe(404);
+    }
+  });
+
   it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {
     const { app, code, owner } = await cafeWithJoinCode();
     const as = (method: "POST" | "PUT", url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers: withCookie(owner.session), payload });
@@ -407,9 +421,12 @@ describe("web card", () => {
     const card = await cardRow(secret);
     await context.admin.query("UPDATE app.cards SET stamps = 3 WHERE id = $1", [card?.id]);
     const page = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
-    expect(page).toContain("\u20683\u2069 of \u20689 stamps\u2069");
-    expect(page.match(/<li class="stamp is-filled">/g)).toHaveLength(3);
-    expect(page.match(/<li class="stamp"><\/li>/g)).toHaveLength(6);
+    // The stamps as the caf\u00e9's shapes (a circle by default); the count in words only for screen readers.
+    expect(page).toContain('<p class="visually-hidden">3 of 9 stamps</p>');
+    expect(page.match(/<li class="stamp is-filled"><svg /g)).toHaveLength(3);
+    expect(page.match(/<li class="stamp"><svg /g)).toHaveLength(6);
+    await context.admin.query("UPDATE app.cafes SET stamp_shape = 'cup' WHERE id = $1", [owner.cafeId]);
+    expect((await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body).toContain(STAMP_SHAPE_PATHS.cup.body);
     expect(page).toContain("\u20686 stamps\u2069 to go for \u2068Free coffee\u2069.");
     expect(page).not.toContain('class="offer"');
 
@@ -435,7 +452,7 @@ describe("web card", () => {
       await context.admin.query("UPDATE app.cards SET stamps = $2 WHERE id = $1", [card?.id, stamps]);
       const full = (await app.inject({ method: "GET", url: `/c/${secret}?lang=en` })).body;
       expect(full.match(/<li class="stamp is-filled">/g)).toHaveLength(9);
-      expect(full).not.toContain('<li class="stamp"></li>');
+      expect(full).not.toContain('<li class="stamp">');
       expect(full).toContain('<p class="reward is-ready">Your reward is ready: \u2068Free coffee\u2069. Show this card to the barista.</p>');
       expect(full).toContain('<h2 class="ready-heading">Reward ready: show this code to the barista</h2>');
       expect(full).not.toContain("to go for");

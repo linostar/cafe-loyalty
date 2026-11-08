@@ -12,7 +12,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
-import { CardPreview, LogoForm } from "./card-branding.js";
+import { CardPreview, LogoForm, StampShapeForm } from "./card-branding.js";
 import { ConfirmButton, Field, Form, FormError, Notice, useFocusOnChange, useSubmit } from "./forms.js";
 import type { UnsavedChanges } from "./unsaved-changes.js";
 import { useLang, useT, type Later, type Translate } from "./i18n.js";
@@ -677,7 +677,7 @@ export function CafePage() {
       </SettingsSection>
       <SettingsSection id="card" title="Card">
         <div className="card">
-          <CardPreview name={setup.cafe.name} colors={setup.cafe.cardColors} logoHash={setup.cafe.logoHash} />
+          <CardPreview name={setup.cafe.name} colors={setup.cafe.cardColors} logoHash={setup.cafe.logoHash} stampShape={setup.cafe.stampShape} />
           <p className="hint">{t("The card's colours are set by the service's operator: ask them to change them.")}</p>
           <LogoForm
             cafeName={setup.cafe.name}
@@ -685,6 +685,7 @@ export function CafePage() {
             upload={(image) => save("PUT", "/api/cafe/logo", { image })}
             remove={() => save("DELETE", "/api/cafe/logo", {})}
           />
+          <StampShapeForm shape={setup.cafe.stampShape} save={(stampShape) => save("PUT", "/api/cafe/stamp-shape", { stampShape })} />
         </div>
       </SettingsSection>
       <SettingsSection id="program" title="Program">
