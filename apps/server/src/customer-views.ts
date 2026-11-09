@@ -1,5 +1,5 @@
 import { stampsText } from "@cafe-loyalty/db";
-import type { CardColors, StampShape } from "@cafe-loyalty/shared";
+import { stampGrid as stampRows, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { SafeHtml, cardStyle, count, html, page, t, type Lang } from "./customer-html.js";
 import { stampSlotSvg } from "./stamp-picture.js";
 
@@ -99,14 +99,15 @@ export interface CardView {
 
 /**
  * The stamps as the program's slots in the café's shape, full up to the card's count; drawn inline, so they need no
- * image the policy would have to allow. Screen readers get the count in words instead ("4 of 9 stamps").
+ * image the policy would have to allow. Screen readers get the count in words instead ("4 of 9 stamps"). Rows as the
+ * passes have them (`columns-<n>`, customer.css: at most 5 a row, spread evenly).
  */
 function stampGrid(lang: Lang, shape: StampShape, stamps: number, required: number): SafeHtml {
   const slots = Array.from({ length: required }, (_, index) =>
     index < stamps ? html`<li class="stamp is-filled">${new SafeHtml(stampSlotSvg(shape, true))}</li>` : html`<li class="stamp">${new SafeHtml(stampSlotSvg(shape, false))}</li>`,
   );
   return html`<p class="visually-hidden">${stampsText(lang, stamps, required)}</p>
-<ol class="stamp-grid" aria-hidden="true">${slots}</ol>`;
+<ol class="stamp-grid columns-${String(stampRows(required).columns)}" aria-hidden="true">${slots}</ol>`;
 }
 
 /** A chevron pointing the way reading goes (forward) or back; drawn, and turned round in right-to-left pages. */

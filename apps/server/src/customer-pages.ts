@@ -679,8 +679,10 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
    * address names, which names no card, café or customer. Anything but a picture a card could show is not found,
    * without drawing; a new count or look is a new address, so each one is cached for good. Drawing is limited per
    * address (any colours make a new address); a picture drawn lately is served again without drawing or counting.
+   * Addresses without `v2/` are the previous layout's, still on passes the sweep has not yet moved on: they get the
+   * current drawing rather than a broken image.
    */
-  app.get("/stamps/:file", async (request, reply) => {
+  const stampPictureRoute = async (request: FastifyRequest, reply: FastifyReply) => {
     const { file } = request.params as { file: string };
     const picture = parseStampPicture(file);
     if (picture === undefined) {
@@ -713,7 +715,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       png = await drawing;
     }
     return reply.code(200).header("content-type", "image/png").header("cache-control", "public, max-age=31536000, immutable").send(png);
-  });
+  };
+  app.get("/stamps/v2/:file", stampPictureRoute);
+  app.get("/stamps/:file", stampPictureRoute);
 
   /** The Google class logo, fetched by Google (public, no secrets). */
   app.get("/wallet/logo.png", async (_request, reply) => {

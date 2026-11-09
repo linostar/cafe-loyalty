@@ -113,12 +113,12 @@ export const PASS_BACKGROUND = [74, 44, 42] as const;
 
 /**
  * The pass layouts this release builds, stored per pass (AC 12): bump one when its wallet's layout changes. The
- * worker's sweep (mark_outdated_passes, migration 0025) marks every pass on an older layout changed and records the
- * new one, so passes nobody updates otherwise get it too (Apple: 3 drew the stamps on a strip; Google: 2 made them the
- * hero image). An Apple pass on another layout also counts as changed when next fetched (passkit-routes.ts).
+ * worker's sweep (mark_outdated_passes, migrations 0025 and 0027) marks every pass on an older layout changed and
+ * records the new one, so passes nobody updates otherwise get it too (Apple: 3 drew the stamps on a strip; Google: 2
+ * made them the hero image; Apple 4 and Google 3: rows of at most 5 stamps). An Apple pass on another layout also counts as changed when next fetched (passkit-routes.ts).
  */
-export const APPLE_PASS_LAYOUT_VERSION = 3;
-export const GOOGLE_PASS_LAYOUT_VERSION = 2;
+export const APPLE_PASS_LAYOUT_VERSION = 4;
+export const GOOGLE_PASS_LAYOUT_VERSION = 3;
 
 /** Google Wallet settings (GOOGLE_WALLET_* variables). */
 export interface GoogleWalletConfig {

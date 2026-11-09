@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CARD_COLORS, MIN_CARD_CONTRAST, cardColorsSchema, contrastRatio } from "./card-colors.js";
+import { DEFAULT_CARD_COLORS, MAX_STAMPS_PER_ROW, MIN_CARD_CONTRAST, cardColorsSchema, contrastRatio, stampGrid } from "./card-colors.js";
 
 describe("card colours", () => {
   it("computes WCAG contrast either way round", () => {
@@ -34,5 +34,22 @@ describe("card colours", () => {
       ["foreground", "Pick a text colour that stands out more from the background: at least 4.5 to 1."],
       ["label", "Pick a label colour that stands out more from the background: at least 4.5 to 1."],
     ]);
+  });
+});
+
+describe("stampGrid", () => {
+  it("lays out stamps in the fewest rows of at most 5, spread evenly", () => {
+    const grid = (required: number) => {
+      const { rows, columns } = stampGrid(required);
+      return `${String(rows)}x${String(columns)}`;
+    };
+    expect([1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 20, 50].map(grid)).toEqual(["1x1", "1x4", "1x5", "2x3", "2x4", "2x4", "2x5", "2x5", "3x4", "3x4", "3x5", "4x5", "10x5"]);
+    for (let required = 1; required <= 50; required += 1) {
+      const { rows, columns } = stampGrid(required);
+      expect(columns).toBeLessThanOrEqual(MAX_STAMPS_PER_ROW);
+      // Every row holds stamps, and the grid holds them all.
+      expect(rows * columns).toBeGreaterThanOrEqual(required);
+      expect((rows - 1) * columns).toBeLessThan(required);
+    }
   });
 });

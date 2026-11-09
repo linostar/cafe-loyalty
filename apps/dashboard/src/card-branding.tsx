@@ -13,6 +13,9 @@ const AR = {
   Cup: "فنجان",
   Plate: "طبق",
   "Coffee bean": "حبّة بن",
+  "Ice cream": "بوظة",
+  Cake: "قطعة كاتو",
+  Burger: "برغر",
   "Save shape": "حفظ الشكل",
   "Saving…": "جارٍ الحفظ…",
   "Saved. Cards in wallets show the new shape within a few minutes.": "تم الحفظ. يظهر الشكل الجديد على البطاقات في المحافظ خلال دقائق.",
@@ -29,7 +32,7 @@ const AR = {
 } as const;
 
 /** Each stamp shape's name, as the picker lists them. */
-const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean" } as const satisfies Record<StampShape, keyof typeof AR>;
+const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean", icecream: "Ice cream", cake: "Cake", burger: "Burger" } as const satisfies Record<StampShape, keyof typeof AR>;
 
 /**
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full or outlined. A full stamp's
@@ -78,8 +81,8 @@ export function CardPreview({ name, colors, logoHash, stampShape }: { name: stri
 }
 
 /**
- * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the four
- * templates as radio buttons, each with its picture, saved together.
+ * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the
+ * templates (STAMP_SHAPES) as radio buttons, each with its picture, saved together.
  */
 export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shape: StampShape) => Promise<unknown> }) {
   const t = useT(AR);

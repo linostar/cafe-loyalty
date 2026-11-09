@@ -227,6 +227,7 @@ export {
 export {
   DEFAULT_CARD_COLORS,
   DEFAULT_STAMP_SHAPE,
+  MAX_STAMPS_PER_ROW,
   MIN_CARD_CONTRAST,
   STAMP_SHAPES,
   STAMP_SHAPE_PATHS,
@@ -234,6 +235,7 @@ export {
   cardColorSchema,
   cardColorsSchema,
   contrastRatio,
+  stampGrid,
   stampShapeSchema,
   type CardColors,
   type StampShape,

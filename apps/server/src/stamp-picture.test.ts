@@ -2,23 +2,33 @@ import { stampPicturePath } from "@cafe-loyalty/db";
 import { STAMP_SHAPES } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { STRIP_HEIGHT, STRIP_WIDTH, parseStampPicture, stampLayout, stampPicturePng, stampPictureSvg, stampSlotSvg } from "./stamp-picture.js";
+import { SIDE_INSET, STRIP_HEIGHT, STRIP_WIDTH, parseStampPicture, stampLayout, stampPicturePng, stampPictureSvg, stampSlotSvg } from "./stamp-picture.js";
 
 const PICTURE = { shape: "cup" as const, background: "#1f5a85", foreground: "#ffffff", stamps: 4, required: 9 };
 
 describe("stampLayout", () => {
-  it("puts up to 10 stamps on a row, spreads more over even rows, and keeps every stamp inside the strip", () => {
-    const rowsOf = (required: number) => new Set(stampLayout(required).positions.map(({ y }) => y.toFixed(2))).size;
-    expect([1, 9, 10, 11, 12, 20, 21, 50].map(rowsOf)).toEqual([1, 1, 1, 2, 2, 2, 3, 5]);
-    // 12 stamps: two rows of 6.
-    expect(stampLayout(12).positions.filter(({ y }) => y === stampLayout(12).positions[0]?.y)).toHaveLength(6);
-    for (const required of [1, 9, 50]) {
+  it("puts at most 5 stamps on a row, spread evenly over the rows, and keeps every stamp inside the pass's margins", () => {
+    const rowLengths = (required: number) => {
+      const rows = new Map<string, number>();
+      for (const { y } of stampLayout(required).positions) {
+        rows.set(y.toFixed(2), (rows.get(y.toFixed(2)) ?? 0) + 1);
+      }
+      return [...rows.values()];
+    };
+    expect(rowLengths(10)).toEqual([5, 5]);
+    expect(rowLengths(8)).toEqual([4, 4]);
+    expect(rowLengths(7)).toEqual([4, 3]);
+    expect(rowLengths(6)).toEqual([3, 3]);
+    expect(rowLengths(12)).toEqual([4, 4, 4]);
+    expect(rowLengths(50)).toEqual(Array.from({ length: 10 }, () => 5));
+    for (let required = 1; required <= 50; required += 1) {
       const { size, positions } = stampLayout(required);
       expect(positions).toHaveLength(required);
+      expect(size).toBeGreaterThan(0);
       for (const { x, y } of positions) {
-        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeGreaterThanOrEqual(SIDE_INSET);
         expect(y).toBeGreaterThanOrEqual(0);
-        expect(x + size).toBeLessThanOrEqual(STRIP_WIDTH);
+        expect(x + size).toBeLessThanOrEqual(STRIP_WIDTH - SIDE_INSET);
         expect(y + size).toBeLessThanOrEqual(STRIP_HEIGHT);
       }
     }
@@ -57,7 +67,7 @@ describe("stampPicturePng", () => {
 describe("parseStampPicture", () => {
   it("reads back every address stampPicturePath makes", () => {
     for (const picture of [PICTURE, { ...PICTURE, shape: "bean" as const, stamps: 0, required: 1 }, { ...PICTURE, stamps: 50, required: 50 }]) {
-      expect(parseStampPicture(stampPicturePath(picture).slice("/stamps/".length))).toEqual(picture);
+      expect(parseStampPicture(stampPicturePath(picture).slice("/stamps/v2/".length))).toEqual(picture);
     }
   });
 

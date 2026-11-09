@@ -440,7 +440,7 @@ describe("job queue", () => {
       expect(saved?.object).toMatchObject({
         id: `${GOOGLE.issuerId}.card-${pass.cardId}-1`,
         state: "ACTIVE",
-        heroImage: { sourceUri: { uri: "https://card.example.test/stamps/circle-4a2c2a-ffffff-3-9.png" }, contentDescription: { defaultValue: { value: "3 of 9 stamps" } } },
+        heroImage: { sourceUri: { uri: "https://card.example.test/stamps/v2/circle-4a2c2a-ffffff-3-9.png" }, contentDescription: { defaultValue: { value: "3 of 9 stamps" } } },
       });
       // The card's QR, signed as the server signs it.
       const qr = saved?.object.state === "ACTIVE" ? saved.object.barcode.value : "";

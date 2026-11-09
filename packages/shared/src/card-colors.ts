@@ -52,7 +52,7 @@ export const cardColorsSchema = z
   });
 
 /** The stamp templates a café's cards draw their stamps in, empty or full (the Apple strip, the Google hero image, the web card). */
-export const STAMP_SHAPES = ["circle", "cup", "plate", "bean"] as const;
+export const STAMP_SHAPES = ["circle", "cup", "plate", "bean", "icecream", "cake", "burger"] as const;
 export type StampShape = (typeof STAMP_SHAPES)[number];
 
 /** Every café's shape until its owner or the operator picks another. */
@@ -71,6 +71,26 @@ export const STAMP_SHAPE_PATHS: Readonly<Record<StampShape, { body: string; extr
   cup: { body: "M3.5 7h12v6.5a5.5 5.5 0 0 1-5.5 5.5h-1a5.5 5.5 0 0 1-5.5-5.5Z", extra: "M15.5 9h1.75a2.75 2.75 0 0 1 0 5.5h-1.75M2.5 21.5h15" },
   plate: { body: "M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19Z", inner: "M12 6.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11Z" },
   bean: { body: "M12 2.5c4.4 0 7 4.3 7 9.5s-2.6 9.5-7 9.5s-7-4.3-7-9.5s2.6-9.5 7-9.5Z", inner: "M12 3.5c-2.5 3-2.5 5.5 0 8.5s2.5 5.5 0 8.5" },
+  // A scoop wider than the cone it sits on, the line between them as inner.
+  icecream: { body: "M5 11a7 7 0 0 1 14 0h-2.5L12 21.5L7.5 11Z", inner: "M5 11h14" },
+  // A slice seen from the side, its layer as inner and a cherry on top.
+  cake: { body: "M3 20V14l18-6v12Z", extra: "M17 4.25a1.75 1.75 0 1 0 0 3.5a1.75 1.75 0 1 0 0-3.5Z", inner: "M3.5 16h17" },
+  // Seen from the side: the top bun, the patty and the bottom bun, apart.
+  burger: {
+    body: "M3 10a9 7 0 0 1 18 0ZM4.25 12.75h15.5a1.25 1.25 0 0 1 0 2.5H4.25a1.25 1.25 0 0 1 0-2.5ZM3 18h18v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+  },
 };
 
 export const STAMP_STROKE = 1.75;
+
+/** The most stamps a row of a card's stamps holds (the Apple strip, the Google hero image, the web card). */
+export const MAX_STAMPS_PER_ROW = 5;
+
+/**
+ * How a program's stamps are laid out: the fewest rows of at most MAX_STAMPS_PER_ROW, with the stamps spread evenly over
+ * them (10 is two rows of 5, 7 is 4 and 3, 6 is two rows of 3), so no row is much longer than another.
+ */
+export function stampGrid(required: number): { rows: number; columns: number } {
+  const rows = Math.max(1, Math.ceil(required / MAX_STAMPS_PER_ROW));
+  return { rows, columns: Math.max(1, Math.ceil(required / rows)) };
+}

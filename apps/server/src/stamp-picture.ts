@@ -1,5 +1,5 @@
 import type { StampPicture } from "@cafe-loyalty/db";
-import { STAMP_SHAPE_PATHS, STAMP_STROKE, stampShapeSchema, type StampShape } from "@cafe-loyalty/shared";
+import { STAMP_SHAPE_PATHS, STAMP_STROKE, stampGrid, stampShapeSchema, type StampShape } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /** One stamp's drawing (STAMP_SHAPE_PATHS) inside an <svg viewBox="0 0 24 24">, in the given colours (any SVG paint). */
@@ -25,16 +25,18 @@ export function stampSlotSvg(shape: StampShape, full: boolean): string {
 /** Apple's strip image size in points (a store card's, under the header); Google's hero image is drawn the same. */
 export const STRIP_WIDTH = 375;
 export const STRIP_HEIGHT = 123;
+/** Space kept clear above and below the stamps. */
 const PADDING = 10;
+/** Space kept clear on each side: the pass's own margin, so no row reaches past the text above and below it. */
+export const SIDE_INSET = 16;
 
 /**
- * Where a program's stamps sit on the strip: rows of at most 10 (fewer rows' worth evenly spread: 12 stamps are two rows
- * of 6), each stamp as big as the rows and columns allow, the grid centred.
+ * Where a program's stamps sit on the strip: stampGrid's rows (at most 5 a row, spread evenly: 12 stamps are three rows
+ * of 4), each stamp as big as the rows and columns allow (a long program's stamps get small), the grid centred.
  */
 export function stampLayout(required: number): { size: number; positions: { x: number; y: number }[] } {
-  const rows = Math.ceil(required / 10);
-  const columns = Math.ceil(required / rows);
-  const cell = Math.min((STRIP_WIDTH - 2 * PADDING) / columns, (STRIP_HEIGHT - 2 * PADDING) / rows);
+  const { rows, columns } = stampGrid(required);
+  const cell = Math.min((STRIP_WIDTH - 2 * SIDE_INSET) / columns, (STRIP_HEIGHT - 2 * PADDING) / rows);
   const left = (STRIP_WIDTH - cell * columns) / 2;
   const top = (STRIP_HEIGHT - cell * rows) / 2;
   const size = cell * 0.8;
