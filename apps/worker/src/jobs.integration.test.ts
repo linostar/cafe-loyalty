@@ -630,15 +630,21 @@ describe("job queue", () => {
       ).rows[0];
     await admin.query("UPDATE app.apple_passes SET layout_version = 1 WHERE id = $1", [apple.passId]);
     await admin.query("UPDATE app.google_passes SET layout_version = 1 WHERE id = $1", [google.passId]);
-    // 0025's function, which the previous release's worker calls: onto that release's layouts (Apple 3, Google 2).
-    expect((await admin.query("SELECT app.mark_outdated_passes(500) AS marked")).rows).toEqual([{ marked: 2 }]);
-    expect(await layouts()).toEqual({ apple: 3, google: 2 });
-    // Passes on this release's layouts are not moved back down, so an older worker and a newer server never take turns.
-    await admin.query("UPDATE app.apple_passes SET layout_version = $2 WHERE id = $1", [apple.passId, APPLE_PASS_LAYOUT_VERSION]);
-    await admin.query("UPDATE app.google_passes SET layout_version = $2 WHERE id = $1", [google.passId, GOOGLE_PASS_LAYOUT_VERSION]);
-    expect((await admin.query("SELECT app.mark_outdated_passes(500) AS marked")).rows).toEqual([{ marked: 0 }]);
-    expect((await admin.query("SELECT app.mark_outdated_passes(500, 1, 1) AS marked")).rows).toEqual([{ marked: 0 }]);
-    expect(await layouts()).toEqual({ apple: APPLE_PASS_LAYOUT_VERSION, google: GOOGLE_PASS_LAYOUT_VERSION });
+    try {
+      // 0025's function, which the previous release's worker calls: onto that release's layouts (Apple 3, Google 2).
+      expect((await admin.query("SELECT app.mark_outdated_passes(500) AS marked")).rows).toEqual([{ marked: 2 }]);
+      expect(await layouts()).toEqual({ apple: 3, google: 2 });
+      // Passes on this release's layouts are not moved back down, so an older worker and a newer server never take turns.
+      await admin.query("UPDATE app.apple_passes SET layout_version = $2 WHERE id = $1", [apple.passId, APPLE_PASS_LAYOUT_VERSION]);
+      await admin.query("UPDATE app.google_passes SET layout_version = $2 WHERE id = $1", [google.passId, GOOGLE_PASS_LAYOUT_VERSION]);
+      expect((await admin.query("SELECT app.mark_outdated_passes(500) AS marked")).rows).toEqual([{ marked: 0 }]);
+      expect((await admin.query("SELECT app.mark_outdated_passes(500, 1, 1) AS marked")).rows).toEqual([{ marked: 0 }]);
+      expect(await layouts()).toEqual({ apple: APPLE_PASS_LAYOUT_VERSION, google: GOOGLE_PASS_LAYOUT_VERSION });
+    } finally {
+      // Left delivered and on the current layouts, as the fixtures are, so later tests' sweeps never find them.
+      await admin.query("UPDATE app.apple_passes SET layout_version = $2, delivered_xid = updated_xid WHERE id = $1", [apple.passId, APPLE_PASS_LAYOUT_VERSION]);
+      await admin.query("UPDATE app.google_passes SET layout_version = $2, delivered_xid = updated_xid WHERE id = $1", [google.passId, GOOGLE_PASS_LAYOUT_VERSION]);
+    }
   });
 
   it("moves passes on an older layout onto this release's, once, so a pass nobody stamps gets the new layout too", async () => {
