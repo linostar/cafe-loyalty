@@ -407,10 +407,13 @@ a.action-link:hover {
   margin-block-start: var(--space-2);
 }
 
-/* The preview's sample stamps: one to go outlined in the label colour, a collected one solid in the text colour. */
+/*
+ * The preview's sample stamps, in rows as the cards have them (--stamp-columns, set from stampGrid by CardPreview): one
+ * to go outlined in the label colour, a collected one solid in the text colour.
+ */
 .card-preview-stamps {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(var(--stamp-columns, 5), 1.5rem);
   gap: var(--space-1);
   margin: var(--space-2) 0 0;
   padding: 0;

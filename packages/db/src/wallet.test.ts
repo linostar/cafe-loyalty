@@ -109,7 +109,7 @@ describe("Google Wallet objects", () => {
       barcode: { type: "QR_CODE", value: "qr-token" },
       // The café's shape and colours and the card's count make the address; read aloud as words.
       heroImage: {
-        sourceUri: { uri: "https://card.example.test/stamps/cup-1f5a85-ffffff-4-9.png" },
+        sourceUri: { uri: "https://card.example.test/stamps/v2/cup-1f5a85-ffffff-4-9.png" },
         contentDescription: { defaultValue: { language: "en", value: "4 of 9 stamps" }, translatedValues: [{ language: "ar", value: stampsText("ar", 4, 9) }] },
       },
     });
@@ -122,7 +122,7 @@ describe("Google Wallet objects", () => {
     // Silent: no field asks Google to notify (AC 14).
     expect(JSON.stringify(object)).not.toContain("notifyPreference");
     // Past full (stamps keep counting): every stamp full, at an address the server draws.
-    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, stamps: 11 }, PUBLIC_URL)).toMatchObject({ heroImage: { sourceUri: { uri: "https://card.example.test/stamps/cup-1f5a85-ffffff-9-9.png" } } });
+    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, stamps: 11 }, PUBLIC_URL)).toMatchObject({ heroImage: { sourceUri: { uri: "https://card.example.test/stamps/v2/cup-1f5a85-ffffff-9-9.png" } } });
     // Without a program a card collects no stamps: no picture.
     expect(googleLoyaltyObject(ISSUER, { ...CONTENT, program: undefined }, PUBLIC_URL)).not.toHaveProperty("heroImage");
   });

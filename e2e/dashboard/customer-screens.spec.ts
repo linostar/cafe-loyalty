@@ -233,6 +233,25 @@ test.describe("customer page details", () => {
     await expect(page.locator(".stamp-grid .stamp")).toHaveCount(9);
     await expect(page.locator(".stamp-grid .stamp.is-filled")).toHaveCount(4);
     await expect(page.locator(".stamp-grid svg")).toHaveCount(9);
+    // Rows as the passes have them (at most 5, spread evenly: 9 is 5 and 4), inside the card's padding at any width.
+    for (const width of [320, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      const { rows, inside } = await page.locator(".card-face").evaluate((face) => {
+        const bounds = face.getBoundingClientRect();
+        const padding = parseFloat(getComputedStyle(face).paddingInlineStart);
+        const stamps = [...face.querySelectorAll(".stamp")].map((stamp) => stamp.getBoundingClientRect());
+        const perRow = new Map<number, number>();
+        for (const stamp of stamps) {
+          perRow.set(Math.round(stamp.top), (perRow.get(Math.round(stamp.top)) ?? 0) + 1);
+        }
+        return {
+          rows: [...perRow.values()],
+          inside: stamps.every((stamp) => stamp.left >= bounds.left + padding - 0.5 && stamp.right <= bounds.right - padding + 0.5),
+        };
+      });
+      expect(rows, `at ${String(width)} px`).toEqual([5, 4]);
+      expect(inside, `at ${String(width)} px`).toBe(true);
+    }
     const count = page.getByText("4 of 9 stamps", { exact: true });
     await expect(count).toHaveClass("visually-hidden");
     expect(await count.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(1);

@@ -18,7 +18,7 @@ import { registerLogoFiles } from "./logo-routes.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
-import { parseStampPicture, stampPicturePng } from "./stamp-picture.js";
+import { parseStampPicture, stampPicturePng, type StampLayoutVersion } from "./stamp-picture.js";
 
 const MINUTE = 60;
 /** A feedback message's longest length, in characters (the column's check, migration 0015). */
@@ -679,13 +679,18 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
    * address names, which names no card, café or customer. Anything but a picture a card could show is not found,
    * without drawing; a new count or look is a new address, so each one is cached for good. Drawing is limited per
    * address (any colours make a new address); a picture drawn lately is served again without drawing or counting.
+   * Addresses without `v2/` are the previous layout's, still on passes the sweep has not yet moved on: they keep
+   * that layout's drawing (StampLayoutVersion 1), so a picture cached before this release and one drawn after it at
+   * the same address are the same.
    */
-  app.get("/stamps/:file", async (request, reply) => {
-    const { file } = request.params as { file: string };
-    const picture = parseStampPicture(file);
+  const stampPictureRoute = (version: StampLayoutVersion) => async (request: FastifyRequest, reply: FastifyReply) => {
+    const { file: name } = request.params as { file: string };
+    const picture = parseStampPicture(name);
     if (picture === undefined) {
       throw new PageError(404, "notFound");
     }
+    // Cached and drawn per layout: the same name in two layouts is two pictures.
+    const file = `${String(version)}/${name}`;
     let png = stampPictures.get(file);
     if (png === undefined) {
       let drawing = drawingStampPictures.get(file);
@@ -697,7 +702,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         }
         enforce(limits.stampPicturesPerIp, clientKey(request.ip));
         // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
-        drawing = stampPicturePng(picture, 3)
+        drawing = stampPicturePng(picture, 3, version)
           .then((drawn) => {
             stampPictures.set(file, drawn);
             if (stampPictures.size > 256) {
@@ -713,7 +718,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       png = await drawing;
     }
     return reply.code(200).header("content-type", "image/png").header("cache-control", "public, max-age=31536000, immutable").send(png);
-  });
+  };
+  app.get("/stamps/v2/:file", stampPictureRoute(2));
+  app.get("/stamps/:file", stampPictureRoute(1));
 
   /** The Google class logo, fetched by Google (public, no secrets). */
   app.get("/wallet/logo.png", async (_request, reply) => {

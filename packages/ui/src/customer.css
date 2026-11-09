@@ -130,14 +130,33 @@ html[lang="en"] .kicker {
   object-fit: contain;
 }
 
+/*
+ * The stamps in rows as the passes have them (stampGrid, shared: at most 5 a row, spread evenly), the grid's class
+ * naming its columns; each stamp at most 3rem, smaller on a narrow screen, never wider than the card's padding allows.
+ */
 .stamp-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 3rem));
   gap: var(--space-2);
-  max-inline-size: 17rem;
   margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
+}
+
+.stamp-grid.columns-1 {
+  grid-template-columns: minmax(0, 3rem);
+}
+
+.stamp-grid.columns-2 {
+  grid-template-columns: repeat(2, minmax(0, 3rem));
+}
+
+.stamp-grid.columns-3 {
+  grid-template-columns: repeat(3, minmax(0, 3rem));
+}
+
+.stamp-grid.columns-4 {
+  grid-template-columns: repeat(4, minmax(0, 3rem));
 }
 
 /*

@@ -318,15 +318,21 @@ test("picks the shape the card's stamps are drawn in, which the preview then sho
   await expect(section.getByText("4 of 9 stamps")).toHaveClass("visually-hidden");
   const form = section.getByRole("form", { name: "Stamp shape" });
   const shapes = form.getByRole("group", { name: "Stamp shape" });
-  await expect(shapes.getByRole("radio")).toHaveCount(4);
+  for (const name of ["Circle", "Cup", "Plate", "Coffee bean", "Ice cream", "Cake", "Burger"]) {
+    await expect(shapes.getByRole("radio", { name, exact: true })).toBeVisible();
+  }
+  await expect(shapes.getByRole("radio")).toHaveCount(7);
   await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
+  // The 9 sample stamps in rows as the cards have them: 5, then 4.
+  const tops = await section.locator(".card-preview-stamps li").evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));
+  expect([...new Set(tops)].map((top) => tops.filter((other) => other === top).length)).toEqual([5, 4]);
   const circle = await section.locator(".card-preview-stamps .is-filled path").first().getAttribute("d");
-  await shapes.getByRole("radio", { name: "Coffee bean" }).check();
+  await shapes.getByRole("radio", { name: "Ice cream" }).check();
   await form.getByRole("button", { name: "Save shape" }).click();
   await expect(form.getByRole("status")).toHaveText("Saved. Cards in wallets show the new shape within a few minutes.");
-  expect(sent).toEqual([{ stampShape: "bean" }]);
+  expect(sent).toEqual([{ stampShape: "icecream" }]);
   await expect(section.locator(".card-preview-stamps .is-filled path").first()).not.toHaveAttribute("d", circle ?? "");
-  await expect(shapes.getByRole("radio", { name: "Coffee bean" })).toBeChecked();
+  await expect(shapes.getByRole("radio", { name: "Ice cream" })).toBeChecked();
 });
 
 test("says nothing is saved when the field changed while its save was on its way", async ({ page }) => {

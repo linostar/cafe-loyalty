@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { PRODUCT_NAME } from "@cafe-loyalty/shared";
+import { MAX_STAMPS_PER_ROW, PRODUCT_NAME, stampGrid } from "@cafe-loyalty/shared";
+import { stylesheets } from "@cafe-loyalty/ui";
 import { describe, expect, it } from "vitest";
 import { CUSTOMER_CSP, FONT_FILES, SafeHtml, count, html, page, pickLang, t } from "./customer-html.js";
 
@@ -104,5 +105,20 @@ describe("pickLang", () => {
     expect(pickLang(undefined, "en-GB,ar;q=0.8")).toBe("en");
     expect(pickLang(undefined, "fr-FR,en;q=0.8")).toBe("ar");
     expect(pickLang("xx", undefined)).toBe("ar");
+  });
+});
+
+describe("the web card's stamp rows", () => {
+  it("has a column rule in customer.css for every row length stampGrid gives, so the card matches the passes", () => {
+    const css = stylesheets(["customer"]).replace(/\s+/g, " ");
+    const lengths = new Set(Array.from({ length: 50 }, (_, index) => stampGrid(index + 1).columns));
+    for (const columns of lengths) {
+      const tracks = columns === 1 ? "minmax(0, 3rem)" : `repeat(${String(columns)}, minmax(0, 3rem))`;
+      const rule =
+        columns === MAX_STAMPS_PER_ROW
+          ? `.stamp-grid { display: grid; grid-template-columns: ${tracks};`
+          : `.stamp-grid.columns-${String(columns)} { grid-template-columns: ${tracks}; }`;
+      expect(css, `${String(columns)} columns`).toContain(rule);
+    }
   });
 });

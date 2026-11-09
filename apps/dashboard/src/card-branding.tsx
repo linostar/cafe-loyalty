@@ -1,4 +1,4 @@
-import { STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { useId, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
@@ -13,6 +13,9 @@ const AR = {
   Cup: "فنجان",
   Plate: "طبق",
   "Coffee bean": "حبّة بن",
+  "Ice cream": "بوظة",
+  Cake: "قطعة كاتو",
+  Burger: "برغر",
   "Save shape": "حفظ الشكل",
   "Saving…": "جارٍ الحفظ…",
   "Saved. Cards in wallets show the new shape within a few minutes.": "تم الحفظ. يظهر الشكل الجديد على البطاقات في المحافظ خلال دقائق.",
@@ -29,7 +32,7 @@ const AR = {
 } as const;
 
 /** Each stamp shape's name, as the picker lists them. */
-const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean" } as const satisfies Record<StampShape, keyof typeof AR>;
+const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean", icecream: "Ice cream", cake: "Cake", burger: "Burger" } as const satisfies Record<StampShape, keyof typeof AR>;
 
 /**
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full or outlined. A full stamp's
@@ -46,6 +49,9 @@ export function StampIcon({ shape, full }: { shape: StampShape; full: boolean })
     </svg>
   );
 }
+
+/** The preview's sample program: 4 of 9 stamps, in rows as the cards lay them out (stampGrid). */
+const SAMPLE_STAMPS = 9;
 
 /** A café's logo as the dashboard loads it (its domain forwards only /api to the server). */
 export const logoUrl = (hash: string): string => `/api/logos/${hash}.png`;
@@ -64,8 +70,8 @@ export function CardPreview({ name, colors, logoHash, stampShape }: { name: stri
         <p className="card-preview-label">{t("Loyalty card")}</p>
         <p className="card-preview-name">{name}</p>
         <p className="visually-hidden">{t("4 of 9 stamps")}</p>
-        <ol className="card-preview-stamps" aria-hidden="true">
-          {Array.from({ length: 9 }, (_, index) => (
+        <ol className="card-preview-stamps" style={{ "--stamp-columns": stampGrid(SAMPLE_STAMPS).columns } as CSSProperties} aria-hidden="true">
+          {Array.from({ length: SAMPLE_STAMPS }, (_, index) => (
             <li key={index} className={index < 4 ? "is-filled" : undefined}>
               <StampIcon shape={stampShape} full={index < 4} />
             </li>
@@ -78,8 +84,8 @@ export function CardPreview({ name, colors, logoHash, stampShape }: { name: stri
 }
 
 /**
- * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the four
- * templates as radio buttons, each with its picture, saved together.
+ * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the
+ * templates (STAMP_SHAPES) as radio buttons, each with its picture, saved together.
  */
 export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shape: StampShape) => Promise<unknown> }) {
   const t = useT(AR);

@@ -1,4 +1,4 @@
-import { APPLE_PASS_UPDATE_QUEUE, GOOGLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, isJobQueueVersionMismatch, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
+import { APPLE_PASS_LAYOUT_VERSION, APPLE_PASS_UPDATE_QUEUE, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, isJobQueueVersionMismatch, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
 import type { Kysely } from "kysely";
 import type { Logger } from "pino";
 import type { PassPusher } from "./apns.js";
@@ -42,15 +42,18 @@ const PASS_QUEUES = { apple: APPLE_PASS_UPDATE_QUEUE, google: GOOGLE_PASS_UPDATE
  * whose update is still waiting or retrying is skipped (one waiting job per pass, its singletonKey). Like the purge,
  * not a café's own job: the function runs as the owner role and returns ids only (migration 0009); each update job
  * then runs inside withCafe for its pass's café. First, passes on an older layout than this release's are marked
- * changed (mark_outdated_passes, migration 0025), so they are among them: a sweep runs only on the new release's
- * worker, after the old release's server has stopped, so no old server builds the passes it marks.
+ * changed and moved onto this release's layouts (mark_outdated_passes, migrations 0025 and 0027), so they are among
+ * them; an older release's worker moves them only onto its own.
  */
 export async function resendUndeliveredPasses(boss: PgBoss, logger: Logger): Promise<{ found: number; queued: number }> {
   // A failed marking is logged at once and never holds up the resend below; the job fails once the resend is done, so
   // pg-boss records it, and the passes stay on their layout until a later run marks them.
   let marking: { failed: false } | { failed: true; error: unknown } = { failed: false };
   try {
-    const marked = await boss.getDb().executeSql("SELECT app.mark_outdated_passes($1) AS marked", [RESEND_BATCH]);
+    // This release's own layouts, so a worker never records a layout it does not build (migration 0027).
+    const marked = await boss
+      .getDb()
+      .executeSql("SELECT app.mark_outdated_passes($1, $2, $3) AS marked", [RESEND_BATCH, APPLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_LAYOUT_VERSION]);
     const outdated = (marked.rows[0] as { marked: number } | undefined)?.marked ?? 0;
     if (outdated > 0) {
       logger.info({ outdated }, "passes on an older layout marked changed");
