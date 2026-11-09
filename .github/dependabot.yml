@@ -21,6 +21,8 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+        # On its own: a pg-boss release that changes its schema version needs a migration (README, Job queue).
+        exclude-patterns: [pg-boss]
     ignore:
       # typescript-eslint 8.x supports TypeScript below 6.1, and TypeScript 7 breaks type-aware linting.
       - dependency-name: typescript
@@ -32,4 +34,7 @@ updates:
         update-types: ["version-update:semver-major"]
       # Matches the Node 22 runtime (.nvmrc, engines).
       - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # jsdom 31 stops every dashboard and counter test file from starting under vitest 5 (#59).
+      - dependency-name: jsdom
         update-types: ["version-update:semver-major"]

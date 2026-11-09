@@ -35,11 +35,11 @@ async function startFailure(connectionString: string): Promise<unknown> {
 describe("startJobQueue", () => {
   it("tells a pg-boss schema of another version, which the server runs without, from any other failure", async () => {
     // As after a later release's pg-boss upgrade, with this release rolled back.
-    await admin.query("UPDATE pgboss.version SET version = '46'");
+    await admin.query("UPDATE pgboss.version SET version = '47'");
     try {
       expect(isJobQueueVersionMismatch(await startFailure(db.appUrl))).toBe(true);
     } finally {
-      await admin.query("UPDATE pgboss.version SET version = '45'");
+      await admin.query("UPDATE pgboss.version SET version = '46'");
     }
     // A database that does not exist (CI's server trusts any password, so a wrong one would still connect).
     const unreachable = new URL(db.appUrl);
