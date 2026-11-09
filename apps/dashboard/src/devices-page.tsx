@@ -38,7 +38,8 @@ const AR = {
     "أُزيل {name}. يتوقف عن العمل عند اتصاله التالي، وما لم يرسله بعد ينتظر في المراجعة.",
   "Open pairing codes": "رموز الربط المفتوحة",
   "{name} · until {time}": "{name} · حتى {time}",
-  "Cancel code for {name}": "إلغاء رمز {name}",
+  // Starts with the button's visible "إلغاء الرمز" (WCAG 2.5.3).
+  "Cancel code for {name}": "إلغاء الرمز لجهاز {name}",
   "Cancel code": "إلغاء الرمز",
 } as const;
 
