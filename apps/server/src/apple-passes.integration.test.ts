@@ -5,7 +5,7 @@ import type { LightMyRequestResponse } from "fastify";
 import pg from "pg";
 import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
-import { APPLE_PASS_LAYOUT_VERSION, applePassToken } from "./apple-pass.js";
+import { APPLE_PASS_LAYOUT_VERSION, LOGO_TOP_SPACE, applePassToken } from "./apple-pass.js";
 import { hashToken, newToken } from "./credentials.js";
 import { emailLookup, signCardQr } from "./customer-crypto.js";
 import { queuePassUpdate } from "./pass-updates.js";
@@ -161,9 +161,19 @@ describe("Apple pass downloads", () => {
     }
     for (const pass of [await download(app, card.webSecret), readPass(await latest(app, plain))]) {
       expect(pass.json).toMatchObject({ logoText: "Café Nour", backgroundColor: "rgb(31, 90, 133)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(229, 239, 247)" });
-      expect(pass.files.get("logo.png")).toEqual(logo?.apple_1x);
-      expect(pass.files.get("logo@2x.png")).toEqual(logo?.apple_2x);
-      expect(pass.files.get("logo@3x.png")).toEqual(logo?.apple_3x);
+      // The stored logo at each scale, under LOGO_TOP_SPACE points of transparency.
+      for (const [scale, name, stored] of [
+        [1, "logo.png", logo?.apple_1x],
+        [2, "logo@2x.png", logo?.apple_2x],
+        [3, "logo@3x.png", logo?.apple_3x],
+      ] as const) {
+        const given = await sharp(stored).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const shown = await sharp(pass.files.get(name)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const space = LOGO_TOP_SPACE * scale * given.info.width * 4;
+        expect([shown.info.width, shown.info.height], name).toEqual([given.info.width, given.info.height + LOGO_TOP_SPACE * scale]);
+        expect(shown.data.subarray(0, space).every((value, index) => index % 4 !== 3 || value === 0), name).toBe(true);
+        expect(shown.data.subarray(space).equals(given.data), name).toBe(true);
+      }
     }
   });
 });
