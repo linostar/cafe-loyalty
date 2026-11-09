@@ -1,4 +1,5 @@
-# Actions pinned by SHA and images by digest; npm versions are pinned by hand (CLAUDE.md, Version pins).
+# Actions pinned by SHA and images by digest. npm (the pnpm workspace) gets its minor and patch updates in one weekly PR
+# and majors one by one; the version pins in CLAUDE.md (Version pins) are kept by the ignore rules below.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -13,3 +14,22 @@ updates:
     directory: /deploy
     schedule:
       interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # typescript-eslint 8.x supports TypeScript below 6.1, and TypeScript 7 breaks type-aware linting.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # eslint-plugin-jsx-a11y 6.10 supports ESLint up to 9.
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      # Matches the Node 22 runtime (.nvmrc, engines).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
