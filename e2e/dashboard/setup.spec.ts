@@ -318,10 +318,10 @@ test("picks the shape the card's stamps are drawn in, which the preview then sho
   await expect(section.getByText("4 of 9 stamps")).toHaveClass("visually-hidden");
   const form = section.getByRole("form", { name: "Stamp shape" });
   const shapes = form.getByRole("group", { name: "Stamp shape" });
-  for (const name of ["Circle", "Cup", "Plate", "Coffee bean", "Ice cream", "Cake", "Burger"]) {
+  for (const name of ["Circle", "Cup", "Steaming cup", "Plate", "Coffee bean", "Ice cream", "Cake", "Burger"]) {
     await expect(shapes.getByRole("radio", { name, exact: true })).toBeVisible();
   }
-  await expect(shapes.getByRole("radio")).toHaveCount(7);
+  await expect(shapes.getByRole("radio")).toHaveCount(8);
   await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
   // The 9 sample stamps in rows as the cards have them: 5, then 4.
   const tops = await section.locator(".card-preview-stamps li").evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));

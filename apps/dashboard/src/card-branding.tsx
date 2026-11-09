@@ -13,6 +13,7 @@ const AR = {
   Cup: "فنجان",
   Plate: "طبق",
   "Coffee bean": "حبّة بن",
+  "Steaming cup": "فنجان ساخن",
   "Ice cream": "بوظة",
   Cake: "قطعة كاتو",
   Burger: "برغر",
@@ -32,7 +33,7 @@ const AR = {
 } as const;
 
 /** Each stamp shape's name, as the picker lists them. */
-const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean", icecream: "Ice cream", cake: "Cake", burger: "Burger" } as const satisfies Record<StampShape, keyof typeof AR>;
+const SHAPE_NAMES = { circle: "Circle", cup: "Cup", steamcup: "Steaming cup", plate: "Plate", bean: "Coffee bean", icecream: "Ice cream", cake: "Cake", burger: "Burger" } as const satisfies Record<StampShape, keyof typeof AR>;
 
 /**
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full (filled and outlined, so as big
