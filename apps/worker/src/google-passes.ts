@@ -50,7 +50,7 @@ export async function writeGooglePass(
     const pass = await trx
       .selectFrom("google_passes")
       .innerJoin("cards", "cards.id", "google_passes.card_id")
-      .select(["google_passes.card_id", "google_passes.epoch", "google_passes.offer_notified_at", "google_passes.created_at", "cards.epoch as card_epoch", "cards.stamps"])
+      .select(["google_passes.card_id", "google_passes.epoch", "google_passes.offer_notified_at", "google_passes.created_at", "cards.epoch as card_epoch", "cards.stamps", "cards.holder_name"])
       .where("google_passes.id", "=", job.passId)
       .executeTakeFirst();
     if (pass === undefined) {
@@ -133,6 +133,7 @@ export async function writeGooglePass(
     cafeId: job.cafeId,
     cardId: pass.card_id,
     epoch: pass.epoch,
+    holderName: pass.holder_name,
     stamps: pass.stamps,
     program: program === undefined ? undefined : { stampsRequired: program.stamps_required, rewardNameAr: program.reward_name_ar, rewardNameEn: program.reward_name_en },
     qr: current ? signCardQr(settings, { cardId: pass.card_id, cafeId: job.cafeId, epoch: pass.epoch }) : null,

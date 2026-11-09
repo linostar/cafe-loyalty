@@ -207,6 +207,8 @@ export interface GooglePassContent {
   cafeId: string;
   cardId: string;
   epoch: number;
+  /** The holder's name (cards.holder_name), or null on a card made before it was asked: the object then has none. */
+  holderName: string | null;
   stamps: number;
   program: { stampsRequired: number; rewardNameAr: string; rewardNameEn: string } | undefined;
   /** The card's QR token, or null for an object of an earlier epoch (the card moved to another phone): INACTIVE. */
@@ -263,6 +265,8 @@ export function googleLoyaltyObject(issuerId: string, content: GooglePassContent
   return {
     ...ids,
     state: "ACTIVE" as const,
+    // The holder's name, Google's own member field, on a card that has one: a card without a name builds as before.
+    ...(content.holderName === null ? {} : { accountName: content.holderName }),
     barcode: { type: "QR_CODE", value: content.qr },
     ...(program === undefined
       ? {}

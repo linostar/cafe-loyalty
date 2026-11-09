@@ -259,7 +259,7 @@ describe("stamping", () => {
         method: "POST",
         url: `/join/${code}`,
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: new URLSearchParams({ phone, privacy: "yes", lang: "en" }).toString(),
+        payload: new URLSearchParams({ name: "Rania Haddad", phone, privacy: "yes", lang: "en" }).toString(),
       });
     expect((await signUpWith("70 404 505")).statusCode).toBe(303);
     const { rows } = await context.admin.query<{ id: string }>("SELECT id FROM app.cards WHERE cafe_id = $1", [app.owner.cafeId]);
@@ -920,16 +920,19 @@ describe("redemption", () => {
       app.app.inject({ method: "POST", url: "/api/device/cards/status", headers: withBearer(token), payload: { cardQr } });
     const short = await cardWithStamps(app, 2);
     const ready = await cardWithStamps(app, 3);
-    expect(cardStatusSchema.parse((await status(short.qr)).json())).toEqual({ stamps: 2, rewardReady: false });
-    expect(cardStatusSchema.parse((await status(ready.qr)).json())).toEqual({ stamps: 3, rewardReady: true });
+    expect(cardStatusSchema.parse((await status(short.qr)).json())).toEqual({ stamps: 2, rewardReady: false, holderName: null });
+    expect(cardStatusSchema.parse((await status(ready.qr)).json())).toEqual({ stamps: 3, rewardReady: true, holderName: null });
     expect(await stampsOf(ready.cardId)).toBe(3);
+    // A card given a name at signup: the counter greets its holder by it.
+    await context.admin.query("UPDATE app.cards SET holder_name = 'رانيا حداد' WHERE id = $1", [short.cardId]);
+    expect(cardStatusSchema.parse((await status(short.qr)).json())).toEqual({ stamps: 2, rewardReady: false, holderName: "رانيا حداد" });
     const forged = signCardQr(TEST_SECRETS, { cardId: randomUUID(), cafeId: app.owner.cafeId, epoch: 1 });
     expect((await status(forged)).json()).toMatchObject({ code: "NOT_FOUND" });
     // Another café's card, asked by this café's counter, and by its own: only its own café's counter learns anything.
     const elsewhere = await cafeApp();
     const theirs = await cardWithStamps(elsewhere, 5);
     expect((await status(theirs.qr)).json()).toMatchObject({ code: "NOT_FOUND" });
-    expect((await status(theirs.qr, elsewhere.device.accessToken)).json()).toEqual({ stamps: 5, rewardReady: true });
+    expect((await status(theirs.qr, elsewhere.device.accessToken)).json()).toEqual({ stamps: 5, rewardReady: true, holderName: null });
     expect((await app.app.inject({ method: "POST", url: "/api/device/cards/status", payload: { cardQr: ready.qr } })).statusCode).toBe(401);
     // A build past its support window gets no new actions, this read among them.
     const old = await app.app.inject({

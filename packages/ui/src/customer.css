@@ -121,6 +121,16 @@ html[lang="en"] .kicker {
   color: var(--card-foreground, var(--color-on-espresso));
 }
 
+/* The holder's name under the title, when the card has one; the title then keeps its space below the name. */
+.card-face h1:has(+ .holder) {
+  margin-block-end: var(--space-1);
+}
+
+.card-face .holder {
+  margin: 0 0 var(--space-3);
+  font-weight: var(--weight-semibold);
+}
+
 /* The café's own logo, when it has one: a square image (transparent around a logo that is not square), clear of the card's top edge. */
 .card-logo {
   display: block;
@@ -354,6 +364,14 @@ html[lang="en"] .kicker {
 form button {
   inline-size: 100%;
   margin-block-start: var(--space-3);
+}
+
+/* Signup's country code and number side by side: the code just wide enough for "+961", the number the rest. */
+.phone-fields {
+  display: grid;
+  grid-template-columns: 6rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: end;
 }
 
 .privacy {

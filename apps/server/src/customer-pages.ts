@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
-import { joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema } from "@cafe-loyalty/shared";
+import { DEFAULT_COUNTRY_CODE, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -268,7 +268,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     return withLookup(db, { secretHash }, (trx) =>
       trx
         .selectFrom("cards")
-        .select(["id", "cafe_id", "customer_id", "epoch", "stamps", "email", "offers_opt_in_at"])
+        .select(["id", "cafe_id", "customer_id", "epoch", "stamps", "email", "offers_opt_in_at", "holder_name"])
         .where("web_secret_hash", "=", secretHash)
         .executeTakeFirst(),
     );
@@ -409,16 +409,22 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       throw new PageError(404, "joinGone");
     }
     const form = formOf(request);
-    const phone = normalizePhoneInput(form.phone ?? "");
+    // The holder's name, shown to the café's staff and on the passes; never logged or audited.
+    const holderName = parseHolderName(form.name ?? "");
+    // The number joined to the country code field (Lebanon's unless changed; a form from before the field had none),
+    // unless typed with a code of its own. A code that is no code is the only error the two fields get.
+    const countryCode = parseCountryCode(form.countryCode ?? DEFAULT_COUNTRY_CODE);
+    const phone = countryCode === null ? null : normalizePhoneInput(form.phone ?? "", countryCode);
     // The recovery email is optional (AC 8): left empty, the card has none until its settings page adds one.
     const typedEmail = form.email?.trim() ?? "";
     const parsedEmail = typedEmail === "" ? null : ownerEmailSchema.safeParse(typedEmail);
     const errors = {
-      ...(phone === null ? { phone: t(lang, "phoneInvalid") } : {}),
+      ...(holderName === null ? { name: t(lang, "nameInvalid") } : {}),
+      ...(countryCode === null ? { countryCode: t(lang, "countryCodeInvalid") } : phone === null ? { phone: t(lang, "phoneInvalid") } : {}),
       ...(parsedEmail === null || parsedEmail.success ? {} : { email: t(lang, "emailInvalid") }),
       ...(form.privacy === "yes" ? {} : { privacy: t(lang, "privacyRequired") }),
     };
-    if (phone === null || form.privacy !== "yes" || (parsedEmail !== null && !parsedEmail.success)) {
+    if (holderName === null || phone === null || form.privacy !== "yes" || (parsedEmail !== null && !parsedEmail.success)) {
       return sendPage(reply, 400, joinPage(lang, `/join/${code}`, cafe.name, await programOf(cafe.id), form, errors));
     }
     // Keyed by the café found, not the code sent, so random codes cannot fill the limiter and crowd a café out.
@@ -456,6 +462,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         offers_opt_in_at: offers ? now() : null,
         email,
         email_lookup: email === null ? null : emailLookup(secrets, email),
+        holder_name: holderName,
       };
       // DO NOTHING on any conflict: this café's linked card for the number, or the same form sent concurrently.
       const linked = await trx
@@ -555,6 +562,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       colors: cafe.colors,
       logoPath: cafe.logoHash === null ? null : cafeLogoPath(cafe.logoHash),
       stampShape: cafe.stampShape,
+      holderName: card.holder_name,
       stamps: card.stamps,
       program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
       qr,
@@ -610,6 +618,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       colors: found.cafe.colors,
       stampShape: found.cafe.stampShape,
       logo: found.logo,
+      holderName: card.holder_name,
       stamps: found.stamps,
       program:
         found.program === undefined
@@ -656,6 +665,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       cafeId: card.cafe_id,
       cardId: card.id,
       epoch: card.epoch,
+      holderName: card.holder_name,
       stamps: found.stamps,
       program:
         found.program === undefined

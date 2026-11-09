@@ -16,23 +16,37 @@ const LEBANESE_NUMBER = /^\+961(?:[13-9]\d{6}|(?:7[01689]|81)\d{6})$/;
 /** Spaces, dashes, dots, brackets and the invisible direction marks phones and copy-paste insert. */
 const SEPARATORS = /[\s\-.()؜‎‏‪-‮⁦-⁩]/g;
 
+/** The country code signup's code field starts with (Lebanon). */
+export const DEFAULT_COUNTRY_CODE = LEBANON;
+
+/**
+ * A country code as typed in signup's code field, as "+" and its digits, or null: "+" or "00" (or nothing) and 1 to 3
+ * digits not starting with 0, Arabic-Indic and Persian digits, spaces and direction marks accepted.
+ */
+export function parseCountryCode(input: string): string | null {
+  const match = /^(?:\+|00)?([1-9]\d{0,2})$/.exec(toLatinDigits(input).replace(SEPARATORS, ""));
+  return match === null ? null : `+${match[1] ?? ""}`;
+}
+
 /**
  * A phone number as typed, in E.164 form, or null if it is not a valid number. Accepts Arabic-Indic and Persian
- * digits, spaces, dashes, dots, brackets and direction marks, a leading 00, a "(0)" trunk prefix after the country
- * code, Lebanese local forms (a leading 0 as in 03 123 456, or none as in 70 123 456) and 961 without the +.
- * Lebanese numbers must use a real prefix.
+ * digits, spaces, dashes, dots, brackets and direction marks, a leading 00, and a "(0)" trunk prefix after the country
+ * code. A number without its own "+" or "00" code takes `countryCode` (parseCountryCode's form; Lebanon unless given),
+ * its leading 0 trunk prefix dropped; Lebanese local forms (03 123 456, 70 123 456) and 961 without the + work as
+ * before. Lebanese numbers must use a real prefix. ponytail: a leading 0 is taken for a trunk prefix in every country,
+ * so a number whose 0 is part of it (an Italian landline) must be typed with its own +39.
  */
-export function normalizePhoneInput(input: string): string | null {
+export function normalizePhoneInput(input: string, countryCode: string = LEBANON): string | null {
   let number = toLatinDigits(input)
     .replace(/\(0\)/g, "")
     .replace(SEPARATORS, "");
   if (number.startsWith("00")) {
     number = `+${number.slice(2)}`;
-  } else if (/^961\d{7,8}$/.test(number)) {
+  } else if (countryCode === LEBANON && /^961\d{7,8}$/.test(number)) {
     // Unambiguous: a Lebanese local number has at most 8 digits.
     number = `+${number}`;
   } else if (!number.startsWith("+")) {
-    number = `${LEBANON}${number.startsWith("0") ? number.slice(1) : number}`;
+    number = `${countryCode}${number.startsWith("0") ? number.slice(1) : number}`;
   }
   // "+961 03 ..." keeps the local 0 by habit.
   if (number.startsWith(`${LEBANON}0`)) {

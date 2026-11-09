@@ -56,6 +56,7 @@ const AR = {
   "Total {total} · {stamps}": "المجموع {total} · {stamps}",
   "Scan card": "امسح البطاقة",
   "Card scanned.": "مُسحت البطاقة.",
+  "Card of {name}.": "بطاقة {name}.",
   "Clear card": "إزالة البطاقة",
   "No card? The customer's mobile number": "لا بطاقة؟ رقم هاتف الزبون المحمول",
   "Record visit": "تسجيل الزيارة",
@@ -275,6 +276,8 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
   const [saving, setSaving] = useState(false);
   /** The scanned card whose reward the server says is ready (K6); shown only while that card is the one scanned. */
   const [rewardReady, setRewardReady] = useState<string | null>(null);
+  /** The holder's name a scanned card's check gave (online, for a card that has one); shown only while that card is scanned. */
+  const [holder, setHolder] = useState<{ cardQr: string; name: string } | null>(null);
   const phoneId = useId();
   const problemId = useId();
   const phoneShownId = useId();
@@ -560,8 +563,14 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
               if (onlineNow.current && catalog.program !== null) {
                 deviceRequest("POST", "/api/device/cards/status", cardStatusSchema, { cardQr: token }).then(
                   (status) => {
-                    if (status.rewardReady && scanTurn.current === turn && scannedNow.current === token) {
+                    if (scanTurn.current !== turn || scannedNow.current !== token) {
+                      return;
+                    }
+                    if (status.rewardReady) {
                       setRewardReady(token);
+                    }
+                    if (status.holderName !== undefined && status.holderName !== null) {
+                      setHolder({ cardQr: token, name: status.holderName });
                     }
                   },
                   (caught: unknown) => {
@@ -771,7 +780,7 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
               </button>
             ) : (
               <p>
-                {t("Card scanned.")}{" "}
+                {holder !== null && holder.cardQr === scanned ? t("Card of {name}.", { name: holder.name }) : t("Card scanned.")}{" "}
                 <button
                   type="button"
                   onClick={() => {

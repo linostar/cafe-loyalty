@@ -16,6 +16,7 @@ const content: ApplePassContent = {
   colors: { ...DEFAULT_CARD_COLORS },
   stampShape: "circle",
   logo: undefined,
+  holderName: null,
   stamps: 4,
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "CL1.card-qr-token",
@@ -120,6 +121,21 @@ describe("buildApplePass", () => {
     expect(text("ar.lproj/pass.strings")).toContain('"stamps_value" = "⁨4⁩ من ⁨9⁩ أختام";');
     expect(text("ar.lproj/pass.strings")).toContain("قهوة مجانية");
     expect(text("en.lproj/pass.strings")).not.toContain("stamps_label");
+  });
+
+  it("names the holder in a header field on a card that has one, and builds a nameless card's pass as before", async () => {
+    const named = open(await buildApplePass(apple, "https://card.example.test", { ...content, holderName: 'Rania "R" Haddad' }));
+    expect(named.json).toMatchObject({ storeCard: { headerFields: [{ key: "holder", value: "holder_value" }] } });
+    // In both languages, escaped like every string, so a name is only ever shown as itself.
+    expect(named.text("en.lproj/pass.strings")).toContain('"holder_value" = "Rania \\"R\\" Haddad";');
+    expect(named.text("ar.lproj/pass.strings")).toContain('"holder_value" = "Rania \\"R\\" Haddad";');
+    expect(JSON.stringify(named.json)).not.toContain("changeMessage");
+    const nameless = open(await buildApplePass(apple, "https://card.example.test", content));
+    expect(nameless.json.storeCard).not.toHaveProperty("headerFields");
+    expect(nameless.text("en.lproj/pass.strings")).not.toContain("holder_value");
+    // A voided pass (moved) says only that.
+    const voided = open(await buildApplePass(apple, "https://card.example.test", { ...content, holderName: "Rania", qr: null }));
+    expect(voided.json.storeCard).not.toHaveProperty("headerFields");
   });
 
   it("escapes quotes and backslashes in the strings files", async () => {

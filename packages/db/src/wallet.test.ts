@@ -9,6 +9,7 @@ const CONTENT = {
   cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d",
   cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40",
   epoch: 2,
+  holderName: null,
   stamps: 4,
   program: { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" },
   qr: "qr-token",
@@ -125,6 +126,13 @@ describe("Google Wallet objects", () => {
     expect(googleLoyaltyObject(ISSUER, { ...CONTENT, stamps: 11 }, PUBLIC_URL)).toMatchObject({ heroImage: { sourceUri: { uri: "https://card.example.test/stamps/v3/cup-1f5a85-ffffff-9-9.png" } } });
     // Without a program a card collects no stamps: no picture.
     expect(googleLoyaltyObject(ISSUER, { ...CONTENT, program: undefined }, PUBLIC_URL)).not.toHaveProperty("heroImage");
+  });
+
+  it("names the holder as Google's member name on a card that has one, and builds a nameless card's object as before", () => {
+    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, holderName: "رانيا حداد" }, PUBLIC_URL)).toMatchObject({ accountName: "رانيا حداد" });
+    expect(googleLoyaltyObject(ISSUER, CONTENT, PUBLIC_URL)).not.toHaveProperty("accountName");
+    // An object of an earlier epoch (moved) says only that.
+    expect(googleLoyaltyObject(ISSUER, { ...CONTENT, holderName: "رانيا حداد", qr: null }, PUBLIC_URL)).not.toHaveProperty("accountName");
   });
 
   it("says a card's stamps out of the program's in both languages", () => {

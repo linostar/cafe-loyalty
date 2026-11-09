@@ -1,5 +1,5 @@
 import { stampsText } from "@cafe-loyalty/db";
-import { stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { DEFAULT_COUNTRY_CODE, MAX_HOLDER_NAME, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { SafeHtml, cardStyle, count, html, page, t, type Lang } from "./customer-html.js";
 import { stampSlotSvg } from "./stamp-picture.js";
 
@@ -34,9 +34,12 @@ export interface JoinView {
   /** The form's one-time value, which makes sending it twice land on one card. */
   formToken: string;
   values: Readonly<Record<string, string | undefined>>;
-  errors: { phone?: string; email?: string; privacy?: string };
+  errors: { name?: string; countryCode?: string; phone?: string; email?: string; privacy?: string };
   otherLangHref: string;
 }
+
+/** A signup field's aria-describedby: its hint, then its error when it has one. */
+const hintAndError = (id: string, error: string | undefined) => describedBy([`${id}-hint`, error === undefined ? null : `${id}-error`]);
 
 /** The café's signup page, opened from its counter QR (AC 4, 5). */
 export function joinView(lang: Lang, view: JoinView): string {
@@ -52,8 +55,22 @@ ${program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: c
 <form method="post" action="${view.path}" novalidate class="card">
 <input type="hidden" name="lang" value="${lang}">
 <input type="hidden" name="form" value="${view.formToken}">
+<label for="name">${t(lang, "nameLabel")}</label>
+<input id="name" name="name" type="text" autocomplete="name" required maxlength="${String(MAX_HOLDER_NAME)}" value="${values.name ?? ""}"${hintAndError("name", errors.name)}${errors.name === undefined ? "" : html` aria-invalid="true"`}>
+<p id="name-hint" class="hint">${t(lang, "nameHint")}</p>
+${errorBlock(errors.name, "name-error")}
+<div class="phone-fields">
+<div class="phone-code">
+<label for="country-code">${t(lang, "countryCodeLabel")}</label>
+<input id="country-code" name="countryCode" type="text" inputmode="tel" autocomplete="tel-country-code" dir="ltr" required value="${values.countryCode ?? DEFAULT_COUNTRY_CODE}"${hintAndError("country-code", errors.countryCode)}${errors.countryCode === undefined ? "" : html` aria-invalid="true"`}>
+</div>
+<div class="phone-number">
 <label for="phone">${t(lang, "phoneLabel")}</label>
-<input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" required value="${values.phone ?? ""}" aria-describedby="phone-hint${errors.phone === undefined ? "" : " phone-error"}"${errors.phone === undefined ? "" : html` aria-invalid="true"`}>
+<input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel-national" dir="ltr" required value="${values.phone ?? ""}"${hintAndError("phone", errors.phone)}${errors.phone === undefined ? "" : html` aria-invalid="true"`}>
+</div>
+</div>
+<p id="country-code-hint" class="hint">${t(lang, "countryCodeHint")}</p>
+${errorBlock(errors.countryCode, "country-code-error")}
 <p id="phone-hint" class="hint">${t(lang, "phoneHint")}</p>
 ${errorBlock(errors.phone, "phone-error")}
 <label for="email">${t(lang, "joinEmailLabel")}</label>
@@ -83,6 +100,8 @@ export interface CardView {
   logoPath: string | null;
   /** The shape the café's stamps are drawn in. */
   stampShape: StampShape;
+  /** The holder's name, given at signup; null on cards made before it was asked. */
+  holderName: string | null;
   stamps: number;
   program: ProgramView | undefined;
   /** The card's signed QR, as an image data URL. */
@@ -127,6 +146,7 @@ export function cardView(lang: Lang, view: CardView): string {
 ${view.logoPath === null ? null : html`<img class="card-logo" src="${view.logoPath}" alt="" width="56" height="56">`}
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1 id="card-title">${t(lang, "cardTitle", { cafe: view.cafeName })}</h1>
+${view.holderName === null ? null : html`<p class="holder" dir="auto">${view.holderName}</p>`}
 ${program === undefined ? null : stampGridHtml(lang, view.stampShape, stamps, program.stampsRequired)}
 ${program === undefined
   ? null

@@ -123,7 +123,8 @@ export {
   parseCardQr,
   type CardQrFields,
 } from "./customer.js";
-export { e164PhoneSchema, normalizePhoneInput, type E164Phone } from "./phone.js";
+export { DEFAULT_COUNTRY_CODE, e164PhoneSchema, normalizePhoneInput, parseCountryCode, type E164Phone } from "./phone.js";
+export { MAX_HOLDER_NAME, parseHolderName } from "./holder-name.js";
 export { formatStartupFailure } from "./startup.js";
 export {
   MAX_SYNC_BATCH,
