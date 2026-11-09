@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { hashToken } from "./credentials.js";
 import { decryptPhone } from "./customer-crypto.js";
 import { MIN_SIGNUP_MS } from "./customer-pages.js";
+import { stampPicturePng } from "./stamp-picture.js";
 import { OPERATOR_NAME, PUBLIC_URL, TEST_SECRETS, useApiHarness, withCookie, type Harness, type SignedUpOwner } from "./testing/api-harness.js";
 
 const context = useApiHarness();
@@ -412,8 +413,13 @@ describe("web card", () => {
     expect(picture.rawPayload.subarray(1, 4).toString("latin1")).toBe("PNG");
     // Asked again: the same picture, from memory.
     expect((await app.inject({ method: "GET", url: "/stamps/v2/bean-1f5a85-ffffff-4-9.png" })).rawPayload.equals(picture.rawPayload)).toBe(true);
-    // The previous layout's address, still on passes not yet moved on: the current drawing.
-    expect((await app.inject({ method: "GET", url: "/stamps/bean-1f5a85-ffffff-4-9.png" })).rawPayload.equals(picture.rawPayload)).toBe(true);
+    // The previous layout's address, still on passes not yet moved on: that layout's drawing (9 in one row), not this one's.
+    const legacy = await app.inject({ method: "GET", url: "/stamps/bean-1f5a85-ffffff-4-9.png" });
+    expect(legacy.statusCode).toBe(200);
+    expect(legacy.rawPayload.equals(picture.rawPayload)).toBe(false);
+    const bean = { shape: "bean", background: "#1f5a85", foreground: "#ffffff", stamps: 4, required: 9 } as const;
+    expect(legacy.rawPayload.equals(await stampPicturePng(bean, 3, 1))).toBe(true);
+    expect(picture.rawPayload.equals(await stampPicturePng(bean, 3, 2))).toBe(true);
     // Asked for at once before it is drawn: one drawing answers them all.
     const together = await Promise.all([1, 2, 3].map(() => app.inject({ method: "GET", url: "/stamps/v2/cup-1f5a85-ffffff-5-9.png" })));
     expect(together.map((response) => response.statusCode)).toEqual([200, 200, 200]);

@@ -7,6 +7,21 @@ import { SIDE_INSET, STRIP_HEIGHT, STRIP_WIDTH, parseStampPicture, stampLayout, 
 const PICTURE = { shape: "cup" as const, background: "#1f5a85", foreground: "#ffffff", stamps: 4, required: 9 };
 
 describe("stampLayout", () => {
+  it("keeps the previous layout for its addresses: up to 10 a row, more spread over even rows, inside the strip", () => {
+    const rowsOf = (required: number) => new Set(stampLayout(required, 1).positions.map(({ y }) => y.toFixed(2))).size;
+    expect([1, 9, 10, 11, 12, 20, 21, 50].map(rowsOf)).toEqual([1, 1, 1, 2, 2, 2, 3, 5]);
+    for (const required of [1, 9, 50]) {
+      const { size, positions } = stampLayout(required, 1);
+      expect(positions).toHaveLength(required);
+      for (const { x, y } of positions) {
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(x + size).toBeLessThanOrEqual(STRIP_WIDTH);
+        expect(y + size).toBeLessThanOrEqual(STRIP_HEIGHT);
+      }
+    }
+  });
+
   it("puts at most 5 stamps on a row, spread evenly over the rows, and keeps every stamp inside the pass's margins", () => {
     const rowLengths = (required: number) => {
       const rows = new Map<string, number>();

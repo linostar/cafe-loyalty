@@ -618,6 +618,29 @@ describe("job queue", () => {
     }
   });
 
+  it("lets an older release's sweep move passes only onto its own layouts, never this release's (migration 0027)", async () => {
+    const apple = await passWithDevices(1);
+    const google = await googlePass();
+    const layouts = async () =>
+      (
+        await admin.query<{ apple: number; google: number }>(
+          "SELECT (SELECT layout_version FROM app.apple_passes WHERE id = $1) AS apple, (SELECT layout_version FROM app.google_passes WHERE id = $2) AS google",
+          [apple.passId, google.passId],
+        )
+      ).rows[0];
+    await admin.query("UPDATE app.apple_passes SET layout_version = 1 WHERE id = $1", [apple.passId]);
+    await admin.query("UPDATE app.google_passes SET layout_version = 1 WHERE id = $1", [google.passId]);
+    // 0025's function, which the previous release's worker calls: onto that release's layouts (Apple 3, Google 2).
+    expect((await admin.query("SELECT app.mark_outdated_passes(500) AS marked")).rows).toEqual([{ marked: 2 }]);
+    expect(await layouts()).toEqual({ apple: 3, google: 2 });
+    // Passes on this release's layouts are not moved back down, so an older worker and a newer server never take turns.
+    await admin.query("UPDATE app.apple_passes SET layout_version = $2 WHERE id = $1", [apple.passId, APPLE_PASS_LAYOUT_VERSION]);
+    await admin.query("UPDATE app.google_passes SET layout_version = $2 WHERE id = $1", [google.passId, GOOGLE_PASS_LAYOUT_VERSION]);
+    expect((await admin.query("SELECT app.mark_outdated_passes(500) AS marked")).rows).toEqual([{ marked: 0 }]);
+    expect((await admin.query("SELECT app.mark_outdated_passes(500, 1, 1) AS marked")).rows).toEqual([{ marked: 0 }]);
+    expect(await layouts()).toEqual({ apple: APPLE_PASS_LAYOUT_VERSION, google: GOOGLE_PASS_LAYOUT_VERSION });
+  });
+
   it("moves passes on an older layout onto this release's, once, so a pass nobody stamps gets the new layout too", async () => {
     const apple = await passWithDevices(1);
     const google = await googlePass();

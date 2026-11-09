@@ -1,4 +1,4 @@
-import { STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { useId, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
@@ -50,6 +50,9 @@ export function StampIcon({ shape, full }: { shape: StampShape; full: boolean })
   );
 }
 
+/** The preview's sample program: 4 of 9 stamps, in rows as the cards lay them out (stampGrid). */
+const SAMPLE_STAMPS = 9;
+
 /** A café's logo as the dashboard loads it (its domain forwards only /api to the server). */
 export const logoUrl = (hash: string): string => `/api/logos/${hash}.png`;
 
@@ -67,8 +70,8 @@ export function CardPreview({ name, colors, logoHash, stampShape }: { name: stri
         <p className="card-preview-label">{t("Loyalty card")}</p>
         <p className="card-preview-name">{name}</p>
         <p className="visually-hidden">{t("4 of 9 stamps")}</p>
-        <ol className="card-preview-stamps" aria-hidden="true">
-          {Array.from({ length: 9 }, (_, index) => (
+        <ol className="card-preview-stamps" style={{ "--stamp-columns": stampGrid(SAMPLE_STAMPS).columns } as CSSProperties} aria-hidden="true">
+          {Array.from({ length: SAMPLE_STAMPS }, (_, index) => (
             <li key={index} className={index < 4 ? "is-filled" : undefined}>
               <StampIcon shape={stampShape} full={index < 4} />
             </li>

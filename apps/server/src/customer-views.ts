@@ -1,5 +1,5 @@
 import { stampsText } from "@cafe-loyalty/db";
-import { stampGrid as stampRows, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { SafeHtml, cardStyle, count, html, page, t, type Lang } from "./customer-html.js";
 import { stampSlotSvg } from "./stamp-picture.js";
 
@@ -102,12 +102,12 @@ export interface CardView {
  * image the policy would have to allow. Screen readers get the count in words instead ("4 of 9 stamps"). Rows as the
  * passes have them (`columns-<n>`, customer.css: at most 5 a row, spread evenly).
  */
-function stampGrid(lang: Lang, shape: StampShape, stamps: number, required: number): SafeHtml {
+function stampGridHtml(lang: Lang, shape: StampShape, stamps: number, required: number): SafeHtml {
   const slots = Array.from({ length: required }, (_, index) =>
     index < stamps ? html`<li class="stamp is-filled">${new SafeHtml(stampSlotSvg(shape, true))}</li>` : html`<li class="stamp">${new SafeHtml(stampSlotSvg(shape, false))}</li>`,
   );
   return html`<p class="visually-hidden">${stampsText(lang, stamps, required)}</p>
-<ol class="stamp-grid columns-${String(stampRows(required).columns)}" aria-hidden="true">${slots}</ol>`;
+<ol class="stamp-grid columns-${String(stampGrid(required).columns)}" aria-hidden="true">${slots}</ol>`;
 }
 
 /** A chevron pointing the way reading goes (forward) or back; drawn, and turned round in right-to-left pages. */
@@ -127,7 +127,7 @@ export function cardView(lang: Lang, view: CardView): string {
 ${view.logoPath === null ? null : html`<img class="card-logo" src="${view.logoPath}" alt="" width="56" height="56">`}
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1 id="card-title">${t(lang, "cardTitle", { cafe: view.cafeName })}</h1>
-${program === undefined ? null : stampGrid(lang, view.stampShape, stamps, program.stampsRequired)}
+${program === undefined ? null : stampGridHtml(lang, view.stampShape, stamps, program.stampsRequired)}
 ${program === undefined
   ? null
   : ready
