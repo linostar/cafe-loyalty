@@ -7,3 +7,12 @@ overrides:
   # passkit-generator 3.6.1 (and 3.7.0) pins joi 17.13.4; joi before 17.13.9 has known denial-of-service flaws (the
   # image scan refuses them: CVE-2026-118772 was fixed in 17.13.9).
   passkit-generator>joi: 17.13.9
+  # Dependabot alerts on packages only other packages pull in, which their parents' own ranges do not lift yet:
+  # fast-uri (fastify's ajv; runtime) before 3.1.9 and 4.2.3, GHSA-333x-w4r6-6crp, GHSA-w74x-v6f9-j3xg,
+  # GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr.
+  fast-uri@3: ^3.1.9
+  fast-uri@4: ^4.2.3
+  # undici (jsdom, tests only) before 8.12.2: GHSA-2m5v-pch6-74hx and four more.
+  undici@8: ^8.12.2
+  # minimatch (typescript-eslint's parser, lint only) from 7 to before 11.0.1: GHSA-g3hv-75wg-m249.
+  "@typescript-eslint/typescript-estree>minimatch": ^11.0.1
