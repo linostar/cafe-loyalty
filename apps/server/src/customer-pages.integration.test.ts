@@ -406,29 +406,32 @@ describe("web card", () => {
 
   it("serves a picture of stamps for any address a card could show, cached for good, and nothing for any other", async () => {
     const { app } = await cafeWithJoinCode();
-    const picture = await app.inject({ method: "GET", url: "/stamps/v2/bean-1f5a85-ffffff-4-9.png" });
+    const picture = await app.inject({ method: "GET", url: "/stamps/v3/bean-1f5a85-ffffff-4-9.png" });
     expect(picture.statusCode).toBe(200);
     expect(picture.headers["content-type"]).toBe("image/png");
     expect(picture.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
     expect(picture.rawPayload.subarray(1, 4).toString("latin1")).toBe("PNG");
     // Asked again: the same picture, from memory.
-    expect((await app.inject({ method: "GET", url: "/stamps/v2/bean-1f5a85-ffffff-4-9.png" })).rawPayload.equals(picture.rawPayload)).toBe(true);
-    // The previous layout's address, still on passes not yet moved on: that layout's drawing (9 in one row), not this one's.
-    const legacy = await app.inject({ method: "GET", url: "/stamps/bean-1f5a85-ffffff-4-9.png" });
-    expect(legacy.statusCode).toBe(200);
-    expect(legacy.rawPayload.equals(picture.rawPayload)).toBe(false);
+    expect((await app.inject({ method: "GET", url: "/stamps/v3/bean-1f5a85-ffffff-4-9.png" })).rawPayload.equals(picture.rawPayload)).toBe(true);
+    // Earlier layouts' addresses, still on passes not yet moved on: each its own layout's drawing, never this one's.
     const bean = { shape: "bean", background: "#1f5a85", foreground: "#ffffff", stamps: 4, required: 9 } as const;
-    expect(legacy.rawPayload.equals(await stampPicturePng(bean, 3, 1))).toBe(true);
-    expect(picture.rawPayload.equals(await stampPicturePng(bean, 3, 2))).toBe(true);
+    expect(picture.rawPayload.equals(await stampPicturePng(bean, 3, 3))).toBe(true);
+    for (const [prefix, version] of [["/stamps/v2/", 2], ["/stamps/", 1]] as const) {
+      const earlier = await app.inject({ method: "GET", url: `${prefix}bean-1f5a85-ffffff-4-9.png` });
+      expect(earlier.statusCode, prefix).toBe(200);
+      expect(earlier.rawPayload.equals(picture.rawPayload), prefix).toBe(false);
+      expect(earlier.rawPayload.equals(await stampPicturePng(bean, 3, version)), prefix).toBe(true);
+    }
     // Asked for at once before it is drawn: one drawing answers them all.
-    const together = await Promise.all([1, 2, 3].map(() => app.inject({ method: "GET", url: "/stamps/v2/cup-1f5a85-ffffff-5-9.png" })));
+    const together = await Promise.all([1, 2, 3].map(() => app.inject({ method: "GET", url: "/stamps/v3/cup-1f5a85-ffffff-5-9.png" })));
     expect(together.map((response) => response.statusCode)).toEqual([200, 200, 200]);
     expect(together.every((response) => response.rawPayload.equals(together[0]?.rawPayload ?? Buffer.alloc(0)))).toBe(true);
     for (const file of ["star-1f5a85-ffffff-4-9.png", "bean-1f5a85-ffffff-10-9.png", "bean-1f5a85-ffffff-4-51.png", "bean-1F5A85-ffffff-4-9.png", "bean-1f5a85-ffffff-4-9.svg"]) {
-      expect((await app.inject({ method: "GET", url: `/stamps/v2/${file}` })).statusCode, file).toBe(404);
-      expect((await app.inject({ method: "GET", url: `/stamps/${file}` })).statusCode, file).toBe(404);
+      for (const prefix of ["/stamps/v3/", "/stamps/v2/", "/stamps/"]) {
+        expect((await app.inject({ method: "GET", url: `${prefix}${file}` })).statusCode, `${prefix}${file}`).toBe(404);
+      }
     }
-    expect((await app.inject({ method: "GET", url: "/stamps/v3/bean-1f5a85-ffffff-4-9.png" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/stamps/v4/bean-1f5a85-ffffff-4-9.png" })).statusCode).toBe(404);
   });
 
   it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {

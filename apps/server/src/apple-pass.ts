@@ -3,6 +3,7 @@ import { crc32, deflateSync } from "node:zlib";
 import { APPLE_PASS_LAYOUT_VERSION, offerText, stampsText, type CardOffer } from "@cafe-loyalty/db";
 import type { CardColors, StampShape } from "@cafe-loyalty/shared";
 import { PKPass } from "passkit-generator";
+import sharp from "sharp";
 import type { CustomerSecrets } from "./customer-crypto.js";
 import { t, type Lang } from "./customer-html.js";
 import { stampPicturePng } from "./stamp-picture.js";
@@ -143,9 +144,36 @@ function offerFields(content: ApplePassContent) {
     return { auxiliaryFields: [], backFields: [] };
   }
   return {
-    auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", ...(offer.mayNotify ? { changeMessage: "offer_change" } : {}) }],
+    auxiliaryFields: [
+      { key: "offer", label: "offer_label", value: "offer_value", textAlignment: CENTRED, ...(offer.mayNotify ? { changeMessage: "offer_change" } : {}) },
+    ],
     backFields: [{ key: "offer_details", label: "offer_details_label", value: "offer_details_value" }],
   };
+}
+
+/**
+ * The reward and the offer centred in their row under the strip. A store card shows secondary and auxiliary fields in
+ * one row, so with an offer they sit side by side, each centred in its half.
+ */
+const CENTRED = "PKTextAlignmentCenter";
+
+/** Clear space above the café's logo, in points: Wallet puts the header's logo close to the pass's top edge. */
+export const LOGO_TOP_SPACE = 6;
+
+/**
+ * The café's logo.png at Apple's three scales with LOGO_TOP_SPACE of transparency above it. Wallet fits a logo inside
+ * 160×50 points, so a logo already 50 points tall is drawn slightly smaller to make room.
+ */
+async function spacedLogo(logo: { apple1x: Buffer; apple2x: Buffer; apple3x: Buffer }): Promise<Record<string, Buffer>> {
+  const [one, two, three] = await Promise.all(
+    [logo.apple1x, logo.apple2x, logo.apple3x].map((image, index) =>
+      sharp(image)
+        .extend({ top: LOGO_TOP_SPACE * (index + 1), background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .png()
+        .toBuffer(),
+    ),
+  );
+  return one === undefined || two === undefined || three === undefined ? {} : { "logo.png": one, "logo@2x.png": two, "logo@3x.png": three };
 }
 
 /** The strip at Apple's three scales: the card's stamps in the café's shape and colours. */
@@ -184,7 +212,7 @@ export async function buildApplePass(config: ApplePassConfig, publicUrl: string,
     ...(content.qr === null ? { voided: true } : { barcodes: [{ format: "PKBarcodeFormatQR", message: content.qr, messageEncoding: "iso-8859-1" }] }),
     storeCard: {
       primaryFields: moved ? [{ key: "moved", label: "moved_label", value: "moved_value" }] : [],
-      secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value" }],
+      secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: CENTRED }],
       auxiliaryFields: offer.auxiliaryFields,
       // The feedback link is on the back, silently (AC 37): Wallet makes the URL in its text a link.
       backFields: [
@@ -195,7 +223,7 @@ export async function buildApplePass(config: ApplePassConfig, publicUrl: string,
       ],
     },
   };
-  const logo = content.logo === undefined ? {} : { "logo.png": content.logo.apple1x, "logo@2x.png": content.logo.apple2x, "logo@3x.png": content.logo.apple3x };
+  const logo = content.logo === undefined ? {} : await spacedLogo(content.logo);
   const strip = program === undefined || moved ? {} : await strips(content, program.stampsRequired);
   const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...icons(content.colors.background), ...logo, ...strip }, config.certificates);
   for (const lang of ["ar", "en"] as const) {

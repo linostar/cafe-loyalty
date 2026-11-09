@@ -54,10 +54,25 @@ describe("stampPictureSvg", () => {
   it("draws the collected stamps full and the rest outlined, on the card's background", () => {
     const svg = stampPictureSvg(PICTURE, 1);
     expect(svg).toContain('fill="#1f5a85"');
-    // A cup's body: full (filled) for 4, outlined for 5.
-    expect(svg.match(/<path d="M3\.5 7h12[^"]*" fill="#ffffff"\/>/g)).toHaveLength(4);
+    // A cup's body: full (filled, and outlined in the same colour) for 4, outlined only for 5.
+    expect(svg.match(/<path d="M3\.5 7h12[^"]*" fill="#ffffff" stroke="#ffffff"/g)).toHaveLength(4);
     expect(svg.match(/<path d="M3\.5 7h12[^"]*" fill="none"/g)).toHaveLength(5);
     expect(stampPictureSvg({ ...PICTURE, stamps: 0 }, 1)).not.toMatch(/fill="#ffffff"/);
+    // Layout 2's pictures (addresses under /stamps/v2/) keep their full stamps filled only.
+    expect(stampPictureSvg(PICTURE, 1, 2).match(/<path d="M3\.5 7h12[^"]*" fill="#ffffff"\/>/g)).toHaveLength(4);
+  });
+
+  it("draws every full stamp as big as an empty one", async () => {
+    // The drawn area of one stamp, full or empty, found by trimming the background off the strip.
+    const extent = async (shape: (typeof STAMP_SHAPES)[number], stamps: number) => {
+      const { info } = await sharp(await stampPicturePng({ ...PICTURE, shape, stamps, required: 1 }, 3))
+        .trim({ background: PICTURE.background, threshold: 0 })
+        .toBuffer({ resolveWithObject: true });
+      return [info.width, info.height];
+    };
+    for (const shape of STAMP_SHAPES) {
+      expect(await extent(shape, 1), shape).toEqual(await extent(shape, 0));
+    }
   });
 
   it("draws a full stamp's inner lines in the background, an empty one's in the stamp colour", () => {
@@ -82,7 +97,7 @@ describe("stampPicturePng", () => {
 describe("parseStampPicture", () => {
   it("reads back every address stampPicturePath makes", () => {
     for (const picture of [PICTURE, { ...PICTURE, shape: "bean" as const, stamps: 0, required: 1 }, { ...PICTURE, stamps: 50, required: 50 }]) {
-      expect(parseStampPicture(stampPicturePath(picture).slice("/stamps/v2/".length))).toEqual(picture);
+      expect(parseStampPicture(stampPicturePath(picture).slice("/stamps/v3/".length))).toEqual(picture);
     }
   });
 
@@ -106,7 +121,7 @@ describe("parseStampPicture", () => {
 
 describe("stampSlotSvg", () => {
   it("draws one web card stamp in currentColor", () => {
-    expect(stampSlotSvg("circle", true)).toMatch(/^<svg viewBox="0 0 24 24" focusable="false"><path d="[^"]+" fill="currentColor"\/><\/svg>$/);
+    expect(stampSlotSvg("circle", true)).toMatch(/^<svg viewBox="0 0 24 24" focusable="false"><path d="[^"]+" fill="currentColor" stroke="currentColor" [^>]*\/><\/svg>$/);
     expect(stampSlotSvg("circle", false)).toContain('fill="none" stroke="currentColor"');
   });
 });
