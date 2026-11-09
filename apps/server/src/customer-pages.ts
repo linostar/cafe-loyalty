@@ -690,11 +690,12 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     if (png === undefined) {
       let drawing = drawingStampPictures.get(file);
       if (drawing === undefined) {
-        enforce(limits.stampPicturesPerIp, clientKey(request.ip));
+        // Turned away for capacity before counting, so retries while it is busy never use up the address's drawings.
         if (drawingStampPictures.size >= MAX_STAMP_DRAWINGS) {
           void reply.header("retry-after", "5");
           throw new PageError(503, "failed");
         }
+        enforce(limits.stampPicturesPerIp, clientKey(request.ip));
         // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
         drawing = stampPicturePng(picture, 3)
           .then((drawn) => {
