@@ -17,8 +17,8 @@ function failingMarking(rejection: unknown) {
       return Promise.resolve("job-1");
     },
   } as unknown as PgBoss;
-  const lines: { msg: string }[] = [];
-  const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as { msg: string }) });
+  const lines: { level: number; msg: string; err?: { message?: string } }[] = [];
+  const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as { level: number; msg: string; err?: { message?: string } }) });
   return { boss, logger, sent, lines };
 }
 
@@ -33,6 +33,8 @@ describe("resendUndeliveredPasses", () => {
       "passes on an older layout could not be marked; undelivered passes are queued anyway",
       "undelivered passes queued again",
     ]);
+    // Logged as an error (pino level 50), with the marking's error.
+    expect(lines[0]).toMatchObject({ level: 50, err: { message: "canceling statement due to statement timeout" } });
   });
 
   it("fails the job even when the marking rejects without a value", async () => {
