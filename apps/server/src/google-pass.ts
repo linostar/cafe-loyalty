@@ -6,12 +6,18 @@ import type { Lang } from "./customer-html.js";
 /** The class logo (googleLogoUrl): Google's recommended 660 px square. */
 export const GOOGLE_LOGO_PNG = solidPng(660, PASS_BACKGROUND);
 
-/** What saving needs of an object: its ids, state, QR and stamps. */
+/** What saving needs of an object: its ids, state, QR and the picture of its stamps (without its description). */
 function saveLinkObject(object: GoogleLoyaltyObject) {
   if (object.state === "INACTIVE") {
     return { id: object.id, classId: object.classId, state: object.state };
   }
-  return { id: object.id, classId: object.classId, state: object.state, barcode: object.barcode, loyaltyPoints: { balance: object.loyaltyPoints.balance } };
+  return {
+    id: object.id,
+    classId: object.classId,
+    state: object.state,
+    barcode: object.barcode,
+    ...("heroImage" in object ? { heroImage: { sourceUri: object.heroImage.sourceUri } } : {}),
+  };
 }
 
 /**
@@ -32,7 +38,7 @@ export function googleSaveUrl(config: GoogleWalletConfig, publicUrl: string, caf
       origins: [],
       payload: {
         loyaltyClasses: [googleLoyaltyClass(config.issuerId, cafe, publicUrl)],
-        loyaltyObjects: [saveLinkObject(googleLoyaltyObject(config.issuerId, content))],
+        loyaltyObjects: [saveLinkObject(googleLoyaltyObject(config.issuerId, content, publicUrl))],
       },
     },
     config.serviceAccount.privateKey,

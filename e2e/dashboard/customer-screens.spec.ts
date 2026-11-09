@@ -47,6 +47,7 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
     colors: { ...DEFAULT_CARD_COLORS },
     logoPath: null,
+    stampShape: "circle",
     stamps: 4,
     program: PROGRAM[lang],
     qr: QR,
@@ -78,7 +79,8 @@ const join = (lang: Lang, errors: { phone?: string; email?: string; privacy?: st
     operatorName: "Loyalty Everywhere",
     program: PROGRAM[lang],
     formToken: "fake-form-token",
-    values: errors.phone === undefined ? {} : { phone: "70 12", email: "rana@example", offers: "yes" },
+    // A fresh page has offers ticked, as the route opens it; one sent back keeps the customer's choice (here, unticked).
+    values: errors.phone === undefined ? { offers: "yes" } : { phone: "70 12", email: "rana@example" },
     errors,
     otherLangHref: `/join/fake?lang=${other(lang)}`,
   });
@@ -95,8 +97,8 @@ const feedback = (lang: Lang, overrides: Partial<FeedbackView> = {}) =>
     ...overrides,
   });
 
-/** A café with colours and a logo of its own (set by the operator; the logo is served at its hash's address). */
-const BRANDED = { colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logoPath: `/logos/${"ab".repeat(32)}.png` };
+/** A café with colours, a logo and a stamp shape of its own (the logo is served at its hash's address). */
+const BRANDED = { colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logoPath: `/logos/${"ab".repeat(32)}.png`, stampShape: "bean" as const };
 
 /**
  * Every customer page and state, each rendered in both languages (named `<view>-<lang>`), messages from the real catalog,
@@ -107,6 +109,8 @@ const VIEWS: readonly [name: string, view: (lang: Lang) => string, csp?: string]
   ["join", (lang) => join(lang)],
   ["join-errors", (lang) => join(lang, { phone: t(lang, "phoneInvalid"), email: t(lang, "emailInvalid"), privacy: t(lang, "privacyRequired") })],
   ["card", (lang) => card(lang)],
+  ["card-cup", (lang) => card(lang, { stampShape: "cup" })],
+  ["card-plate", (lang) => card(lang, { stampShape: "plate" })],
   [
     "card-full",
     (lang) => card(lang, { wallet: { kind: "apple", href: "/c/fake/apple-pass" }, stamps: 9, offer: undefined }),
@@ -214,13 +218,24 @@ for (const width of [1440, 1024, 390, 320] as const) {
 }
 
 test.describe("customer page details", () => {
-  test("signup leaves offers unticked, names the operator and takes an optional recovery email", async ({ page }) => {
+  test("signup has offers ticked, names the operator and takes an optional recovery email", async ({ page }) => {
     await serve(page, join("en"));
     await page.goto(`${ORIGIN}/`);
-    await expect(page.getByRole("checkbox", { name: t("en", "offersLabel", { cafe: "Café Najjar" }) })).not.toBeChecked();
+    await expect(page.getByRole("checkbox", { name: t("en", "offersLabel", { cafe: "Café Najjar" }) })).toBeChecked();
     await expect(page.locator("#privacy-text")).toContainText("Loyalty Everywhere");
     await expect(page.getByLabel(t("en", "joinEmailLabel"))).not.toHaveAttribute("required");
     await expect(page.getByText(t("en", "alreadyHaveCard"))).toBeVisible();
+  });
+
+  test("the card shows its stamps as the café's shapes, full up to its count, and says the count only to screen readers", async ({ page }) => {
+    await serve(page, card("en", { stampShape: "cup" }));
+    await page.goto(`${ORIGIN}/`);
+    await expect(page.locator(".stamp-grid .stamp")).toHaveCount(9);
+    await expect(page.locator(".stamp-grid .stamp.is-filled")).toHaveCount(4);
+    await expect(page.locator(".stamp-grid svg")).toHaveCount(9);
+    const count = page.getByText("4 of 9 stamps", { exact: true });
+    await expect(count).toHaveClass("visually-hidden");
+    expect(await count.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(1);
   });
 
   test("a ready reward stands out, and a card without an email asks for one", async ({ page }) => {

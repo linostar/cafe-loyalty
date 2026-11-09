@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiMessage, apiText } from "./api-messages.js";
-import { DEFAULT_CARD_COLORS, cardColorsSchema } from "./card-colors.js";
+import { DEFAULT_CARD_COLORS, DEFAULT_STAMP_SHAPE, cardColorsSchema, stampShapeSchema } from "./card-colors.js";
 import { MAX_CENTS } from "./money.js";
 
 /** A café's plan (AC 39): a suspended café's signup page enrols no one, while its counter still syncs. */
@@ -54,9 +54,9 @@ const cafeNameSchema = z
   .min(1, apiText("Enter the café's name."))
   .max(120, apiMessage("Use at most {max} characters.", { max: 120 }));
 
-/** The operator's changes to a café, each saved on its own: its plan, its name, its card colours. */
+/** The operator's changes to a café, each saved on its own: its plan, its name, its card colours, its stamp shape. */
 export const adminCafeUpdateSchema = z
-  .object({ plan: cafePlanSchema.optional(), name: cafeNameSchema.optional(), cardColors: cardColorsSchema.optional() })
+  .object({ plan: cafePlanSchema.optional(), name: cafeNameSchema.optional(), cardColors: cardColorsSchema.optional(), stampShape: stampShapeSchema.optional() })
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), apiText("Change at least one field."));
 
 /** A new café: its id (made by the form, so sending it again after a lost response creates it once) and its name. */
@@ -70,6 +70,12 @@ export const logoHashSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
 /** A café's card colours as the API sends them (stored ones, already checked). */
 export const cardColorsShapeSchema = z.object({ background: z.string(), foreground: z.string(), label: z.string() });
+
+/** A café's stamp shape as the API sends it: the default when a server from before it sends none (a rollback). */
+export const stampShapeShapeSchema = stampShapeSchema.catch(DEFAULT_STAMP_SHAPE);
+
+/** The owner's choice of the café's stamp shape. */
+export const stampShapeUpdateSchema = z.object({ stampShape: stampShapeSchema });
 
 /** A logo upload: a PNG or JPEG, base64-encoded (the API takes JSON only); the server checks and resizes it. */
 export const logoUploadSchema = z.object({ image: z.string(apiText("Upload the logo as a PNG or JPEG image.")).min(1, apiText("Upload the logo as a PNG or JPEG image.")) });
@@ -97,6 +103,7 @@ export const adminCafeSchema = z.object({
   /** The card's colours and its logo (null: the product's); defaults for a server from before them (a rollback). */
   cardColors: cardColorsShapeSchema.default({ ...DEFAULT_CARD_COLORS }),
   logoHash: logoHashSchema.nullable().default(null),
+  stampShape: stampShapeShapeSchema,
   paidCents: z.int(),
   payments: z.array(adminPaymentSchema),
   owners: z.array(z.object({ email: z.string(), signedUpAt: timestamp })),
@@ -113,6 +120,7 @@ export type PaymentRecord = z.input<typeof paymentRecordSchema>;
 export type PaymentVoid = z.input<typeof paymentVoidSchema>;
 export type AdminCafeUpdate = z.input<typeof adminCafeUpdateSchema>;
 export type LogoUpload = z.input<typeof logoUploadSchema>;
+export type StampShapeUpdate = z.input<typeof stampShapeUpdateSchema>;
 export type AdminCafe = z.output<typeof adminCafeSchema>;
 export type AdminPayment = z.output<typeof adminPaymentSchema>;
 export type AdminInvite = z.output<typeof adminInviteSchema>;

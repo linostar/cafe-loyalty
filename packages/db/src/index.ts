@@ -1,5 +1,5 @@
 export { bootstrap, withDatabase, type BootstrapLog, type BootstrapOptions } from "./bootstrap.js";
-export { cafeLogoPath, loadAppleLogo, loadCafeBranding, removeCafeLogo, saveCafeLogo, type CafeBranding, type CafeLogoImages } from "./branding.js";
+export { cafeLogoPath, loadAppleLogo, loadCafeBranding, removeCafeLogo, saveCafeLogo, stampPicturePath, type CafeBranding, type CafeLogoImages, type StampPicture } from "./branding.js";
 export { currentKey, keyringSchema, signCardQr, verifyCardQr, type Keyring } from "./card-qr.js";
 export { checkMigrations, findBreakingStatements, findForbiddenStatements, type MigrationCheckContext, type MigrationProblem } from "./check-migrations.js";
 export {
@@ -38,6 +38,8 @@ export { loadCardOffer, offerKey, type CardOffer } from "./offers.js";
 export { base64PemSchema, keyFitsCertificate } from "./pem.js";
 export { APP_GROUP_ROLE, OWNER_GROUP_ROLE } from "./roles.js";
 export {
+  APPLE_PASS_LAYOUT_VERSION,
+  GOOGLE_PASS_LAYOUT_VERSION,
   PASS_BACKGROUND,
   PASS_TEXT,
   googleClassId,
@@ -50,6 +52,8 @@ export {
   googleServiceAccountSchema,
   offerText,
   signJwt,
+  stampPictureUrl,
+  stampsText,
   type GoogleLoyaltyClass,
   type GoogleLoyaltyObject,
   type GoogleOfferMessage,

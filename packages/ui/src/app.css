@@ -188,15 +188,6 @@
   text-align: center;
 }
 
-/* Read by screen readers, not shown. */
-.visually-hidden {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 
 /*
  * The first thing Tab reaches: a way past the top bar and the navigation to the page. Hidden like .visually-hidden
@@ -414,4 +405,45 @@ a.action-link:hover {
 
 .card-preview .hint {
   margin-block-start: var(--space-2);
+}
+
+/* The preview's sample stamps: one to go outlined in the label colour, a collected one solid in the text colour. */
+.card-preview-stamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--card-label, var(--color-on-espresso-muted));
+}
+
+.card-preview-stamps .is-filled {
+  color: var(--card-foreground, var(--color-on-espresso));
+}
+
+.card-preview-stamps .stamp-icon {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+}
+
+/* A stamp drawn by StampIcon; a full one's inner lines (a plate's rim, a bean's crease) take the card's background. */
+.stamp-icon {
+  display: inline-block;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  vertical-align: middle;
+}
+
+.stamp-icon-inner {
+  stroke: var(--card-background, var(--color-espresso));
+}
+
+/* The shape picker: each choice's picture before its name, in the text colour (no card background there). */
+.stamp-shapes .stamp-icon {
+  margin-inline-end: var(--space-2);
+}
+
+.stamp-shapes .stamp-icon-inner {
+  stroke: var(--color-surface);
 }

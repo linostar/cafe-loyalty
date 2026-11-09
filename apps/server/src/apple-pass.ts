@@ -1,10 +1,11 @@
 import { createHmac } from "node:crypto";
 import { crc32, deflateSync } from "node:zlib";
-import { offerText, type CardOffer } from "@cafe-loyalty/db";
-import type { CardColors } from "@cafe-loyalty/shared";
+import { APPLE_PASS_LAYOUT_VERSION, offerText, stampsText, type CardOffer } from "@cafe-loyalty/db";
+import type { CardColors, StampShape } from "@cafe-loyalty/shared";
 import { PKPass } from "passkit-generator";
 import type { CustomerSecrets } from "./customer-crypto.js";
-import { count, t, type Lang } from "./customer-html.js";
+import { t, type Lang } from "./customer-html.js";
+import { stampPicturePng } from "./stamp-picture.js";
 
 /** Apple Wallet settings (APPLE_* variables): the pass type and team ids and the certificates that sign passes. */
 export interface ApplePassConfig {
@@ -14,12 +15,8 @@ export interface ApplePassConfig {
   certificates: { signerCert: string; signerKey: string; wwdr: string };
 }
 
-/**
- * The pass layout this release builds, stored per pass (AC 12). A pass on another layout counts as changed when next
- * fetched, so every device of it gets the new layout; bump this when the layout changes (and, to reach passes nobody
- * fetches, push those whose layout_version is older).
- */
-export const APPLE_PASS_LAYOUT_VERSION = 2;
+// The pass layout this release builds (packages/db wallet.ts, where the worker's sweep reads it too).
+export { APPLE_PASS_LAYOUT_VERSION };
 
 /**
  * The authenticationToken of a card's pass at the epoch of `webSecret` (AC 11): 256 bits keyed with the pepper from
@@ -36,6 +33,8 @@ export interface ApplePassContent {
   cafeName: string;
   /** The café's card colours (#rrggbb). */
   colors: CardColors;
+  /** The shape the café's stamps are drawn in, on the strip. */
+  stampShape: StampShape;
   /** The café's logo as Apple's logo.png at 1x, 2x and 3x, or undefined: the pass then shows the café's name alone. */
   logo: { apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined;
   stamps: number;
@@ -106,15 +105,11 @@ function passStrings(lang: Lang, content: ApplePassContent): Record<string, stri
   const moved = content.qr === null;
   const strings: Record<string, string> = {
     description: t(lang, "passDescription", { cafe: content.cafeName }),
-    stamps_label: t(lang, moved ? "passMovedLabel" : "passStampsLabel"),
-    stamps_value: moved
-      ? t(lang, "passMovedValue")
-      : program === undefined
-        ? count(lang, "stamps", content.stamps)
-        : t(lang, "stampsProgress", { stamps: content.stamps, required: count(lang, "stamps", program.stampsRequired) }),
+    ...(moved ? { moved_label: t(lang, "passMovedLabel"), moved_value: t(lang, "passMovedValue") } : {}),
+    // The strip shows the stamps; the back says them in words, for VoiceOver.
+    ...(program === undefined ? {} : { stamps_value: stampsText(lang, content.stamps, program.stampsRequired) }),
     about_label: t(lang, moved ? "passMovedLabel" : "passAboutLabel"),
     about_value: t(lang, moved ? "passMovedText" : "passAboutText"),
-    // The stamps it takes show above, as "4 of 9 stamps".
     ...(reward === undefined ? {} : { reward_label: t(lang, "passRewardLabel"), reward_value: reward }),
     ...offerStrings(lang, content.offers.offer),
     ...(content.feedbackUrl === undefined ? {} : { feedback_label: t(lang, "passFeedbackLabel"), feedback_value: `${t(lang, "passFeedbackText")}\n${content.feedbackUrl}` }),
@@ -122,40 +117,55 @@ function passStrings(lang: Lang, content: ApplePassContent): Record<string, stri
   return Object.fromEntries(Object.entries(strings).map(([key, value]) => [key, stringsValue(value)]));
 }
 
-/** The offer field's texts: the offer's headline and details, or that there is none. */
+/** The offer field's texts, when the card has an offer: its headline and details. */
 function offerStrings(lang: Lang, offer: CardOffer | undefined): Record<string, string> {
-  const text = offer === undefined ? undefined : offerText(lang, offer);
+  if (offer === undefined) {
+    return {};
+  }
+  const text = offerText(lang, offer);
   return {
     offer_label: t(lang, "passOfferLabel"),
-    offer_value: text?.headline ?? t(lang, "passNoOffer"),
+    offer_value: text.headline,
     offer_change: t(lang, "passOfferChange"),
-    ...(text === undefined ? {} : { offer_details_label: t(lang, "passOfferDetailsLabel"), offer_details_value: text.details }),
+    offer_details_label: t(lang, "passOfferDetailsLabel"),
+    offer_details_value: text.details,
   };
 }
 
 /**
- * A card's offer field, on the front of an opted-in card's pass (AC 4): Wallet shows a lock-screen notification when a
- * field with a changeMessage changes value, so only an offer that may notify has one (announced today, CardOffer.mayNotify; AC 14). The field stays while
- * the card is opted in, saying there is no offer, so an ended offer goes away silently.
+ * A card's offer field, on the front of an opted-in card's pass (AC 4), only while it has an offer: no field says
+ * there is none. Wallet shows a lock-screen notification when a field with a changeMessage changes value, so only an
+ * offer that may notify has one (announced today, CardOffer.mayNotify; AC 14); an ended offer's field goes away silently.
  */
 function offerFields(content: ApplePassContent) {
   const { optedIn, offer } = content.offers;
-  if (!optedIn || content.qr === null) {
+  if (!optedIn || offer === undefined || content.qr === null) {
     return { auxiliaryFields: [], backFields: [] };
   }
   return {
-    auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", ...(offer?.mayNotify === true ? { changeMessage: "offer_change" } : {}) }],
-    backFields: offer === undefined ? [] : [{ key: "offer_details", label: "offer_details_label", value: "offer_details_value" }],
+    auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", ...(offer.mayNotify ? { changeMessage: "offer_change" } : {}) }],
+    backFields: [{ key: "offer_details", label: "offer_details_label", value: "offer_details_value" }],
   };
 }
 
+/** The strip at Apple's three scales: the card's stamps in the café's shape and colours. */
+async function strips(content: ApplePassContent, required: number): Promise<Record<string, Buffer>> {
+  const picture = { shape: content.stampShape, background: content.colors.background, foreground: content.colors.foreground, stamps: content.stamps, required };
+  const [one, two, three] = await Promise.all([1, 2, 3].map((scale) => stampPicturePng(picture, scale)));
+  return one === undefined || two === undefined || three === undefined ? {} : { "strip.png": one, "strip@2x.png": two, "strip@3x.png": three };
+}
+
 /**
- * A signed .pkpass of a card (AC 10): its stamps, the reward and the card's QR, updated through the PassKit web
- * service at `${publicUrl}/passkit` (AC 11). Only the offer field can have a changeMessage (offerFields), so stamp
- * updates are silent: lock-screen notifications are kept for offers, at most one a day (AC 14). Sharing is off: the pass carries the card's QR.
+ * A signed .pkpass of a card (AC 10): a strip picturing its stamps (no count or label on the front; the back says
+ * them in words), the reward and the card's QR, updated through the PassKit web service at `${publicUrl}/passkit`
+ * (AC 11). Only the offer field can have a changeMessage (offerFields), so stamp updates are silent: lock-screen
+ * notifications are kept for offers, at most one a day (AC 14). Sharing is off: the pass carries the card's QR. A
+ * voided pass (moved) says so in place of the strip; a card without a program has no stamps to show.
  */
-export function buildApplePass(config: ApplePassConfig, publicUrl: string, content: ApplePassContent): Buffer {
+export async function buildApplePass(config: ApplePassConfig, publicUrl: string, content: ApplePassContent): Promise<Buffer> {
   const offer = offerFields(content);
+  const moved = content.qr === null;
+  const { program } = content;
   const json = {
     formatVersion: 1,
     passTypeIdentifier: config.passTypeId,
@@ -173,19 +183,21 @@ export function buildApplePass(config: ApplePassConfig, publicUrl: string, conte
     labelColor: rgb(content.colors.label),
     ...(content.qr === null ? { voided: true } : { barcodes: [{ format: "PKBarcodeFormatQR", message: content.qr, messageEncoding: "iso-8859-1" }] }),
     storeCard: {
-      primaryFields: [{ key: "stamps", label: "stamps_label", value: "stamps_value" }],
-      secondaryFields: content.program === undefined || content.qr === null ? [] : [{ key: "reward", label: "reward_label", value: "reward_value" }],
+      primaryFields: moved ? [{ key: "moved", label: "moved_label", value: "moved_value" }] : [],
+      secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value" }],
       auxiliaryFields: offer.auxiliaryFields,
       // The feedback link is on the back, silently (AC 37): Wallet makes the URL in its text a link.
       backFields: [
+        ...(program === undefined || moved ? [] : [{ key: "stamps", value: "stamps_value" }]),
         ...offer.backFields,
-        ...(content.feedbackUrl === undefined || content.qr === null ? [] : [{ key: "feedback", label: "feedback_label", value: "feedback_value" }]),
+        ...(content.feedbackUrl === undefined || moved ? [] : [{ key: "feedback", label: "feedback_label", value: "feedback_value" }]),
         { key: "about", label: "about_label", value: "about_value" },
       ],
     },
   };
   const logo = content.logo === undefined ? {} : { "logo.png": content.logo.apple1x, "logo@2x.png": content.logo.apple2x, "logo@3x.png": content.logo.apple3x };
-  const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...icons(content.colors.background), ...logo }, config.certificates);
+  const strip = program === undefined || moved ? {} : await strips(content, program.stampsRequired);
+  const pass = new PKPass({ "pass.json": Buffer.from(JSON.stringify(json)), ...icons(content.colors.background), ...logo, ...strip }, config.certificates);
   for (const lang of ["ar", "en"] as const) {
     pass.localize(lang, passStrings(lang, content));
   }

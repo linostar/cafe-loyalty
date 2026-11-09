@@ -1,7 +1,7 @@
 import { createPrivateKey, createSign } from "node:crypto";
-import { formatUsd } from "@cafe-loyalty/shared";
+import { formatUsd, plural, type Plural } from "@cafe-loyalty/shared";
 import { z } from "zod";
-import { cafeLogoPath, type CafeBranding } from "./branding.js";
+import { cafeLogoPath, stampPicturePath, type CafeBranding } from "./branding.js";
 import { offerKey, type CardOffer } from "./offers.js";
 
 /**
@@ -12,7 +12,6 @@ export const PASS_TEXT = {
   en: {
     passDescription: "Loyalty card at {cafe}",
     passProgramName: "Loyalty card",
-    passStampsLabel: "Stamps",
     passRewardLabel: "Reward",
     passAboutLabel: "How it works",
     passAboutText: "Show this card to the barista to collect stamps. Your stamps update here by themselves.",
@@ -20,7 +19,6 @@ export const PASS_TEXT = {
     passMovedValue: "Use your new card",
     passMovedText: "This card was restored on another phone. Use the card there.",
     passOfferLabel: "Offer",
-    passNoOffer: "None right now",
     passOfferChange: "New offer: %@",
     passOfferNew: "New offer",
     passOfferDetailsLabel: "Offer details",
@@ -38,7 +36,6 @@ export const PASS_TEXT = {
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
     passProgramName: "بطاقة الولاء",
-    passStampsLabel: "الأختام",
     passRewardLabel: "المكافأة",
     passAboutLabel: "كيف تعمل",
     passAboutText: "أظهر هذه البطاقة للباريستا لجمع الأختام. تُحدَّث أختامك هنا تلقائياً.",
@@ -46,7 +43,6 @@ export const PASS_TEXT = {
     passMovedValue: "استخدم بطاقتك الجديدة",
     passMovedText: "استُعيدت هذه البطاقة على هاتف آخر. استخدم البطاقة هناك.",
     passOfferLabel: "العرض",
-    passNoOffer: "لا عرض حالياً",
     passOfferChange: "عرض جديد: %@",
     passOfferNew: "عرض جديد",
     passOfferDetailsLabel: "تفاصيل العرض",
@@ -64,6 +60,18 @@ export const PASS_TEXT = {
 
 type PassTextKey = keyof (typeof PASS_TEXT)["en"];
 
+/** A card's stamps out of the program's ("4 of 9 stamps"), `{n}` being the stamps it takes. */
+const STAMPS_OF: Plural = {
+  en: { one: "{stamps} of {n} stamp", other: "{stamps} of {n} stamps" },
+  ar: { zero: "{stamps} من {n} ختم", one: "{stamps} من ختم واحد", two: "{stamps} من ختمين", few: "{stamps} من {n} أختام", many: "{stamps} من {n} ختمًا", other: "{stamps} من {n} ختم" },
+};
+
+/**
+ * A card's stamps in words, for what reads the pass aloud (the Apple pass's back, the Google stamp picture's
+ * description): passes show the stamps as a picture, never as this text on their front.
+ */
+export const stampsText = (lang: "ar" | "en", stamps: number, required: number): string => plural(lang, STAMPS_OF, required, { stamps });
+
 const LOCALES = { ar: "ar-LB", en: "en-US" } as const;
 
 /** A local minute of the day as 24-hour time; the end of the day (1440) is 00:00, as the dashboard shows it. */
@@ -77,7 +85,7 @@ const clock = (minute: number): string => `${String(Math.floor(minute / 60) % 24
 export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: string; details: string } {
   const text = PASS_TEXT[lang];
   const locale = LOCALES[lang];
-  // In Latin digits in both languages, like the pass's stamps ("4/9") and hours.
+  // In Latin digits in both languages, like the hours.
   const discount = offer.discount.kind === "percent" ? `${String(offer.discount.value)}%` : formatUsd(offer.discount.value, "en");
   if (offer.kind === "win_back") {
     // The day as stored, read as a UTC date: the café's time zone already chose it.
@@ -102,6 +110,15 @@ export function offerText(lang: "ar" | "en", offer: CardOffer): { headline: stri
 
 /** The product's espresso (RGB): its Google class logo, for cafés without a logo of their own. */
 export const PASS_BACKGROUND = [74, 44, 42] as const;
+
+/**
+ * The pass layouts this release builds, stored per pass (AC 12): bump one when its wallet's layout changes. The
+ * worker's sweep (mark_outdated_passes, migration 0025) marks every pass on an older layout changed and records the
+ * new one, so passes nobody updates otherwise get it too (Apple: 3 drew the stamps on a strip; Google: 2 made them the
+ * hero image). An Apple pass on another layout also counts as changed when next fetched (passkit-routes.ts).
+ */
+export const APPLE_PASS_LAYOUT_VERSION = 3;
+export const GOOGLE_PASS_LAYOUT_VERSION = 2;
 
 /** Google Wallet settings (GOOGLE_WALLET_* variables). */
 export interface GoogleWalletConfig {
@@ -196,7 +213,13 @@ export interface GooglePassContent {
   offer: CardOffer | undefined;
   /** The feedback page of the card's latest feedback request (feedbackUrl, AC 37), if it has one. */
   feedbackUrl: string | undefined;
+  /** How the café draws its stamps: the picture of them is in its shape and colours (loadCafeBranding). */
+  look: Pick<CafeBranding, "colors" | "stampShape">;
 }
+
+/** The public address of the picture of a card's stamps (stampPicturePath), for the pass's hero image. */
+export const stampPictureUrl = (publicUrl: string, look: Pick<CafeBranding, "colors" | "stampShape">, stamps: number, required: number): string =>
+  new URL(stampPicturePath({ shape: look.stampShape, background: look.colors.background, foreground: look.colors.foreground, stamps, required }), publicUrl).toString();
 
 /** An offer's text in both languages, as a header and body of a Google object. */
 const offerTexts = (offer: CardOffer) => {
@@ -224,11 +247,12 @@ export function googleOfferMessage(offer: CardOffer) {
 }
 
 /**
- * A card's whole loyalty object as it is now (AC 10): the offer it shows, the stamps, the reward and the card's QR, or,
- * for an earlier epoch, an INACTIVE object without them (AC 8). Written whole, so every write leaves Google with the
- * current card. Writes are silent (no notifyPreference); only an offer's message notifies (googleOfferMessage, AC 14).
+ * A card's whole loyalty object as it is now (AC 10): the offer it shows, a picture of its stamps (the hero image, read
+ * aloud as "4 of 9 stamps"), the reward and the card's QR, or, for an earlier epoch, an INACTIVE object without them
+ * (AC 8). No stamps without a program: a card cannot collect any then. Written whole, so every write leaves Google with
+ * the current card. Writes are silent (no notifyPreference); only an offer's message notifies (googleOfferMessage, AC 14).
  */
-export function googleLoyaltyObject(issuerId: string, content: GooglePassContent) {
+export function googleLoyaltyObject(issuerId: string, content: GooglePassContent, publicUrl: string) {
   const ids = { id: googleObjectId(issuerId, content.cardId, content.epoch), classId: googleClassId(issuerId, content.cafeId) };
   if (content.qr === null) {
     return { ...ids, state: "INACTIVE" as const, textModulesData: [textModule("moved", passText("passMovedLabel"), passText("passMovedText"))] };
@@ -238,12 +262,14 @@ export function googleLoyaltyObject(issuerId: string, content: GooglePassContent
     ...ids,
     state: "ACTIVE" as const,
     barcode: { type: "QR_CODE", value: content.qr },
-    loyaltyPoints: {
-      label: PASS_TEXT.en.passStampsLabel,
-      localizedLabel: passText("passStampsLabel"),
-      // "4/9": the stamps it takes are shown with them, in digits both languages read.
-      balance: program === undefined ? { int: content.stamps } : { string: `${String(content.stamps)}/${String(program.stampsRequired)}` },
-    },
+    ...(program === undefined
+      ? {}
+      : {
+          heroImage: {
+            sourceUri: { uri: stampPictureUrl(publicUrl, content.look, content.stamps, program.stampsRequired) },
+            contentDescription: localized(stampsText("en", content.stamps, program.stampsRequired), stampsText("ar", content.stamps, program.stampsRequired)),
+          },
+        }),
     textModulesData: [
       ...(content.offer === undefined ? [] : [textModule("offer", offerTexts(content.offer).headline, offerTexts(content.offer).details)]),
       ...(program === undefined ? [] : [textModule("reward", passText("passRewardLabel"), localized(program.rewardNameEn, program.rewardNameAr))]),

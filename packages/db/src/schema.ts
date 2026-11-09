@@ -1,3 +1,4 @@
+import type { StampShape } from "@cafe-loyalty/shared";
 import type { ColumnType, Generated } from "kysely";
 
 /** A timestamptz column the database fills in. */
@@ -31,6 +32,8 @@ export interface CafesTable {
   card_background: Generated<string>;
   card_foreground: Generated<string>;
   card_label: Generated<string>;
+  /** The stamp template the cards draw their stamps in (STAMP_SHAPES), set by the owner or the operator; 'circle' by default. */
+  stamp_shape: ColumnType<StampShape, StampShape | undefined, StampShape>;
   /** SHA-256 of the Google loyalty class the worker last wrote for the café, or null (written again when it differs). */
   google_class_hash: ColumnType<Buffer | null, never, Buffer | null>;
   created_at: CreatedAt;
@@ -447,6 +450,8 @@ export interface GooglePassesTable {
   delivery_error: ColumnType<string | null, never, string | null>;
   /** When the pass last had a notifying write (an offer's announcement, AC 14), set before the write is tried. */
   offer_notified_at: ColumnType<Date | null, never, Date>;
+  /** The layout the pass was made on (GOOGLE_PASS_LAYOUT_VERSION); the worker's sweep moves older ones on. */
+  layout_version: ColumnType<number, number | undefined, never>;
   created_at: CreatedAt;
 }
 
@@ -555,6 +560,7 @@ export const TABLE_COLUMNS = {
     "card_background",
     "card_foreground",
     "card_label",
+    "stamp_shape",
     "google_class_hash",
     "created_at",
     "updated_at",
@@ -713,6 +719,7 @@ export const TABLE_COLUMNS = {
     "delivery_error",
     "offer_notified_at",
     "created_at",
+    "layout_version",
   ],
   cafe_logos: ["cafe_id", "hash", "square", "apple_1x", "apple_2x", "apple_3x", "previous_hash", "previous_square", "created_at", "updated_at"],
   operators: ["id", "email", "password_hash", "password_changed_at", "created_at"],

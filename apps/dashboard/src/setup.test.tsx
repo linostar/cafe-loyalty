@@ -20,6 +20,7 @@ const CAFE = {
   signupQrPrintedAt: null as string | null,
   cardColors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" },
   logoHash: null,
+  stampShape: "circle" as const,
 };
 const PROGRAM = { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" };
 const ESPRESSO = { id: "3d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f41", nameAr: "إسبريسو", nameEn: "Espresso", priceCents: 250, costCents: 70, stampsEarned: 1, active: true };

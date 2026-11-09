@@ -50,3 +50,27 @@ export const cardColorsSchema = z
       context.addIssue({ code: "custom", path: ["label"], message: apiText("Pick a label colour that stands out more from the background: at least 4.5 to 1.") });
     }
   });
+
+/** The stamp templates a café's cards draw their stamps in, empty or full (the Apple strip, the Google hero image, the web card). */
+export const STAMP_SHAPES = ["circle", "cup", "plate", "bean"] as const;
+export type StampShape = (typeof STAMP_SHAPES)[number];
+
+/** Every café's shape until its owner or the operator picks another. */
+export const DEFAULT_STAMP_SHAPE: StampShape = "circle";
+
+export const stampShapeSchema = z.enum(STAMP_SHAPES, apiText("Pick one of the stamp shapes."));
+
+/**
+ * The stamp templates, drawn on a 24-unit square (the server's pass pictures and web card, the dashboard's preview):
+ * `body` is filled for a collected stamp and outlined for one still to go, `extra` (a cup's handle and saucer) is
+ * always outlined in the stamp's colour, and `inner` (a plate's rim, a bean's crease) is outlined in the stamp's colour
+ * on an empty stamp and in the card's background on a full one. Lines are STAMP_STROKE wide.
+ */
+export const STAMP_SHAPE_PATHS: Readonly<Record<StampShape, { body: string; extra?: string; inner?: string }>> = {
+  circle: { body: "M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19Z" },
+  cup: { body: "M3.5 7h12v6.5a5.5 5.5 0 0 1-5.5 5.5h-1a5.5 5.5 0 0 1-5.5-5.5Z", extra: "M15.5 9h1.75a2.75 2.75 0 0 1 0 5.5h-1.75M2.5 21.5h15" },
+  plate: { body: "M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19Z", inner: "M12 6.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11Z" },
+  bean: { body: "M12 2.5c4.4 0 7 4.3 7 9.5s-2.6 9.5-7 9.5s-7-4.3-7-9.5s2.6-9.5 7-9.5Z", inner: "M12 3.5c-2.5 3-2.5 5.5 0 8.5s2.5 5.5 0 8.5" },
+};
+
+export const STAMP_STROKE = 1.75;

@@ -497,6 +497,40 @@ describe("a café's name, card colours and logo", () => {
     ]);
   });
 
+  it("get a stamp shape from the operator or the owner, in the café's audit log, refusing any shape not offered", async () => {
+    const app = await adminApp();
+    const url = `/api/admin/cafes/${app.owner.cafeId}`;
+    const listed = (await app.asOperator("GET", "/api/admin/cafes")).json<{ cafes: { id: string }[] }>().cafes.find((cafe) => cafe.id === app.owner.cafeId);
+    expect(listed).toMatchObject({ stampShape: "circle" });
+
+    const byOperator = await app.asOperator("PATCH", url, { stampShape: "cup" });
+    expect(byOperator.statusCode).toBe(200);
+    expect(byOperator.json()).toMatchObject({ stampShape: "cup" });
+    expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "cup" } });
+
+    const byOwner = await app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "bean" });
+    expect(byOwner.statusCode).toBe(200);
+    expect(byOwner.json()).toMatchObject({ cafe: { stampShape: "bean" } });
+    // The same shape again changes nothing and writes no entry.
+    expect((await app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "bean" })).statusCode).toBe(200);
+    await app.asOperator("PATCH", url, { stampShape: "bean" });
+
+    for (const refused of [app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "star" }), app.asOwner("PUT", "/api/cafe/stamp-shape", {}), app.asOperator("PATCH", url, { stampShape: "star" })]) {
+      const response = await refused;
+      expect(response.statusCode).toBe(400);
+      expect(response.json<{ details: { path: string; issue: string }[] }>().details).toEqual([{ path: "stampShape", issue: "Pick one of the stamp shapes." }]);
+    }
+
+    const { rows } = await context.admin.query<{ actor_type: string; changes: unknown }>(
+      "SELECT actor_type, changes FROM app.audit_log WHERE cafe_id = $1 AND action = 'cafe.updated' ORDER BY id",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([
+      { actor_type: "operator", changes: { stampShape: "cup" } },
+      { actor_type: "owner", changes: { stampShape: "bean" } },
+    ]);
+  });
+
   it("get a logo from the operator or the owner, served by its hash on both addresses until the change after the one that replaced or removed it", async () => {
     const app = await adminApp();
     const set = await app.asOperator("PUT", `/api/admin/cafes/${app.owner.cafeId}/logo`, { image: await pngLogo() });

@@ -211,6 +211,7 @@ export {
   operatorSessionSchema,
   paymentRecordSchema,
   paymentVoidSchema,
+  stampShapeUpdateSchema,
   type AdminCafe,
   type AdminCafeUpdate,
   type AdminInvite,
@@ -221,8 +222,22 @@ export {
   type PaymentMethod,
   type PaymentRecord,
   type PaymentVoid,
+  type StampShapeUpdate,
 } from "./admin.js";
-export { DEFAULT_CARD_COLORS, MIN_CARD_CONTRAST, cardColorSchema, cardColorsSchema, contrastRatio, type CardColors } from "./card-colors.js";
+export {
+  DEFAULT_CARD_COLORS,
+  DEFAULT_STAMP_SHAPE,
+  MIN_CARD_CONTRAST,
+  STAMP_SHAPES,
+  STAMP_SHAPE_PATHS,
+  STAMP_STROKE,
+  cardColorSchema,
+  cardColorsSchema,
+  contrastRatio,
+  stampShapeSchema,
+  type CardColors,
+  type StampShape,
+} from "./card-colors.js";
 export { offerResultSchema, resultsMonthSchema, resultsQuerySchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";
 export {
   API_MESSAGES_AR,

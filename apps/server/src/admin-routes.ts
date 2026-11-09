@@ -65,7 +65,7 @@ async function loadSession(trx: Transaction<Database>, operatorId: string): Prom
 async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<AdminCafe | undefined> {
   const cafe = await trx
     .selectFrom("cafes")
-    .select(["id", "name", "plan", "created_at", "card_background", "card_foreground", "card_label"])
+    .select(["id", "name", "plan", "created_at", "card_background", "card_foreground", "card_label", "stamp_shape"])
     .where("id", "=", cafeId)
     .executeTakeFirst();
   if (cafe === undefined) {
@@ -112,6 +112,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     createdAt: cafe.created_at.toISOString(),
     cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
     logoHash: logo?.hash?.toString("hex") ?? null,
+    stampShape: cafe.stamp_shape,
     paidCents: Number(paid.total),
     payments: payments.map((payment) => ({
       id: payment.id,
@@ -328,8 +329,9 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
   });
 
   /**
-   * Changes a café: its plan (suspending it stops new customers joining, AC 39; its counter still syncs), its name and
-   * its card colours, each optional. A new name or colours reach every pass of the café (its trigger marks them).
+   * Changes a café: its plan (suspending it stops new customers joining, AC 39; its counter still syncs), its name, its
+   * card colours and its stamp shape, each optional. A new name, colours or shape reach every pass of the café (its
+   * triggers mark them).
    */
   app.patch("/cafes/:id", { config: { access: "operator" } }, async (request) => {
     const operator = operatorOf(request);
@@ -337,7 +339,11 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     const body = parseInput(adminCafeUpdateSchema, request.body);
     const actor = { cafeId: id, actorType: "operator" as const, actorId: operator.operatorId, entityType: "cafe", entityId: id };
     const cafe = await withListedCafe(id, async (trx) => {
-      const before = await trx.selectFrom("cafes").select(["plan", "name", "card_background", "card_foreground", "card_label"]).where("id", "=", id).executeTakeFirstOrThrow();
+      const before = await trx
+        .selectFrom("cafes")
+        .select(["plan", "name", "card_background", "card_foreground", "card_label", "stamp_shape"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
       if (body.plan !== undefined && before.plan !== body.plan) {
         await trx.updateTable("cafes").set({ plan: body.plan }).where("id", "=", id).execute();
         await audit(trx, { ...actor, action: "cafe.plan_changed", changes: { from: before.plan, to: body.plan } });
@@ -346,20 +352,29 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
       const colorsChanged =
         colors !== undefined && (colors.background !== before.card_background || colors.foreground !== before.card_foreground || colors.label !== before.card_label);
       const nameChanged = body.name !== undefined && body.name !== before.name;
-      if (nameChanged || colorsChanged) {
+      const shapeChanged = body.stampShape !== undefined && body.stampShape !== before.stamp_shape;
+      if (nameChanged || colorsChanged || shapeChanged) {
         await trx
           .updateTable("cafes")
           .set({
             ...(nameChanged ? { name: body.name } : {}),
             ...(colorsChanged ? { card_background: colors.background, card_foreground: colors.foreground, card_label: colors.label } : {}),
+            ...(shapeChanged ? { stamp_shape: body.stampShape } : {}),
           })
           .where("id", "=", id)
           .execute();
-        await audit(trx, { ...actor, action: "cafe.updated", changes: { ...(nameChanged ? { name: body.name } : {}), ...(colorsChanged ? { cardColors: colors } : {}) } });
+        await audit(trx, {
+          ...actor,
+          action: "cafe.updated",
+          changes: { ...(nameChanged ? { name: body.name } : {}), ...(colorsChanged ? { cardColors: colors } : {}), ...(shapeChanged ? { stampShape: body.stampShape } : {}) },
+        });
       }
       return loadCafe(trx, id);
     });
-    request.log.info({ cafeId: id, operatorId: operator.operatorId, plan: body.plan, renamed: body.name !== undefined, colors: body.cardColors !== undefined }, "cafe changed");
+    request.log.info(
+      { cafeId: id, operatorId: operator.operatorId, plan: body.plan, renamed: body.name !== undefined, colors: body.cardColors !== undefined, stampShape: body.stampShape },
+      "cafe changed",
+    );
     return cafe;
   });
 
