@@ -46,9 +46,9 @@ const PASS_QUEUES = { apple: APPLE_PASS_UPDATE_QUEUE, google: GOOGLE_PASS_UPDATE
  * worker, after the old release's server has stopped, so no old server builds the passes it marks.
  */
 export async function resendUndeliveredPasses(boss: PgBoss, logger: Logger): Promise<{ found: number; queued: number }> {
-  // A failed marking never holds up the resend below; the job fails once the resend is done, so pg-boss records it
-  // (and `logged` logs it), and the passes stay on their layout until a later run marks them.
-  let markingFailed: unknown;
+  // A failed marking is logged at once and never holds up the resend below; the job fails once the resend is done, so
+  // pg-boss records it, and the passes stay on their layout until a later run marks them.
+  let marking: { failed: false } | { failed: true; error: unknown } = { failed: false };
   try {
     const marked = await boss.getDb().executeSql("SELECT app.mark_outdated_passes($1) AS marked", [RESEND_BATCH]);
     const outdated = (marked.rows[0] as { marked: number } | undefined)?.marked ?? 0;
@@ -56,7 +56,8 @@ export async function resendUndeliveredPasses(boss: PgBoss, logger: Logger): Pro
       logger.info({ outdated }, "passes on an older layout marked changed");
     }
   } catch (error) {
-    markingFailed = error;
+    logger.error({ err: error }, "passes on an older layout could not be marked; undelivered passes are queued anyway");
+    marking = { failed: true, error };
   }
   const { rows } = await boss.getDb().executeSql("SELECT wallet, cafe_id, pass_id FROM app.undelivered_passes($1)", [RESEND_BATCH]);
   let queued = 0;
@@ -67,8 +68,8 @@ export async function resendUndeliveredPasses(boss: PgBoss, logger: Logger): Pro
     }
   }
   logger.info({ found: rows.length, queued }, "undelivered passes queued again");
-  if (markingFailed !== undefined) {
-    throw new Error("Passes on an older layout could not be marked; the undelivered ones were queued.", { cause: markingFailed });
+  if (marking.failed) {
+    throw new Error("Passes on an older layout could not be marked; the undelivered ones were queued.", { cause: marking.error });
   }
   return { found: rows.length, queued };
 }
