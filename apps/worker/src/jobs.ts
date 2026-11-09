@@ -1,4 +1,4 @@
-import { APPLE_PASS_UPDATE_QUEUE, GOOGLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
+import { APPLE_PASS_UPDATE_QUEUE, GOOGLE_PASS_UPDATE_QUEUE, JOB_STATEMENT_TIMEOUT_MS, isJobQueueVersionMismatch, startJobQueue, type Database, type Job, type PgBoss } from "@cafe-loyalty/db";
 import type { Kysely } from "kysely";
 import type { Logger } from "pino";
 import type { PassPusher } from "./apns.js";
@@ -110,12 +110,25 @@ function logged(queue: string, logger: Logger, run: (job: Job, log: Logger) => P
  * Wallet, each one's pass updates (without them, those wait, queued, for a worker that has them), recording each
  * update's outcome on its pass (trackDelivery). Stopping waits for running jobs at most what is left of `shutdownTimeoutMs` after the longest
  * statement on each of the two pools (pg-boss's and the app's, both closed after it), so the worker stops in time.
+ * On a pg-boss schema of another version (this release rolled back past a pg-boss upgrade, or ahead of the
+ * migrations), the worker runs without the queue, as the server does, rather than exit: jobs wait, queued, for a
+ * worker of the matching release, and a rollback past the upgrade still runs (README, Job queue).
  */
 export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: number, dependencies: JobDependencies): WorkerTask {
+  let running = false;
   return {
     name: "job-queue",
     async start() {
-      await startJobQueue(boss);
+      try {
+        await startJobQueue(boss);
+      } catch (error) {
+        if (!isJobQueueVersionMismatch(error)) {
+          throw error;
+        }
+        logger.error({ err: error }, "the job queue's schema is another pg-boss version: the worker runs without it, and jobs wait for a worker of the matching release");
+        return;
+      }
+      running = true;
       await boss.createQueue(PURGE_QUEUE);
       await boss.schedule(PURGE_QUEUE, PURGE_CRON);
       await boss.work(
@@ -163,7 +176,9 @@ export function jobQueueTask(boss: PgBoss, logger: Logger, shutdownTimeoutMs: nu
       }
     },
     async stop() {
-      await boss.stop({ graceful: true, timeout: Math.max(0, shutdownTimeoutMs - 2 * JOB_STATEMENT_TIMEOUT_MS - 1_000) });
+      if (running) {
+        await boss.stop({ graceful: true, timeout: Math.max(0, shutdownTimeoutMs - 2 * JOB_STATEMENT_TIMEOUT_MS - 1_000) });
+      }
       dependencies.pusher?.close();
     },
   };

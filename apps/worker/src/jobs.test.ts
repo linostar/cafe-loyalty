@@ -1,7 +1,47 @@
-import { APPLE_PASS_UPDATE_QUEUE, type PgBoss } from "@cafe-loyalty/db";
+import { APPLE_PASS_UPDATE_QUEUE, type Database, type PgBoss } from "@cafe-loyalty/db";
+import type { Kysely } from "kysely";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
-import { resendUndeliveredPasses } from "./jobs.js";
+import { jobQueueTask, resendUndeliveredPasses } from "./jobs.js";
+
+describe("jobQueueTask", () => {
+  /** A job queue whose start fails with `failure`, recording whether anything else was asked of it. */
+  function failingStart(failure: Error) {
+    const calls: string[] = [];
+    const boss = {
+      start: () => {
+        calls.push("start");
+        return Promise.reject(failure);
+      },
+      stop: () => {
+        calls.push("stop");
+        return Promise.resolve();
+      },
+      createQueue: () => {
+        calls.push("createQueue");
+        return Promise.resolve();
+      },
+    } as unknown as PgBoss;
+    const lines: { level: number; msg: string }[] = [];
+    const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as { level: number; msg: string }) });
+    const task = jobQueueTask(boss, logger, 15_000, { db: {} as Kysely<Database>, pusher: undefined, google: undefined });
+    return { task, calls, lines };
+  }
+
+  it("runs without the queue on a pg-boss schema of another version, rather than stop the worker, and stops cleanly", async () => {
+    const { task, calls, lines } = failingStart(new Error("pg-boss database requires migrations"));
+    await expect(task.start()).resolves.toBeUndefined();
+    expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: expect.stringContaining("another pg-boss version") as string }));
+    await expect(task.stop()).resolves.toBeUndefined();
+    // Nothing more was asked of a queue that never started.
+    expect(calls).toEqual(["start"]);
+  });
+
+  it("still fails to start on any other failure", async () => {
+    const { task } = failingStart(new Error("connect ECONNREFUSED 127.0.0.1:5432"));
+    await expect(task.start()).rejects.toThrow("ECONNREFUSED");
+  });
+});
 
 /** A job queue whose marking of outdated passes rejects with `rejection`, and which holds one undelivered pass. */
 function failingMarking(rejection: unknown) {
