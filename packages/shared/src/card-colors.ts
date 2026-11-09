@@ -52,7 +52,7 @@ export const cardColorsSchema = z
   });
 
 /** The stamp templates a café's cards draw their stamps in, empty or full (the Apple strip, the Google hero image, the web card). */
-export const STAMP_SHAPES = ["circle", "cup", "plate", "bean", "icecream", "cake", "burger"] as const;
+export const STAMP_SHAPES = ["circle", "cup", "steamcup", "plate", "bean", "icecream", "cake", "burger"] as const;
 export type StampShape = (typeof STAMP_SHAPES)[number];
 
 /** Every café's shape until its owner or the operator picks another. */
@@ -69,6 +69,11 @@ export const stampShapeSchema = z.enum(STAMP_SHAPES, apiText("Pick one of the st
 export const STAMP_SHAPE_PATHS: Readonly<Record<StampShape, { body: string; extra?: string; inner?: string }>> = {
   circle: { body: "M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19Z" },
   cup: { body: "M3.5 7h12v6.5a5.5 5.5 0 0 1-5.5 5.5h-1a5.5 5.5 0 0 1-5.5-5.5Z", extra: "M15.5 9h1.75a2.75 2.75 0 0 1 0 5.5h-1.75M2.5 21.5h15" },
+  // The cup with three wisps of steam rising from it, always outlined.
+  steamcup: {
+    body: "M3.5 9h12v5a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z",
+    extra: "M15.5 10.5h1.5a2.5 2.5 0 0 1 0 5h-1.5M2.5 21.5h15M6 7c-1.25-1.25 1.25-2.75 0-4.5M9.5 7c-1.25-1.25 1.25-2.75 0-4.5M13 7c-1.25-1.25 1.25-2.75 0-4.5",
+  },
   plate: { body: "M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19Z", inner: "M12 6.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11Z" },
   bean: { body: "M12 2.5c4.4 0 7 4.3 7 9.5s-2.6 9.5-7 9.5s-7-4.3-7-9.5s2.6-9.5 7-9.5Z", inner: "M12 3.5c-2.5 3-2.5 5.5 0 8.5s2.5 5.5 0 8.5" },
   // A scoop wider than the cone it sits on, the line between them as inner.
