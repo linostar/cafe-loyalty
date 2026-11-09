@@ -264,7 +264,7 @@ describe("signup", () => {
     const join = await h.app.inject({ method: "GET", url: "/api/cafe/join", headers: withCookie(owner.session) });
     const code = /\/join\/([0-9a-f]{32})$/.exec(join.json<{ joinUrl: string }>().joinUrl)?.[1] ?? "missing";
     const signup = (address: string) =>
-      h.app.inject({ method: "POST", url: `/join/${code}`, remoteAddress: address, ...formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" }) });
+      h.app.inject({ method: "POST", url: `/join/${code}`, remoteAddress: address, ...formBody({ name: "Rania Haddad", phone: uniquePhone(), privacy: "yes", lang: "en" }) });
     expect((await signup("198.51.100.1")).statusCode).toBe(303);
     expect((await signup("198.51.100.2")).statusCode).toBe(303);
     const blocked = await signup("198.51.100.3");
@@ -381,7 +381,7 @@ describe("cross-site form posts", () => {
   it("accepts a form posted from its own page, from a browser that says nothing, or with its own Origin", async () => {
     const { app, code } = await cafeWithJoinCode();
     for (const headers of [{ "sec-fetch-site": "same-origin" }, {}, { origin: new URL(PUBLIC_URL).origin }]) {
-      const body = formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" });
+      const body = formBody({ name: "Rania Haddad", phone: uniquePhone(), privacy: "yes", lang: "en" });
       const response = await app.inject({ method: "POST", url: `/join/${code}`, headers: { ...headers, ...body.headers }, payload: body.payload });
       expect({ headers, status: response.statusCode }).toEqual({ headers, status: 303 });
     }

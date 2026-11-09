@@ -130,12 +130,15 @@ describe("buildApplePass", () => {
     expect(named.text("en.lproj/pass.strings")).toContain('"holder_value" = "Rania \\"R\\" Haddad";');
     expect(named.text("ar.lproj/pass.strings")).toContain('"holder_value" = "Rania \\"R\\" Haddad";');
     expect(JSON.stringify(named.json)).not.toContain("changeMessage");
+    // No header field (passkit-generator writes the empty list a store card always had).
+    const headerFields = (pass: ReturnType<typeof open>) => (pass.json.storeCard as { headerFields?: unknown[] }).headerFields ?? [];
     const nameless = open(await buildApplePass(apple, "https://card.example.test", content));
-    expect(nameless.json.storeCard).not.toHaveProperty("headerFields");
+    expect(headerFields(nameless)).toEqual([]);
     expect(nameless.text("en.lproj/pass.strings")).not.toContain("holder_value");
     // A voided pass (moved) says only that.
     const voided = open(await buildApplePass(apple, "https://card.example.test", { ...content, holderName: "Rania", qr: null }));
-    expect(voided.json.storeCard).not.toHaveProperty("headerFields");
+    expect(headerFields(voided)).toEqual([]);
+    expect(voided.text("en.lproj/pass.strings")).not.toContain("Rania");
   });
 
   it("escapes quotes and backslashes in the strings files", async () => {
