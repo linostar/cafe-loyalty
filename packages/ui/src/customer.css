@@ -121,12 +121,12 @@ html[lang="en"] .kicker {
   color: var(--card-foreground, var(--color-on-espresso));
 }
 
-/* The café's own logo, when it has one: a square image (transparent around a logo that is not square). */
+/* The café's own logo, when it has one: a square image (transparent around a logo that is not square), clear of the card's top edge. */
 .card-logo {
   display: block;
   inline-size: 3.5rem;
   block-size: 3.5rem;
-  margin-block-end: var(--space-3);
+  margin-block: var(--space-2) var(--space-3);
   object-fit: contain;
 }
 
@@ -137,6 +137,7 @@ html[lang="en"] .kicker {
 .stamp-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 3rem));
+  justify-content: center;
   gap: var(--space-2);
   margin: 0 0 var(--space-3);
   padding: 0;
@@ -183,14 +184,18 @@ html[lang="en"] .kicker {
   block-size: 100%;
 }
 
+/* The reward, centred under the stamps (as on the Apple pass). */
 .reward {
   margin: 0;
   font-weight: var(--weight-semibold);
+  text-align: center;
 }
 
-/* A reward that is ready stands out from the stamps still to go: a pill in the accent, its border kept in forced colours. */
+/* A reward that is ready stands out from the stamps still to go: a centred pill in the accent, its border kept in forced colours. */
 .card-face .reward.is-ready {
-  display: inline-block;
+  display: block;
+  inline-size: fit-content;
+  margin-inline: auto;
   padding: var(--space-2) var(--space-4);
   border: 2px solid var(--color-accent);
   border-radius: var(--radius-pill);
@@ -218,14 +223,14 @@ html[lang="en"] .kicker {
   block-size: auto;
 }
 
-/* The offer the card holds now. */
+/* The offer the card holds now, under the card, centred like the reward. */
 .offer {
   margin-block-end: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--color-accent);
-  border-inline-start-width: 4px;
   border-radius: var(--radius-lg);
   background: var(--color-accent-soft);
+  text-align: center;
 }
 
 .offer .kicker {

@@ -679,9 +679,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
    * address names, which names no card, café or customer. Anything but a picture a card could show is not found,
    * without drawing; a new count or look is a new address, so each one is cached for good. Drawing is limited per
    * address (any colours make a new address); a picture drawn lately is served again without drawing or counting.
-   * Addresses without `v2/` are the previous layout's, still on passes the sweep has not yet moved on: they keep
-   * that layout's drawing (StampLayoutVersion 1), so a picture cached before this release and one drawn after it at
-   * the same address are the same.
+   * Addresses under `v3/` are the current layout's; `v2/` and unversioned ones are earlier layouts', still on passes
+   * the sweep has not yet moved on: each keeps its layout's drawing (StampLayoutVersion), so a picture cached before a
+   * release and one drawn after it at the same address are the same.
    */
   const stampPictureRoute = (version: StampLayoutVersion) => async (request: FastifyRequest, reply: FastifyReply) => {
     const { file: name } = request.params as { file: string };
@@ -719,6 +719,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     }
     return reply.code(200).header("content-type", "image/png").header("cache-control", "public, max-age=31536000, immutable").send(png);
   };
+  app.get("/stamps/v3/:file", stampPictureRoute(3));
   app.get("/stamps/v2/:file", stampPictureRoute(2));
   app.get("/stamps/:file", stampPictureRoute(1));
 

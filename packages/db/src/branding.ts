@@ -52,11 +52,11 @@ export interface StampPicture {
 /**
  * Where a picture of a card's stamps is served, publicly (Google fetches it for the pass's hero image): built only from
  * what it shows, so it names no card, café or customer, and a new count or look is a new address. A card past full
- * (stamps keep counting) shows every stamp full. `v2` is the layout (rows of at most 5): a new layout is a new address,
+ * (stamps keep counting) shows every stamp full. `v3` is the layout (rows of at most 5, full stamps as big as empty ones): a new layout is a new address,
  * or Google keeps showing the picture it cached.
  */
 export const stampPicturePath = (picture: StampPicture): string =>
-  `/stamps/v2/${picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
+  `/stamps/v3/${picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
 
 /** The Apple logo.png images of a café's logo, or undefined without one (the pass then has the product's). */
 export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string): Promise<{ apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined> {

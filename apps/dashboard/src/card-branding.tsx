@@ -35,15 +35,15 @@ const AR = {
 const SHAPE_NAMES = { circle: "Circle", cup: "Cup", plate: "Plate", bean: "Coffee bean", icecream: "Ice cream", cake: "Cake", burger: "Burger" } as const satisfies Record<StampShape, keyof typeof AR>;
 
 /**
- * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full or outlined. A full stamp's
- * inner lines take the card's background (`.stamp-icon-inner`, app.css).
+ * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full (filled and outlined, so as big
+ * as an empty one) or outlined. A full stamp's inner lines take the card's background (`.stamp-icon-inner`, app.css).
  */
 export function StampIcon({ shape, full }: { shape: StampShape; full: boolean }) {
   const { body, extra, inner } = STAMP_SHAPE_PATHS[shape];
   const line = { fill: "none", stroke: "currentColor", strokeWidth: STAMP_STROKE, strokeLinecap: "round", strokeLinejoin: "round" } as const;
   return (
     <svg className="stamp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {full ? <path d={body} fill="currentColor" /> : <path d={body} {...line} />}
+      {full ? <path d={body} {...line} fill="currentColor" /> : <path d={body} {...line} />}
       {extra === undefined ? null : <path d={extra} {...line} />}
       {inner === undefined ? null : <path className={full ? "stamp-icon-inner" : undefined} d={inner} {...line} />}
     </svg>

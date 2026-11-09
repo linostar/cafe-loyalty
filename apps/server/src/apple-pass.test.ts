@@ -3,7 +3,7 @@ import forge from "node-forge";
 import { DEFAULT_CARD_COLORS } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { applePassToken, buildApplePass, type ApplePassContent } from "./apple-pass.js";
+import { LOGO_TOP_SPACE, applePassToken, buildApplePass, type ApplePassContent } from "./apple-pass.js";
 import { testApplePasses, unzipPass } from "./testing/certificates.js";
 
 const apple = testApplePasses();
@@ -59,7 +59,7 @@ describe("buildApplePass", () => {
       storeCard: {
         // No count or "Stamps" label on the front: the strip pictures them; the back says them, without a label.
         primaryFields: [],
-        secondaryFields: [{ key: "reward", label: "reward_label", value: "reward_value" }],
+        secondaryFields: [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: "PKTextAlignmentCenter" }],
         auxiliaryFields: [],
         backFields: [
           { key: "stamps", value: "stamps_value" },
@@ -76,7 +76,7 @@ describe("buildApplePass", () => {
     const { json, text } = open(await buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer } }));
     expect(json).toMatchObject({
       storeCard: {
-        auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", changeMessage: "offer_change" }],
+        auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", textAlignment: "PKTextAlignmentCenter", changeMessage: "offer_change" }],
         backFields: [{ key: "stamps" }, { key: "offer_details" }, { key: "about" }],
       },
     });
@@ -152,13 +152,19 @@ describe("buildApplePass", () => {
     expect(without.json).toMatchObject({ storeCard: { primaryFields: [], backFields: [{ key: "about" }] } });
   });
 
-  it("takes the café's colours, icons of its background and its logo at three sizes, with no change message", async () => {
-    const logo = { apple1x: Buffer.from("logo-1x"), apple2x: Buffer.from("logo-2x"), apple3x: Buffer.from("logo-3x") };
+  it("takes the café's colours, icons of its background and its logo at three sizes, with space above it and no change message", async () => {
+    const image = (scale: number) => sharp({ create: { width: 160 * scale, height: 40 * scale, channels: 4, background: { r: 200, g: 30, b: 30, alpha: 1 } } }).png().toBuffer();
+    const logo = { apple1x: await image(1), apple2x: await image(2), apple3x: await image(3) };
     const { json, files } = open(await buildApplePass(apple, "https://card.example.test", { ...content, colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logo }));
     expect(json).toMatchObject({ backgroundColor: "rgb(31, 90, 133)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(229, 239, 247)", logoText: "Café Nour" });
-    expect(files.get("logo.png")).toEqual(logo.apple1x);
-    expect(files.get("logo@2x.png")).toEqual(logo.apple2x);
-    expect(files.get("logo@3x.png")).toEqual(logo.apple3x);
+    // The logo as given, under LOGO_TOP_SPACE points of transparency at each scale.
+    for (const [scale, name] of [[1, "logo.png"], [2, "logo@2x.png"], [3, "logo@3x.png"]] as const) {
+      const { data, info } = await sharp(files.get(name)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      expect([info.width, info.height], name).toEqual([160 * scale, (40 + LOGO_TOP_SPACE) * scale]);
+      // Alpha of the top-left pixel (transparent space) and of the first pixel of the logo.
+      expect(data[3], name).toBe(0);
+      expect(data[(LOGO_TOP_SPACE * scale * info.width) * 4 + 3], name).toBe(255);
+    }
     expect(JSON.stringify(json)).not.toContain("changeMessage");
     const defaults = open(await buildApplePass(apple, "https://card.example.test", content));
     expect(defaults.json).toMatchObject({ backgroundColor: "rgb(74, 44, 42)", foregroundColor: "rgb(255, 255, 255)", labelColor: "rgb(235, 214, 190)" });

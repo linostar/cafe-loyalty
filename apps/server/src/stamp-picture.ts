@@ -2,13 +2,20 @@ import type { StampPicture } from "@cafe-loyalty/db";
 import { STAMP_SHAPE_PATHS, STAMP_STROKE, stampGrid, stampShapeSchema, type StampShape } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
-/** One stamp's drawing (STAMP_SHAPE_PATHS) inside an <svg viewBox="0 0 24 24">, in the given colours (any SVG paint). */
-function stampShapeMarkup(shape: StampShape, full: boolean, paint: { stamp: string; background: string }): string {
+/**
+ * One stamp's drawing (STAMP_SHAPE_PATHS) inside an <svg viewBox="0 0 24 24">, in the given colours (any SVG paint). A
+ * full stamp is filled and outlined with the empty one's line (`outlineFull`), so the two are the same size; pictures
+ * of an older layout (StampLayoutVersion 1, 2) drew it filled only, a line's half width smaller all round.
+ */
+function stampShapeMarkup(shape: StampShape, full: boolean, paint: { stamp: string; background: string }, outlineFull = true): string {
   const { body, extra, inner } = STAMP_SHAPE_PATHS[shape];
   const line = (d: string, color: string, extraAttributes = "") =>
     `<path d="${d}" fill="none" stroke="${color}" stroke-width="${String(STAMP_STROKE)}" stroke-linecap="round" stroke-linejoin="round"${extraAttributes}/>`;
+  const fullBody = outlineFull
+    ? `<path d="${body}" fill="${paint.stamp}" stroke="${paint.stamp}" stroke-width="${String(STAMP_STROKE)}" stroke-linecap="round" stroke-linejoin="round"/>`
+    : `<path d="${body}" fill="${paint.stamp}"/>`;
   return [
-    full ? `<path d="${body}" fill="${paint.stamp}"/>` : line(body, paint.stamp),
+    full ? fullBody : line(body, paint.stamp),
     extra === undefined ? "" : line(extra, paint.stamp),
     inner === undefined ? "" : line(inner, full ? paint.background : paint.stamp, ' class="stamp-inner"'),
   ].join("");
@@ -31,20 +38,21 @@ const PADDING = 10;
 export const SIDE_INSET = 16;
 
 /**
- * The stamp picture's layouts: 2 (the current one, addresses under `/stamps/v2/`) is stampGrid's rows (at most 5 a row,
- * spread evenly) inside the pass's side margins; 1 (addresses without `v2/`, on passes from before) put up to 10 a row
- * with PADDING all round, kept so a cached picture and a fresh one at the same address always look the same.
+ * The stamp picture's layouts: 3 (the current one, addresses under `/stamps/v3/`) is stampGrid's rows (at most 5 a row,
+ * spread evenly) inside the pass's side margins, a full stamp as big as an empty one; 2 (`/stamps/v2/`) had the same
+ * rows with full stamps filled only; 1 (addresses without a version) put up to 10 a row with PADDING all round. The
+ * older ones are kept so a cached picture and a fresh one at the same address always look the same.
  */
-export type StampLayoutVersion = 1 | 2;
+export type StampLayoutVersion = 1 | 2 | 3;
 
 /**
  * Where a program's stamps sit on the strip, in a layout (StampLayoutVersion): each stamp as big as the rows and
  * columns allow (a long program's stamps get small), the grid centred.
  */
-export function stampLayout(required: number, version: StampLayoutVersion = 2): { size: number; positions: { x: number; y: number }[] } {
+export function stampLayout(required: number, version: StampLayoutVersion = 3): { size: number; positions: { x: number; y: number }[] } {
   const legacyRows = Math.ceil(required / 10);
-  const { rows, columns } = version === 2 ? stampGrid(required) : { rows: legacyRows, columns: Math.ceil(required / legacyRows) };
-  const side = version === 2 ? SIDE_INSET : PADDING;
+  const { rows, columns } = version === 1 ? { rows: legacyRows, columns: Math.ceil(required / legacyRows) } : stampGrid(required);
+  const side = version === 1 ? PADDING : SIDE_INSET;
   const cell = Math.min((STRIP_WIDTH - 2 * side) / columns, (STRIP_HEIGHT - 2 * PADDING) / rows);
   const left = (STRIP_WIDTH - cell * columns) / 2;
   const top = (STRIP_HEIGHT - cell * rows) / 2;
@@ -57,17 +65,18 @@ export function stampLayout(required: number, version: StampLayoutVersion = 2): 
 }
 
 /** The strip's SVG at `scale` (1, 2 or 3): the card's background, its stamps full in the text colour, the rest outlined. */
-export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 2): string {
+export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 3): string {
   const { size, positions } = stampLayout(picture.required, version);
+  const paint = { stamp: picture.foreground, background: picture.background };
   const stamps = positions.map(
     ({ x, y }, index) =>
-      `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${(size / 24).toFixed(4)})">${stampShapeMarkup(picture.shape, index < picture.stamps, { stamp: picture.foreground, background: picture.background })}</g>`,
+      `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${(size / 24).toFixed(4)})">${stampShapeMarkup(picture.shape, index < picture.stamps, paint, version === 3)}</g>`,
   );
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(STRIP_WIDTH * scale)}" height="${String(STRIP_HEIGHT * scale)}" viewBox="0 0 ${String(STRIP_WIDTH)} ${String(STRIP_HEIGHT)}"><rect width="${String(STRIP_WIDTH)}" height="${String(STRIP_HEIGHT)}" fill="${picture.background}"/>${stamps.join("")}</svg>`;
 }
 
 /** The strip as a PNG at `scale`. */
-export const stampPicturePng = (picture: StampPicture, scale: number, version: StampLayoutVersion = 2): Promise<Buffer> =>
+export const stampPicturePng = (picture: StampPicture, scale: number, version: StampLayoutVersion = 3): Promise<Buffer> =>
   sharp(Buffer.from(stampPictureSvg(picture, scale, version))).png().toBuffer();
 
 /** The most stamps a program takes (cafe-setup's stampsRequired, loyalty_programs' CHECK). */
