@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { resendUndeliveredPasses } from "./jobs.js";
 
 describe("resendUndeliveredPasses", () => {
-  it("still queues undelivered passes when marking passes on an older layout fails, and logs the failure", async () => {
+  it("still queues undelivered passes when marking passes on an older layout fails, then fails the job", async () => {
     const sent: unknown[] = [];
     const boss = {
       getDb: () => ({
@@ -18,11 +18,13 @@ describe("resendUndeliveredPasses", () => {
         return Promise.resolve("job-1");
       },
     } as unknown as PgBoss;
-    const lines: { level: number; msg: string }[] = [];
-    const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as { level: number; msg: string }) });
+    const lines: { msg: string }[] = [];
+    const logger = pino({ level: "info" }, { write: (line: string) => lines.push(JSON.parse(line) as { msg: string }) });
 
-    expect(await resendUndeliveredPasses(boss, logger)).toEqual({ found: 1, queued: 1 });
+    // Failed, so pg-boss records it, with the marking's error as its cause.
+    await expect(resendUndeliveredPasses(boss, logger)).rejects.toMatchObject({ cause: { message: "canceling statement due to statement timeout" } });
+    // The resend ran first.
     expect(sent).toEqual([{ queue: APPLE_PASS_UPDATE_QUEUE, data: { cafeId: "cafe-1", passId: "pass-1" } }]);
-    expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: "passes on an older layout could not be marked; the next run tries again" }));
+    expect(lines).toContainEqual(expect.objectContaining({ msg: "undelivered passes queued again" }));
   });
 });
