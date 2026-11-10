@@ -35,6 +35,7 @@ import {
 } from "./storage.js";
 import { syncQueue } from "./sync.js";
 import { useServiceWorkerUpdate, type UpdateState } from "./updates.js";
+import { InstallHint } from "./install.js";
 import { useOnlineStatus } from "./useOnlineStatus.js";
 import { CounterScreen } from "./visit.js";
 
@@ -649,6 +650,8 @@ function BaristaPicker({ staff, online, onChoose }: { staff: StaffEntry[]; onlin
       <h2 id="who-title" tabIndex={-1}>
         {t("Who is working?")}
       </h2>
+      {/* The first screen after pairing: where to find the counter again. */}
+      <InstallHint />
       {staff.length === 0 ? (
         <p className="empty">{online ? t("No baristas yet. Ask the owner to add staff on the dashboard.") : t("Connect to the internet once to load the baristas.")}</p>
       ) : (
@@ -985,6 +988,8 @@ function Counter() {
               {t("Switch barista")}
             </button>
           </div>
+          {/* A reminder until the counter is opened from the home screen. */}
+          <InstallHint />
           {confirmSwitch ? (
             <div role="alert" className="warning-box switch-confirm">
               <p>{t("An order is open. Switching barista clears it.")}</p>

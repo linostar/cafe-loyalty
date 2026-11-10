@@ -41,7 +41,40 @@ const AR = {
   // Starts with the button's visible "إلغاء الرمز" (WCAG 2.5.3).
   "Cancel code for {name}": "إلغاء الرمز لجهاز {name}",
   "Cancel code": "إلغاء الرمز",
+  "Open the counter": "افتح الكاونتر",
+  "A phone stays paired. To record visits on it again, open the counter at this address, or scan this code with its camera:":
+    "يبقى الهاتف مربوطاً. لتسجيل الزيارات عليه مجدداً، افتح الكاونتر على هذا العنوان، أو امسح هذا الرمز بكاميرته:",
+  "No phone is paired yet: pair one below first. After that, it opens the counter at this address, or by scanning this code with its camera:":
+    "لا هاتف مربوط بعد: اربط هاتفاً أدناه أولاً. بعد ذلك، يفتح الكاونتر على هذا العنوان، أو بمسح هذا الرمز بكاميرته:",
+  "QR code that opens the counter": "رمز QR يفتح الكاونتر",
+  "On the phone, add the counter to the home screen, so it opens with one tap next time.": "على الهاتف، أضف الكاونتر إلى الشاشة الرئيسية ليفتح بلمسة واحدة في المرة القادمة.",
 } as const;
+
+/**
+ * Where a paired phone finds the counter again (its pairing QR opened it once): the counter's address, as a link and as
+ * a QR its camera opens, any time, with no code. Opening it does not pair a phone: with none paired (or every one
+ * removed), it says to pair one first.
+ */
+function OpenCounter({ counterUrl, paired }: { counterUrl: string; paired: boolean }) {
+  const t = useT(AR);
+  // A 4-module quiet zone, as the QR specification asks, so phone cameras read it reliably.
+  const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(counterUrl, { border: 4 }))}`;
+  return (
+    <section aria-labelledby="open-counter-title" className="card open-counter">
+      <h3 id="open-counter-title">{t("Open the counter")}</h3>
+      <p className="hint">
+        {paired
+          ? t("A phone stays paired. To record visits on it again, open the counter at this address, or scan this code with its camera:")
+          : t("No phone is paired yet: pair one below first. After that, it opens the counter at this address, or by scanning this code with its camera:")}
+      </p>
+      <p dir="ltr">
+        <a className="link" href={counterUrl}>{new URL(counterUrl).host}</a>
+      </p>
+      <img src={qr} alt={t("QR code that opens the counter")} width={160} height={160} />
+      <p className="hint">{t("On the phone, add the counter to the home screen, so it opens with one tap next time.")}</p>
+    </section>
+  );
+}
 
 /** The clock, ticking each second until `until` (ms) and then stopping. */
 function useClockUntil(until: number): number {
@@ -253,6 +286,7 @@ export function DevicesPage() {
       <p className="page-intro">{t("The phones and tablets your baristas record visits on. Pair a new one with a one-time code; remove one that is lost.")}</p>
       <Notice>{notice === null ? null : notice(t, lang)}</Notice>
       <FormError message={error} />
+      <OpenCounter counterUrl={devices.counterUrl} paired={active.length > 0} />
       <div ref={pairing}>
         {newCode === null ? (
           <PairForm

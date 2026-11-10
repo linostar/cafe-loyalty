@@ -579,3 +579,12 @@ main {
     background: var(--color-surface-sunken);
   }
 }
+
+/* Where to find the counter again: the install offer's notice, its button under it on the page's own surface. */
+.install-hint {
+  margin-block-end: var(--space-4);
+}
+
+.install-hint .notice {
+  margin-block-end: var(--space-2);
+}

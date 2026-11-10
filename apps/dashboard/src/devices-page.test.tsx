@@ -31,7 +31,7 @@ describe("Devices", () => {
     const codes = [code(65_000)];
     const fetch = vi.fn((path: string, init?: RequestInit) =>
       Promise.resolve(
-        path === "/api/devices" ? respond({ devices: [], pairingCodes: [] }) : init?.method === "POST" ? respond(codes.shift() ?? code(600_000), 201) : respond({}),
+        path === "/api/devices" ? respond({ devices: [], pairingCodes: [], counterUrl: "https://counter.example.test" }) : init?.method === "POST" ? respond(codes.shift() ?? code(600_000), 201) : respond({}),
       ),
     );
     vi.stubGlobal("fetch", fetch);
@@ -62,19 +62,24 @@ describe("Devices", () => {
   });
 
   it("keeps removed phones in a closed Removed group", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(respond({ devices: [phone("Front counter", false), phone("Old phone", true)], pairingCodes: [] }))));
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(respond({ devices: [phone("Front counter", false), phone("Old phone", true)], pairingCodes: [], counterUrl: "https://counter.example.test" }))));
     render(<DevicesPage />);
     const group = (await screen.findByText("Removed (1)")).closest("details");
     expect(group).not.toHaveAttribute("open");
     expect(group).toHaveTextContent("Old phone");
     expect(group).not.toHaveTextContent("Front counter");
+    // A phone is paired: where it finds the counter again.
+    expect(screen.getByText(/^A phone stays paired\. To record visits on it again/)).toBeInTheDocument();
   });
 
   it("says when every phone is removed", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(respond({ devices: [phone("Old phone", true)], pairingCodes: [] }))));
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(respond({ devices: [phone("Old phone", true)], pairingCodes: [], counterUrl: "https://counter.example.test" }))));
     render(<DevicesPage />);
     expect(await screen.findByText("Every phone is removed. Each stops working the next time it connects. Pair one above to start again.")).toBeInTheDocument();
     expect(screen.getByText("Removed (1)")).toBeInTheDocument();
+    // No phone left to reopen the counter on: pairing comes first.
+    expect(screen.getByText(/^No phone is paired yet: pair one below first\./)).toBeInTheDocument();
+    expect(screen.queryByText(/^A phone stays paired/)).toBeNull();
   });
 
   it("does not bring a dismissed code back when its renewal is answered after Done", async () => {
@@ -85,7 +90,7 @@ describe("Devices", () => {
       "fetch",
       vi.fn((path: string) => {
         if (path === "/api/devices") {
-          return Promise.resolve(respond({ devices: [], pairingCodes: [] }));
+          return Promise.resolve(respond({ devices: [], pairingCodes: [], counterUrl: "https://counter.example.test" }));
         }
         posts += 1;
         // The first code expires at once; its renewal waits until the test answers it.

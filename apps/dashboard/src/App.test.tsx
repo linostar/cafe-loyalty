@@ -43,7 +43,7 @@ const homeData = (path: string): Response | undefined =>
           : path === "/api/feedback"
             ? respond(200, { items: [], unread: 0, nextCursor: null })
             : path === "/api/devices"
-              ? respond(200, { devices: [], pairingCodes: [] })
+              ? respond(200, { devices: [], pairingCodes: [], counterUrl: "https://counter.example.test" })
               : path === "/api/results"
               ? respond(200, { month: "2026-10", current: true, months: ["2026-10"], memberVisits: 0, customersWonBack: 0, quietHourVisits: 0, rewardRedemptions: 0, offers: { winBack: { visits: 0, costCents: 0, revenueCents: 0 }, quietHour: { visits: 0, costCents: 0, revenueCents: 0 } } })
               : undefined;
@@ -116,7 +116,7 @@ describe("Dashboard App", () => {
           path === "/api/auth/session"
             ? respond(200, SESSION)
             : path === "/api/devices"
-              ? respond(200, { devices, pairingCodes: [] })
+              ? respond(200, { devices, pairingCodes: [], counterUrl: "https://counter.example.test" })
               : (homeData(path) ?? unauthenticated()),
         ),
       ),

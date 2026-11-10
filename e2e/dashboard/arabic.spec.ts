@@ -25,7 +25,7 @@ const SIGNED_IN = {
   "GET /api/staff": reply(200, { staff: [{ id: "9c1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", name: "Rami", revoked: false, createdAt: "2026-09-01T08:00:00.000Z" }] }),
   "GET /api/devices": reply(200, {
     devices: [{ id: "ad1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", name: "Front counter", revoked: false, pairedAt: "2026-09-01T08:00:00.000Z", lastSeenAt: "2026-10-09T07:40:00.000Z" }],
-    pairingCodes: [],
+    pairingCodes: [], counterUrl: "https://counter.example.test",
   }),
   "GET /api/review-queue": reply(200, { items: [], nextCursor: null }),
   "GET /api/feedback": reply(200, {
