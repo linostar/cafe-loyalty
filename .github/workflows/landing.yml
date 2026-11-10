@@ -10,6 +10,8 @@ on:
       - apps/landing/**
       - packages/ui/**
       - packages/shared/src/brand.ts
+      # A dependency update (the font package, Vite) changes only the lockfile, and must republish the site too.
+      - pnpm-lock.yaml
       - .github/workflows/landing.yml
   workflow_dispatch:
 
