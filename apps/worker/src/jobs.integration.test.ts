@@ -46,6 +46,14 @@ class FakePusher implements PassPusher {
   readonly pushed: string[] = [];
   readonly answers = new Map<string, PushResult | Error>();
 
+  /**
+   * The pushes to these tokens, in order. Every test's worker shares the database and its queues, so an update an
+   * earlier test left retrying can be delivered during a later one: a test checks only its own passes' pushes.
+   */
+  pushedTo(...tokens: readonly string[]): string[] {
+    return this.pushed.filter((token) => tokens.includes(token));
+  }
+
   push(pushToken: string): Promise<PushResult> {
     this.pushed.push(pushToken);
     const answer = this.answers.get(pushToken) ?? "sent";
@@ -350,7 +358,7 @@ describe("job queue", () => {
     try {
       const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: pass.cafeId, passId: pass.passId })) ?? "";
       expect(await finished(boss, APPLE_PASS_UPDATE_QUEUE, id, "completed")).toMatchObject({ output: { sent: 2, removed: 1 } });
-      expect([...pusher.pushed].sort()).toEqual(pass.tokens);
+      expect(pusher.pushedTo(...pass.tokens).sort()).toEqual(pass.tokens);
       expect(await registrationTokens(pass.cafeId)).toEqual([kept, alsoKept]);
       expect(await registrationTokens(other.cafeId)).toEqual(other.tokens);
     } finally {
@@ -561,7 +569,7 @@ describe("job queue", () => {
     try {
       const id = (await boss.send(APPLE_PASS_UPDATE_QUEUE, { cafeId: mine.cafeId, passId: theirs.passId })) ?? "";
       expect(await finished(boss, APPLE_PASS_UPDATE_QUEUE, id, "completed")).toMatchObject({ output: { sent: 0, removed: 0 } });
-      expect(pusher.pushed).toEqual([]);
+      expect(pusher.pushedTo(...mine.tokens, ...theirs.tokens)).toEqual([]);
       expect(await registrationTokens(theirs.cafeId)).toEqual(theirs.tokens);
     } finally {
       await task.stop();
@@ -607,8 +615,7 @@ describe("job queue", () => {
         },
         { timeout: 20_000, interval: 250 },
       );
-      expect(pusher.pushed).toEqual(apple.tokens);
-      expect(pusher.pushed).not.toContain(settled.tokens[0]);
+      expect(pusher.pushedTo(...apple.tokens, ...settled.tokens)).toEqual(apple.tokens);
       expect(wallet.saved.map((save) => save.object.id)).toEqual([`${GOOGLE.issuerId}.card-${google.cardId}-1`]);
       // Delivered now: the next sweep finds nothing.
       const again = (await boss.send(RESEND_QUEUE)) ?? "";
@@ -667,7 +674,7 @@ describe("job queue", () => {
         },
         { timeout: 20_000, interval: 250 },
       );
-      expect(pusher.pushed).toEqual(apple.tokens);
+      expect(pusher.pushedTo(...apple.tokens)).toEqual(apple.tokens);
       expect(wallet.saved.map((save) => save.object)).toEqual([expect.objectContaining({ heroImage: expect.anything() as unknown })]);
       // Recorded on the passes (the migration's numbers are this release's), and a newer Last-Modified, so devices fetch it.
       const { rows } = await admin.query<{ apple: number; google: number }>(
@@ -731,7 +738,7 @@ describe("job queue", () => {
         },
         { timeout: 20_000, interval: 250 },
       );
-      expect(pusher.pushed).toEqual([onApple.token]);
+      expect(pusher.pushedTo(...cards.map((card) => card.token).filter((token) => token !== ""))).toEqual([onApple.token]);
       expect(writes(onGoogle)).toHaveLength(1);
       expect(writes(onGoogle)[0]?.object.textModulesData[0]).toMatchObject({ id: "offer", header: "Afternoon · 20% off" });
       expect(writes(onGoogle)[0]?.message).toMatchObject({ id: `offer-${first}`, messageType: "TEXT_AND_NOTIFY" });
