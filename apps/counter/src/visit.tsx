@@ -550,23 +550,26 @@ function VisitForm({ device, barista, catalog, online, scanner, onScanner, onBus
             } else {
               const token = read.token;
               setScanned(token);
-              // An offer belongs to the check of this scan, not an earlier one (the reward may have been given since).
+              // An offer and a name belong to the check of this scan, not an earlier one (the reward may have been given
+              // since), so the same card scanned again shows nothing until its new check answers.
               setRewardReady(null);
+              setHolder(null);
               setApplyWinBack(false);
               setPhone("");
               setProblem(null);
               setNotice(null);
-              // Online, whether this card's reward is ready, to give it without a second scan (K6). Offline, or when the
-              // check fails, nothing is offered: the reward panel still gives it with a scan.
+              // Online, whether this card's reward is ready, to give it without a second scan (K6), and its holder's
+              // name; with or without a program, as a card has a name either way. Offline, or when the check fails,
+              // nothing is offered or named: the reward panel still gives the reward with a scan.
               scanTurn.current += 1;
               const turn = scanTurn.current;
-              if (onlineNow.current && catalog.program !== null) {
+              if (onlineNow.current) {
                 deviceRequest("POST", "/api/device/cards/status", cardStatusSchema, { cardQr: token }).then(
                   (status) => {
                     if (scanTurn.current !== turn || scannedNow.current !== token) {
                       return;
                     }
-                    if (status.rewardReady) {
+                    if (status.rewardReady && catalog.program !== null) {
                       setRewardReady(token);
                     }
                     if (status.holderName !== undefined && status.holderName !== null) {

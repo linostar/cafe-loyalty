@@ -139,12 +139,20 @@ test("scans the customer's card with the camera for a visit", async ({ page }) =
 });
 
 test("greets a scanned card's holder by the name its check gives, and says only that it is scanned without one", async ({ page }) => {
-  await signedIn(page, { "POST /api/device/cards/status": reply(200, { stamps: 2, rewardReady: false, holderName: "Rania Haddad" }) });
+  // The first check names the holder; the next one, for the same card, gives no name.
+  const names = ["Rania Haddad", null];
+  await signedIn(page, {
+    "POST /api/device/cards/status": (route) => route.fulfill({ json: { stamps: 2, rewardReady: false, holderName: names.shift() ?? null } }),
+  });
   await page.getByRole("button", { name: "Scan card", exact: true }).click();
   await expect(page.getByText("Card of Rania Haddad.")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Card scanned.")).toHaveCount(0);
   // Cleared, the name goes with the card.
   await page.getByRole("button", { name: "Clear card" }).click();
+  await expect(page.getByText("Card of Rania Haddad.")).toHaveCount(0);
+  // Scanned again: only what this scan's check says, never the earlier name.
+  await page.getByRole("button", { name: "Scan card", exact: true }).click();
+  await expect(page.getByText("Card scanned.")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Card of Rania Haddad.")).toHaveCount(0);
 });
 
