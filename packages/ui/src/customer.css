@@ -194,18 +194,17 @@ html[lang="en"] .kicker {
   block-size: 100%;
 }
 
-/* The reward, centred under the stamps (as on the Apple pass). */
+/* The reward under the stamps, at the start of the line (as on the Apple pass). */
 .reward {
   margin: 0;
   font-weight: var(--weight-semibold);
-  text-align: center;
+  text-align: start;
 }
 
-/* A reward that is ready stands out from the stamps still to go: a centred pill in the accent, its border kept in forced colours. */
+/* A reward that is ready stands out from the stamps still to go: a pill in the accent, its border kept in forced colours. */
 .card-face .reward.is-ready {
   display: block;
   inline-size: fit-content;
-  margin-inline: auto;
   padding: var(--space-2) var(--space-4);
   border: 2px solid var(--color-accent);
   border-radius: var(--radius-pill);
@@ -233,14 +232,14 @@ html[lang="en"] .kicker {
   block-size: auto;
 }
 
-/* The offer the card holds now, under the card, centred like the reward. */
+/* The offer the card holds now, under the card, at the start of the line like the reward. */
 .offer {
   margin-block-end: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-lg);
   background: var(--color-accent-soft);
-  text-align: center;
+  text-align: start;
 }
 
 .offer .kicker {
@@ -364,6 +363,20 @@ html[lang="en"] .kicker {
 form button {
   inline-size: 100%;
   margin-block-start: var(--space-3);
+}
+
+/*
+ * Signup's button is unavailable until the privacy notice is accepted: drawn like a disabled button and ignoring taps.
+ * Pages have no scripts, so it is not truly disabled; a submit without the box (Enter in a field, a screen reader's
+ * click) gets the server's "accept the privacy notice" error.
+ */
+.join-form:has(input[name="privacy"]:not(:checked)) button[type="submit"] {
+  border-style: dashed;
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+  box-shadow: none;
+  pointer-events: none;
 }
 
 /* Signup's country code and number side by side: the code just wide enough for "+961", the number the rest. */

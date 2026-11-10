@@ -419,6 +419,11 @@
   grid-column: 1 / -1;
 }
 
+/* A checkbox in a cell beside labelled fields: down by one label line, so it is level with their inputs. */
+.form-grid > .check-field {
+  padding-block-start: calc(1lh + var(--space-1));
+}
+
 .form-grid > button {
   justify-self: start;
 }

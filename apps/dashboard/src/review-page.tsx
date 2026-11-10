@@ -1,4 +1,4 @@
-import { formatUsd, plural, reviewDecisionSchema, reviewQueueSchema, type Lang, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
+import { arabicOr, formatUsd, plural, reviewDecisionSchema, reviewQueueSchema, type Lang, type ReviewItem, type SyncHoldReason } from "@cafe-loyalty/shared";
 import { useContext, useEffect, useRef, useState } from "react";
 import { apiRequest, isStale } from "./api.js";
 import { ConfirmButton, FormError, Notice, useSubmit } from "./forms.js";
@@ -173,7 +173,7 @@ function ReviewEntry({
         <p>
           {t("Order: {items}. Total {total}, for {stamps}.", {
             items: new Intl.ListFormat(lang, { type: "unit" }).format(
-              item.visit.items.map((line) => t("{quantity} × {name}", { quantity: line.quantity, name: lang === "ar" ? line.nameAr : line.nameEn })),
+              item.visit.items.map((line) => t("{quantity} × {name}", { quantity: line.quantity, name: lang === "ar" ? arabicOr(line.nameAr, line.nameEn) : line.nameEn })),
             ),
             total: formatUsd(item.visit.totalCents, "en"),
             stamps: plural(lang, STAMPS, item.visit.stamps),

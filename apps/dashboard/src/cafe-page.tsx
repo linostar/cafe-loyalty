@@ -1,6 +1,7 @@
 import {
   WIN_BACK_MAX_COOLDOWN_DAYS,
   WIN_BACK_OFFER_DAYS,
+  arabicOr,
   cafeSetupSchema,
   formatUsd,
   joinLinkSchema,
@@ -20,6 +21,7 @@ import { centsToInput, parseUsdInput, parseWholeNumberInput } from "./money-inpu
 import { PageStatus, useApiData } from "./session.js";
 
 const AR = {
+  "Leave it empty to show the English name.": "اتركه فارغاً لعرض الاسم بالإنجليزية.",
   "Café name": "اسم المقهى",
   Name: "الاسم",
   "Save name": "حفظ الاسم",
@@ -215,6 +217,8 @@ export function ProgramForm({ program, save, unsaved }: { program: CafeSetup["pr
         value={rewardAr}
         onChange={setRewardAr}
         maxLength={80}
+        optional
+        hint={t("Leave it empty to show the English name.")}
         error={fieldErrors.rewardNameAr}
       />
       <button type="submit" aria-disabled={pending || undefined}>
@@ -429,11 +433,22 @@ export function OrderTypeForm({
       }}
     >
       <h4 id={titleId}>
-        {orderType === undefined ? t("Add an order type") : t("Edit {name}", { name: lang === "ar" ? orderType.nameAr : orderType.nameEn })}
+        {orderType === undefined ? t("Add an order type") : t("Edit {name}", { name: lang === "ar" ? arabicOr(orderType.nameAr, orderType.nameEn) : orderType.nameEn })}
       </h4>
       <FormError message={error} />
       <Field label={t("Name (English)")} name="nameEn" type="text" lang="en" value={nameEn} onChange={setNameEn} maxLength={60} error={fieldErrors.nameEn} />
-      <Field label={t("Name (Arabic)")} name="nameAr" type="text" lang="ar" value={nameAr} onChange={setNameAr} maxLength={60} error={fieldErrors.nameAr} />
+      <Field
+        label={t("Name (Arabic)")}
+        name="nameAr"
+        type="text"
+        lang="ar"
+        value={nameAr}
+        onChange={setNameAr}
+        maxLength={60}
+        optional
+        hint={t("Leave it empty to show the English name.")}
+        error={fieldErrors.nameAr}
+      />
       <Field
         label={t("Price (USD)")}
         name="price"
@@ -463,7 +478,7 @@ export function OrderTypeForm({
         hint={t("0 to 10.")}
         error={amountErrors.stampsEarned?.(t, lang) ?? fieldErrors.stampsEarned}
       />
-      <div className="field">
+      <div className="field check-field">
         <label className="check">
           <input
             type="checkbox"
@@ -525,7 +540,11 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
     <li ref={item} className="row">
       <span className="row-main">
         {/* Both names: the page's language first, the other marked as such. */}
-        {lang === "ar" ? (
+        {lang === "ar" && orderType.nameAr === "" ? (
+          <strong lang="en" dir="ltr">
+            {orderType.nameEn}
+          </strong>
+        ) : lang === "ar" ? (
           <>
             <strong>{orderType.nameAr}</strong>{" "}
             <span lang="en" dir="ltr">
@@ -535,9 +554,11 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
         ) : (
           <>
             <strong>{orderType.nameEn}</strong>{" "}
-            <span lang="ar" dir="rtl">
-              {orderType.nameAr}
-            </span>
+            {orderType.nameAr === "" ? null : (
+              <span lang="ar" dir="rtl">
+                {orderType.nameAr}
+              </span>
+            )}
           </>
         )}
         {orderType.active ? null : (
@@ -559,7 +580,7 @@ function OrderTypeItem({ orderType, save }: { orderType: OrderType; save: Save }
       </span>
       <button
         type="button"
-        aria-label={t("Edit {name}", { name: lang === "ar" ? orderType.nameAr : orderType.nameEn })}
+        aria-label={t("Edit {name}", { name: lang === "ar" ? arabicOr(orderType.nameAr, orderType.nameEn) : orderType.nameEn })}
         onClick={() => {
           setSaved(false);
           setEditing(true);

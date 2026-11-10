@@ -1,5 +1,6 @@
 import { cafeSetupSchema, joinLinkSchema, staffListSchema, type CafeSetup, type Devices, type PairingCode, type StaffMember } from "@cafe-loyalty/shared";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { renderSVG } from "uqr";
 import { apiRequest } from "./api.js";
 import { OrderTypeForm, ProgramForm } from "./cafe-page.js";
@@ -11,17 +12,20 @@ import { AddStaffForm } from "./staff-page.js";
 import { useUnsavedChanges } from "./unsaved-changes.js";
 import "./setup.css";
 
-/** What the printed sheet says to customers, always in both languages whatever the dashboard's (D6). */
+/** What the printed sheets say to customers: one sheet in Arabic, one in English, whatever the dashboard's language (D6). */
 const SHEET_TEXT = ["Get your loyalty card", "Scan this code with your phone's camera and open the link. Eligible purchases earn stamps."] as const;
 
 const AR = {
   [SHEET_TEXT[0]]: "احصل على بطاقة الولاء",
   [SHEET_TEXT[1]]: "امسح هذا الرمز بكاميرا هاتفك وافتح الرابط. المشتريات المؤهلة تكسبك أختاماً.",
   "QR code customers scan to get a loyalty card": "رمز QR يمسحه الزبائن للحصول على بطاقة ولاء",
-  Print: "طباعة",
+  "Print the Arabic sheet": "طباعة الورقة العربية",
+  "Print the English sheet": "طباعة الورقة الإنكليزية",
+  "Arabic sheet": "الورقة العربية",
+  "English sheet": "الورقة الإنكليزية",
   "Print the signup QR": "طباعة رمز QR للتسجيل",
-  "Print this sheet and put it at the counter, where customers see it. It is in Arabic and English, whatever language the dashboard is in.":
-    "اطبع هذه الورقة وضعها على الكاونتر حيث يراها الزبائن. هي بالعربية والإنكليزية، أياً كانت لغة لوحة التحكم.",
+  "Print the Arabic sheet, the English one or both, and put them at the counter, where customers see them.":
+    "اطبع الورقة العربية أو الإنكليزية أو كلتيهما، وضعها على الكاونتر حيث يراها الزبائن.",
   "Back to the Café page": "العودة إلى صفحة المقهى",
   "Set up your café": "جهّز مقهاك",
   "Five steps get the counter ready for your first customers. Do each one now or skip it: Home lists whatever is left.":
@@ -105,10 +109,11 @@ export function setupProgress(setup: CafeSetup, staff: readonly StaffMember[], d
 const loaded = <T,>(state: ApiData<T>): T | null => (state.status === "loaded" ? state.data : null);
 
 /**
- * The signup QR as printed (D6): the café's name, the code at about 8 cm on paper and how to use it in Arabic and
- * English, with a Print button; print CSS (setup.css) leaves only the sheet on paper. Printing records the first
- * print (`beforeprint` also catches the browser's own Print command), and `onRecorded` gets the café's setup; a
- * failed record is said under the button (an ended session goes back to sign-in).
+ * The signup QR as printed (D6): an Arabic sheet and an English one, each with the café's name, the code at about 8 cm
+ * on paper and how to use it in its language, and its own Print button, which prints that sheet alone (`printing`;
+ * the browser's own Print command prints both, a page each). Print CSS (setup.css) leaves only the sheets on paper.
+ * Printing records the first print (`beforeprint` also catches the browser's own Print command), and `onRecorded`
+ * gets the café's setup; a failed record is said under the buttons (an ended session goes back to sign-in).
  */
 export function PrintQr({ cafeName, onRecorded }: { cafeName: string; onRecorded?: (setup: CafeSetup) => void }) {
   const t = useT(AR);
@@ -116,7 +121,17 @@ export function PrintQr({ cafeName, onRecorded }: { cafeName: string; onRecorded
   const [state, , retry] = useApiData("/api/cafe/join", joinLinkSchema);
   const { error, submit } = useSubmit();
   const recorded = useRef(false);
+  const [printing, setPrinting] = useState<"ar" | "en" | null>(null);
   const ready = state.status === "loaded";
+  useEffect(() => {
+    const done = () => {
+      setPrinting(null);
+    };
+    window.addEventListener("afterprint", done);
+    return () => {
+      window.removeEventListener("afterprint", done);
+    };
+  }, []);
   useEffect(() => {
     if (!ready) {
       return;
@@ -146,27 +161,35 @@ export function PrintQr({ cafeName, onRecorded }: { cafeName: string; onRecorded
   const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(state.data.joinUrl, { border: 4 }))}`;
   return (
     <>
-      <div className="print-sheet card">
-        <p className="print-cafe">{cafeName}</p>
-        <img className="print-qr" src={qr} alt={t("QR code customers scan to get a loyalty card")} width={302} height={302} />
+      <div className="print-sheets" data-printing={printing ?? undefined}>
         {(["ar", "en"] as const).map((lang) => (
-          <div key={lang} lang={lang} dir={lang === "ar" ? "rtl" : "ltr"} className="print-text">
-            <p className="print-title">{lang === "ar" ? AR[SHEET_TEXT[0]] : SHEET_TEXT[0]}</p>
-            <p>{lang === "ar" ? AR[SHEET_TEXT[1]] : SHEET_TEXT[1]}</p>
-          </div>
+          <section key={lang} className="print-column" data-sheet={lang} aria-label={t(lang === "ar" ? "Arabic sheet" : "English sheet")}>
+            <div className="print-sheet card" lang={lang} dir={lang === "ar" ? "rtl" : "ltr"}>
+              <p className="print-cafe">{cafeName}</p>
+              <img className="print-qr" src={qr} alt={t("QR code customers scan to get a loyalty card")} width={302} height={302} />
+              <div className="print-text">
+                <p className="print-title">{lang === "ar" ? AR[SHEET_TEXT[0]] : SHEET_TEXT[0]}</p>
+                <p>{lang === "ar" ? AR[SHEET_TEXT[1]] : SHEET_TEXT[1]}</p>
+              </div>
+            </div>
+            <p>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  // The chosen sheet must be the only one on the page before the print dialog takes its picture.
+                  flushSync(() => {
+                    setPrinting(lang);
+                  });
+                  window.print();
+                }}
+              >
+                {t(lang === "ar" ? "Print the Arabic sheet" : "Print the English sheet")}
+              </button>
+            </p>
+          </section>
         ))}
       </div>
-      <p>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => {
-            window.print();
-          }}
-        >
-          {t("Print")}
-        </button>
-      </p>
       {error === null ? null : (
         <p role="alert" className="form-error">
           {t("Could not record this print for the setup checklist: {message}", { message: api(error) })}
@@ -183,7 +206,7 @@ export function PrintQrPage({ cafeName }: { cafeName: string }) {
     <section aria-labelledby="print-qr-title">
       <h2 id="print-qr-title">{t("Print the signup QR")}</h2>
       <p className="page-intro">
-        {t("Print this sheet and put it at the counter, where customers see it. It is in Arabic and English, whatever language the dashboard is in.")}
+        {t("Print the Arabic sheet, the English one or both, and put them at the counter, where customers see them.")}
       </p>
       <PrintQr cafeName={cafeName} />
       <p>

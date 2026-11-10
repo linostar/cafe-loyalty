@@ -1,3 +1,4 @@
+import { arabicOr } from "@cafe-loyalty/shared";
 import { createHash } from "node:crypto";
 import {
   feedbackUrl,
@@ -135,7 +136,7 @@ export async function writeGooglePass(
     epoch: pass.epoch,
     holderName: pass.holder_name,
     stamps: pass.stamps,
-    program: program === undefined ? undefined : { stampsRequired: program.stamps_required, rewardNameAr: program.reward_name_ar, rewardNameEn: program.reward_name_en },
+    program: program === undefined ? undefined : { stampsRequired: program.stamps_required, rewardNameAr: arabicOr(program.reward_name_ar, program.reward_name_en), rewardNameEn: program.reward_name_en },
     qr: current ? signCardQr(settings, { cardId: pass.card_id, cafeId: job.cafeId, epoch: pass.epoch }) : null,
     offer,
     feedbackUrl: current && found.feedback !== undefined ? feedbackUrl(settings.publicUrl, settings, found.feedback) : undefined,

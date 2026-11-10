@@ -14,6 +14,7 @@ import {
   type SyncResult,
   type SyncResultCode,
   apiText,
+  arabicOr,
 } from "@cafe-loyalty/shared";
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { sql, type Kysely } from "kysely";
@@ -378,7 +379,7 @@ export function syncRoutes(app: FastifyInstance, options: SyncRoutesOptions, don
                 totalCents: row.total_cents,
                 items: rows.lines
                   .filter((line) => line.visit_id === row.visitId)
-                  .map((line) => ({ nameEn: line.name_en, nameAr: line.name_ar, quantity: line.quantity })),
+                  .map((line) => ({ nameEn: line.name_en, nameAr: arabicOr(line.name_ar, line.name_en), quantity: line.quantity })),
               },
         occurredAt: row.occurred_at.toISOString(),
         receivedAt: row.received_at.toISOString(),

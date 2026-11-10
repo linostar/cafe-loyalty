@@ -1,4 +1,4 @@
-import type { Discount } from "@cafe-loyalty/shared";
+import { arabicOr, type Discount } from "@cafe-loyalty/shared";
 import { sql, type Transaction } from "kysely";
 import type { Database } from "./schema.js";
 
@@ -125,13 +125,13 @@ export async function loadCardOffer(trx: Transaction<Database>, cardId: string):
     offer: {
       kind: "campaign",
       campaignId: campaign.id,
-      nameAr: campaign.name_ar,
+      nameAr: arabicOr(campaign.name_ar, campaign.name_en),
       nameEn: campaign.name_en,
       discount: discountOf(campaign.discount_kind, campaign.discount_value),
       weekdays: campaign.weekdays,
       startsMinute: campaign.starts_minute,
       endsMinute: campaign.ends_minute,
-      orderTypes: orderTypes.map((type) => ({ nameAr: type.name_ar, nameEn: type.name_en })),
+      orderTypes: orderTypes.map((type) => ({ nameAr: arabicOr(type.name_ar, type.name_en), nameEn: type.name_en })),
       announcedAt: campaign.announced_at,
       mayNotify: campaign.may_notify,
     },

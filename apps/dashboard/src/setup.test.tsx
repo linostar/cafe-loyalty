@@ -149,12 +149,13 @@ describe("the setup wizard (D1)", () => {
       fireEvent.click(screen.getByRole("button", { name: label }));
     }
     expect(screen.getByRole("heading", { level: 3, name: "Step 5 of 5 Your signup QR" })).toHaveFocus();
-    expect(await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" })).toBeInTheDocument();
+    // An Arabic sheet and an English one, each with the code.
+    expect(await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" })).toHaveLength(2);
     const print = vi.fn(() => window.dispatchEvent(new Event("beforeprint")));
     vi.stubGlobal("print", print);
     // Pressed again until the page listens for printing (an effect, which may run just after the code shows).
     await waitFor(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Print" }));
+      fireEvent.click(screen.getByRole("button", { name: "Print the English sheet" }));
       expect(writes).toEqual(["/api/cafe/join/printed"]);
     });
     expect(print).toHaveBeenCalled();
@@ -259,11 +260,11 @@ describe("the setup wizard (D1)", () => {
     for (const label of ["Skip this step", "Skip this step", "Skip this step", "Skip this step"]) {
       fireEvent.click(screen.getByRole("button", { name: label }));
     }
-    await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" });
+    await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" });
     vi.stubGlobal("print", () => window.dispatchEvent(new Event("beforeprint")));
     // Pressed again until the page listens for printing (an effect, which may run just after the code shows).
     await waitFor(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Print" }));
+      fireEvent.click(screen.getByRole("button", { name: "Print the English sheet" }));
       expect(held.answer).toBeDefined();
     });
     fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));

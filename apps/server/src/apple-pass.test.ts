@@ -60,7 +60,7 @@ describe("buildApplePass", () => {
       storeCard: {
         // No count or "Stamps" label on the front: the strip pictures them; the back says them, without a label.
         primaryFields: [],
-        secondaryFields: [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: "PKTextAlignmentCenter" }],
+        secondaryFields: [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: "PKTextAlignmentNatural" }],
         auxiliaryFields: [],
         backFields: [
           { key: "stamps", value: "stamps_value" },
@@ -77,7 +77,7 @@ describe("buildApplePass", () => {
     const { json, text } = open(await buildApplePass(apple, "https://card.example.test", { ...content, offers: { optedIn: true, offer } }));
     expect(json).toMatchObject({
       storeCard: {
-        auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", textAlignment: "PKTextAlignmentCenter", changeMessage: "offer_change" }],
+        auxiliaryFields: [{ key: "offer", label: "offer_label", value: "offer_value", textAlignment: "PKTextAlignmentNatural", changeMessage: "offer_change" }],
         backFields: [{ key: "stamps" }, { key: "offer_details" }, { key: "about" }],
       },
     });

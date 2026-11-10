@@ -75,6 +75,7 @@ export {
   type WinBackSettings,
   type WinBackTerms,
 } from "./cafe-setup.js";
+export { arabicOr } from "./cafe-setup.js";
 export { EnvError, loadEnv } from "./env.js";
 export {
   ApiError,

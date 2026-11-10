@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
-import { DEFAULT_COUNTRY_CODE, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
+import { arabicOr, DEFAULT_COUNTRY_CODE, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -287,7 +287,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       path,
       cafeName,
       operatorName: options.operatorName,
-      program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
+      program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? arabicOr(program.reward_name_ar, program.reward_name_en) : program.reward_name_en },
       formToken: values.form !== undefined && isToken(values.form) ? values.form : newToken(),
       values,
       errors,
@@ -564,7 +564,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       stampShape: cafe.stampShape,
       holderName: card.holder_name,
       stamps: card.stamps,
-      program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? program.reward_name_ar : program.reward_name_en },
+      program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? arabicOr(program.reward_name_ar, program.reward_name_en) : program.reward_name_en },
       qr,
       // The offer its passes show (AC 14), for a card opted in to offers.
       offer: offers.offer === undefined ? undefined : offerText(lang, offers.offer),
@@ -623,7 +623,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       program:
         found.program === undefined
           ? undefined
-          : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
+          : { stampsRequired: found.program.stamps_required, rewardNameAr: arabicOr(found.program.reward_name_ar, found.program.reward_name_en), rewardNameEn: found.program.reward_name_en },
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
       offers: found.offers,
       feedbackUrl: found.feedback === undefined ? undefined : feedbackUrl(options.publicUrl, secrets, found.feedback),
@@ -670,7 +670,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       program:
         found.program === undefined
           ? undefined
-          : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
+          : { stampsRequired: found.program.stamps_required, rewardNameAr: arabicOr(found.program.reward_name_ar, found.program.reward_name_en), rewardNameEn: found.program.reward_name_en },
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
       // Texts are left out of the link (googleSaveUrl); the write queued above adds the offer and the feedback link.
       offer: undefined,

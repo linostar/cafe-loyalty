@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   PAIRING_CODE_ALPHABET,
+  arabicOr,
   deviceCatalogSchema,
   devicePairProofPayload,
   googleReviewUrlSchema,
   deviceTokenSigningPayload,
   formatPairingCode,
   normalizePairingCode,
+  loyaltyProgramSchema,
   orderTypeUpdateSchema,
   pairRequestSchema,
   staffPinSchema,
@@ -90,6 +92,21 @@ describe("orderTypeUpdateSchema", () => {
   it("needs at least one field", () => {
     expect(orderTypeUpdateSchema.safeParse({}).success).toBe(false);
     expect(orderTypeUpdateSchema.safeParse({ active: false }).success).toBe(true);
+  });
+});
+
+describe("optional Arabic names", () => {
+  it("accept a blank Arabic name, trimmed to empty, but still need the English one", () => {
+    expect(loyaltyProgramSchema.parse({ stampsRequired: 8, rewardNameAr: "  ", rewardNameEn: "Free coffee" }).rewardNameAr).toBe("");
+    expect(loyaltyProgramSchema.safeParse({ stampsRequired: 8, rewardNameAr: "قهوة", rewardNameEn: " " }).success).toBe(false);
+    expect(orderTypeUpdateSchema.parse({ nameAr: "" })).toEqual({ nameAr: "" });
+  });
+
+  it("show the English name in place of a left-out Arabic one", () => {
+    expect(arabicOr(null, "Espresso")).toBe("Espresso");
+    expect(arabicOr(undefined, "Espresso")).toBe("Espresso");
+    expect(arabicOr(" ", "Espresso")).toBe("Espresso");
+    expect(arabicOr("إسبريسو", "Espresso")).toBe("إسبريسو");
   });
 });
 

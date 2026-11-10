@@ -12,6 +12,7 @@ import {
   type ErrorDetail,
   apiMessage,
   apiText,
+  arabicOr,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -71,7 +72,7 @@ export async function loadCampaigns(trx: Transaction<Database>, filter: { ids?: 
     .execute();
   return rows.map((row) => ({
     id: row.id,
-    nameAr: row.name_ar,
+    nameAr: arabicOr(row.name_ar, row.name_en),
     nameEn: row.name_en,
     weekdays: row.weekdays,
     startsMinute: row.starts_minute,
@@ -150,7 +151,7 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         .insertInto("campaigns")
         .values({
           cafe_id: owner.cafeId,
-          name_ar: body.nameAr,
+          name_ar: body.nameAr === "" ? null : body.nameAr,
           name_en: body.nameEn,
           weekdays: [...body.weekdays].sort((a, b) => a - b),
           starts_minute: body.startsMinute,
