@@ -138,6 +138,24 @@ test("scans the customer's card with the camera for a visit", async ({ page }) =
   await expect.poll(() => synced).toMatchObject([{ payload: { card: { kind: "qr", token: CAMERA_CARD_QR } } }]);
 });
 
+test("greets a scanned card's holder by the name its check gives, and says only that it is scanned without one", async ({ page }) => {
+  // The first check names the holder; the next one, for the same card, gives no name.
+  const names = ["Rania Haddad", null];
+  await signedIn(page, {
+    "POST /api/device/cards/status": (route) => route.fulfill({ json: { stamps: 2, rewardReady: false, holderName: names.shift() ?? null } }),
+  });
+  await page.getByRole("button", { name: "Scan card", exact: true }).click();
+  await expect(page.getByText("Card of Rania Haddad.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Card scanned.")).toHaveCount(0);
+  // Cleared, the name goes with the card.
+  await page.getByRole("button", { name: "Clear card" }).click();
+  await expect(page.getByText("Card of Rania Haddad.")).toHaveCount(0);
+  // Scanned again: only what this scan's check says, never the earlier name.
+  await page.getByRole("button", { name: "Scan card", exact: true }).click();
+  await expect(page.getByText("Card scanned.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Card of Rania Haddad.")).toHaveCount(0);
+});
+
 test("undoes a visit before it is sent, so the server never gets it, and sends the corrected one (K2)", async ({ page }) => {
   const synced = await signedIn(page);
   // A tap anywhere on the row adds one (K9): on the name, it lands on the + button's area over it (forced, as

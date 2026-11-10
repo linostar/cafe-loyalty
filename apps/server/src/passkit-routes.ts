@@ -185,7 +185,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       } else if (!Number.isNaN(since) && row.modified_at.getTime() <= since) {
         return undefined;
       }
-      const card = await trx.selectFrom("cards").select(["epoch", "stamps"]).where("id", "=", pass.card_id).executeTakeFirstOrThrow();
+      const card = await trx.selectFrom("cards").select(["epoch", "stamps", "holder_name"]).where("id", "=", pass.card_id).executeTakeFirstOrThrow();
       const cafe = await loadCafeBranding(trx, pass.cafe_id);
       const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
       return {
@@ -209,6 +209,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       colors: found.cafe.colors,
       stampShape: found.cafe.stampShape,
       logo: found.logo,
+      holderName: found.card.holder_name,
       stamps: found.card.stamps,
       program:
         found.program === undefined

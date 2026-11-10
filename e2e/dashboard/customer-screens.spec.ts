@@ -48,6 +48,7 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     colors: { ...DEFAULT_CARD_COLORS },
     logoPath: null,
     stampShape: "circle",
+    holderName: lang === "ar" ? "رانيا حداد" : "Rania Haddad",
     stamps: 4,
     program: PROGRAM[lang],
     qr: QR,
@@ -72,15 +73,18 @@ const settings = (lang: Lang, overrides: Partial<CardSettingsView> = {}): string
     ...overrides,
   });
 
-const join = (lang: Lang, errors: { phone?: string; email?: string; privacy?: string } = {}) =>
+const join = (lang: Lang, errors: Parameters<typeof joinView>[1]["errors"] = {}) =>
   joinView(lang, {
     path: "/join/fake",
     cafeName: lang === "ar" ? "مقهى النجار" : "Café Najjar",
     operatorName: "Loyalty Everywhere",
     program: PROGRAM[lang],
     formToken: "fake-form-token",
-    // A fresh page has offers ticked, as the route opens it; one sent back keeps the customer's choice (here, unticked).
-    values: errors.phone === undefined ? { offers: "yes" } : { phone: "70 12", email: "rana@example" },
+    // A fresh page has offers ticked, as the route opens it; one sent back keeps what was typed (here, offers unticked).
+    values:
+      Object.keys(errors).length === 0
+        ? { offers: "yes" }
+        : { name: errors.name === undefined ? "Rania" : "", countryCode: errors.countryCode === undefined ? "+961" : "+12345", phone: "70 12", email: "rana@example" },
     errors,
     otherLangHref: `/join/fake?lang=${other(lang)}`,
   });
@@ -107,8 +111,10 @@ const BRANDED = { colors: { background: "#1f5a85", foreground: "#ffffff", label:
 const VIEWS: readonly [name: string, view: (lang: Lang) => string, csp?: string][] = [
   ["card-branded", (lang) => card(lang, BRANDED), customerCsp(cardStyle(BRANDED.colors))],
   ["join", (lang) => join(lang)],
-  ["join-errors", (lang) => join(lang, { phone: t(lang, "phoneInvalid"), email: t(lang, "emailInvalid"), privacy: t(lang, "privacyRequired") })],
+  ["join-errors", (lang) => join(lang, { name: t(lang, "nameInvalid"), phone: t(lang, "phoneInvalid"), email: t(lang, "emailInvalid"), privacy: t(lang, "privacyRequired") })],
+  ["join-code-error", (lang) => join(lang, { countryCode: t(lang, "countryCodeInvalid") })],
   ["card", (lang) => card(lang)],
+  ["card-nameless", (lang) => card(lang, { holderName: null })],
   ["card-cup", (lang) => card(lang, { stampShape: "cup" })],
   ["card-plate", (lang) => card(lang, { stampShape: "plate" })],
   [
@@ -230,6 +236,8 @@ test.describe("customer page details", () => {
   test("the card shows its stamps as the café's shapes, full up to its count, and says the count only to screen readers", async ({ page }) => {
     await serve(page, card("en", { stampShape: "cup" }));
     await page.goto(`${ORIGIN}/`);
+    // The holder's name under the title.
+    await expect(page.locator(".card-face .holder")).toHaveText("Rania Haddad");
     await expect(page.locator(".stamp-grid .stamp")).toHaveCount(9);
     await expect(page.locator(".stamp-grid .stamp.is-filled")).toHaveCount(4);
     await expect(page.locator(".stamp-grid svg")).toHaveCount(9);

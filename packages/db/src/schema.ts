@@ -258,6 +258,8 @@ export interface CardsTable {
   phone_confirmed_at: ColumnType<Date | null, never, Date>;
   /** When another card here signed up with the same number: from then on this card is never stamped by number. */
   phone_disputed_at: ColumnType<Date | null, never, Date>;
+  /** The holder's name, given at signup (parseHolderName); null on cards made before it was asked (migration 0032). */
+  holder_name: ColumnType<string | null, string | null | undefined, never>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -607,6 +609,7 @@ export const TABLE_COLUMNS = {
     "updated_at",
     "email_change_seq",
     "email_undo_voided",
+    "holder_name",
   ],
   customer_recovery_tokens: ["id", "email_lookup", "token_hash", "expires_at", "created_at"],
   sync_events: [

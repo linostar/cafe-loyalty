@@ -440,8 +440,9 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
   });
 
   /**
-   * A scanned card's stamps and whether its reward is ready, for the counter to offer it right after a visit scan. Read
-   * only: it tells the café's own paired devices what the reward screen already would, and gives nothing.
+   * A scanned card's stamps, whether its reward is ready and its holder's name, for the counter to offer the reward
+   * right after a visit scan and greet the holder. Read only: it tells the café's own paired devices what the reward
+   * screen already would, and the name the card shows its holder, and gives nothing.
    */
   app.post("/device/cards/status", { config: { access: "device" } }, async (request) => {
     requireSupportedBuild(request, options.releaseBuiltAt);
@@ -452,9 +453,9 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
       if (card.status === "refused") {
         throw new ApiError("NOT_FOUND", apiText("This is not a loyalty card of this café. Scan the customer's card again."));
       }
-      const { stamps } = await trx.selectFrom("cards").select("stamps").where("id", "=", card.cardId).executeTakeFirstOrThrow();
+      const { stamps, holder_name: holderName } = await trx.selectFrom("cards").select(["stamps", "holder_name"]).where("id", "=", card.cardId).executeTakeFirstOrThrow();
       const program = await trx.selectFrom("loyalty_programs").select("stamps_required").executeTakeFirst();
-      return { stamps, rewardReady: program !== undefined && stamps >= program.stamps_required };
+      return { stamps, rewardReady: program !== undefined && stamps >= program.stamps_required, holderName };
     });
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { e164PhoneSchema, normalizePhoneInput } from "./phone.js";
+import { e164PhoneSchema, normalizePhoneInput, parseCountryCode } from "./phone.js";
 
 describe("e164PhoneSchema", () => {
   it.each(["+96170123456", "+9613123456", "+14155552671", "+447911123456"])("accepts %s", (value) => {
@@ -60,5 +60,46 @@ describe("normalizePhoneInput", () => {
     "+961 70 123 456 x5",
   ])("refuses %j", (input) => {
     expect(normalizePhoneInput(input)).toBeNull();
+  });
+
+  it.each([
+    // Lebanon's code, as signup's code field starts: today's forms.
+    ["70 123 456", "+961", "+96170123456"],
+    ["03 123 456", "+961", "+9613123456"],
+    ["96170123456", "+961", "+96170123456"],
+    // Another country's code: the number joined to it, its trunk 0 dropped.
+    ["06 12 34 56 78", "+33", "+33612345678"],
+    ["612345678", "+33", "+33612345678"],
+    ["(0)20 7946 0958", "+44", "+442079460958"],
+    // A number typed with its own code keeps it, whatever the field says.
+    ["+33 6 12 34 56 78", "+961", "+33612345678"],
+    ["0033 6 12 34 56 78", "+961", "+33612345678"],
+    ["+961 70 123 456", "+33", "+96170123456"],
+  ])("joins %j to %j as %j", (input, code, expected) => {
+    expect(normalizePhoneInput(input, code)).toBe(expected);
+  });
+
+  it("still needs a real Lebanese prefix, and refuses what is no number in any country", () => {
+    expect(normalizePhoneInput("72 123 456", "+961")).toBeNull();
+    expect(normalizePhoneInput("+961 72 123 456", "+33")).toBeNull();
+    expect(normalizePhoneInput("123", "+33")).toBeNull();
+    expect(normalizePhoneInput("abc", "+33")).toBeNull();
+  });
+});
+
+describe("parseCountryCode", () => {
+  it.each([
+    ["+961", "+961"],
+    ["00961", "+961"],
+    ["961", "+961"],
+    ["+1", "+1"],
+    [" + 33 ", "+33"],
+    ["+٩٦١", "+961"],
+  ])("reads %j as %j", (input, expected) => {
+    expect(parseCountryCode(input)).toBe(expected);
+  });
+
+  it.each(["", "+", "+0", "+1234", "abc", "+96a", "000961"])("refuses %j", (input) => {
+    expect(parseCountryCode(input)).toBeNull();
   });
 });

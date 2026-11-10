@@ -356,7 +356,11 @@ export const redemptionSchema = z.object({ stampsUsed: z.int().min(1), stampsLef
  * (in a POST body, so the card's QR stays out of addresses and logs). The visit being recorded is not counted yet.
  */
 export const cardStatusRequestSchema = z.object({ cardQr: z.string().min(1).max(512) });
-export const cardStatusSchema = z.object({ stamps: z.int().min(0), rewardReady: z.boolean() });
+/**
+ * The answer, with the holder's name for the counter to greet them: null on a card made before names were asked, and
+ * missing from a server from before then (an older counter ignores the field).
+ */
+export const cardStatusSchema = z.object({ stamps: z.int().min(0), rewardReady: z.boolean(), holderName: z.string().nullable().optional() });
 
 export const deviceInfoSchema = z.object({ deviceId: z.uuid(), deviceName: z.string(), cafe: z.object({ id: z.uuid(), name: z.string() }) });
 

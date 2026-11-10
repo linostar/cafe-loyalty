@@ -38,6 +38,8 @@ export interface ApplePassContent {
   stampShape: StampShape;
   /** The café's logo as Apple's logo.png at 1x, 2x and 3x, or undefined: the pass then shows the café's name alone. */
   logo: { apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined;
+  /** The holder's name (cards.holder_name), or null on a card made before it was asked: the pass then has no name. */
+  holderName: string | null;
   stamps: number;
   program: { stampsRequired: number; rewardNameAr: string; rewardNameEn: string } | undefined;
   /** The card's QR token, or null for a pass of an earlier epoch (the card moved to another phone): voided. */
@@ -112,6 +114,8 @@ function passStrings(lang: Lang, content: ApplePassContent): Record<string, stri
     about_label: t(lang, moved ? "passMovedLabel" : "passAboutLabel"),
     about_value: t(lang, moved ? "passMovedText" : "passAboutText"),
     ...(reward === undefined ? {} : { reward_label: t(lang, "passRewardLabel"), reward_value: reward }),
+    // The name as a string of its own, so no name can be read as another field's key.
+    ...(content.holderName === null || moved ? {} : { holder_value: content.holderName }),
     ...offerStrings(lang, content.offers.offer),
     ...(content.feedbackUrl === undefined ? {} : { feedback_label: t(lang, "passFeedbackLabel"), feedback_value: `${t(lang, "passFeedbackText")}\n${content.feedbackUrl}` }),
   };
@@ -211,6 +215,8 @@ export async function buildApplePass(config: ApplePassConfig, publicUrl: string,
     labelColor: rgb(content.colors.label),
     ...(content.qr === null ? { voided: true } : { barcodes: [{ format: "PKBarcodeFormatQR", message: content.qr, messageEncoding: "iso-8859-1" }] }),
     storeCard: {
+      // The holder's name beside the logo, on a card that has one: a card without a name builds the pass as before.
+      ...(content.holderName === null || moved ? {} : { headerFields: [{ key: "holder", value: "holder_value" }] }),
       primaryFields: moved ? [{ key: "moved", label: "moved_label", value: "moved_value" }] : [],
       secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: CENTRED }],
       auxiliaryFields: offer.auxiliaryFields,

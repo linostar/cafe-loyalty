@@ -26,7 +26,7 @@ async function cafeWithJoinCode(): Promise<Harness & { owner: SignedUpOwner; cod
 }
 
 async function join(app: FastifyInstance, code: string, phone: string, extra: Record<string, string> = {}): Promise<LightMyRequestResponse> {
-  return app.inject({ method: "POST", url: `/join/${code}`, ...formBody({ phone, privacy: "yes", lang: "en", ...extra }) });
+  return app.inject({ method: "POST", url: `/join/${code}`, ...formBody({ name: "Rania Haddad", phone, privacy: "yes", lang: "en", ...extra }) });
 }
 
 const secretOf = (response: LightMyRequestResponse): string => /^\/c\/([A-Za-z0-9_-]{43})\?/.exec(String(response.headers.location))?.[1] ?? "missing";
@@ -90,6 +90,62 @@ describe("signup", () => {
     expect(rows[0]?.phone_ciphertext.toString("latin1")).not.toContain("70123456");
     expect(decryptPhone(TEST_SECRETS, rows[0]?.phone_key_id ?? "", rows[0]?.phone_ciphertext ?? Buffer.alloc(0))).toBe("+96170123456");
     expect(await auditActions(owner.cafeId)).toContain("card.created");
+  });
+
+  it("asks for the holder's name and the number's country code, stores the name on the card, and never logs or audits it", async () => {
+    const { app, code, owner, logs } = await cafeWithJoinCode();
+    const page = await app.inject({ method: "GET", url: `/join/${code}?lang=en` });
+    expect(page.body).toMatch(/<input id="name" name="name" type="text" autocomplete="name" required maxlength="60" value="" aria-describedby="name-hint">/);
+    expect(page.body).toMatch(/<input id="country-code" name="countryCode" type="text" inputmode="tel" autocomplete="tel-country-code" dir="ltr" required value="\+961" aria-describedby="country-code-hint">/);
+    expect(page.body).toContain("+961 is Lebanon.");
+    expect(page.body).toContain("The café sees your card and your name, not your number.");
+    expect((await app.inject({ method: "GET", url: `/join/${code}?lang=ar` })).body).toContain("يرى المقهى بطاقتك واسمك لا رقمك.");
+    const holderOf = async (response: LightMyRequestResponse) =>
+      (await context.admin.query<{ holder_name: string | null }>("SELECT holder_name FROM app.cards WHERE web_secret_hash = $1", [hashToken(secretOf(response))])).rows[0]?.holder_name;
+    const phoneOf = async (response: LightMyRequestResponse) => {
+      const { rows } = await context.admin.query<{ phone_ciphertext: Buffer; phone_key_id: string }>(
+        "SELECT phone_ciphertext, phone_key_id FROM app.customers JOIN app.cards ON cards.customer_id = customers.id WHERE cards.web_secret_hash = $1",
+        [hashToken(secretOf(response))],
+      );
+      return decryptPhone(TEST_SECRETS, rows[0]?.phone_key_id ?? "", rows[0]?.phone_ciphertext ?? Buffer.alloc(0));
+    };
+    // Trimmed and in any script; the number joined to its code, Lebanon's by default.
+    const lebanese = await join(app, code, "70 987 654", { name: "  رانيا   حداد ", countryCode: "+961" });
+    expect(lebanese.statusCode).toBe(303);
+    expect(await holderOf(lebanese)).toBe("رانيا حداد");
+    expect(await phoneOf(lebanese)).toBe("+96170987654");
+    const french = await join(app, code, "06 12 34 56 78", { name: "Zoé Martin", countryCode: "0033" });
+    expect(await phoneOf(french)).toBe("+33612345678");
+    // A number typed with its own code keeps it, whatever the code field says.
+    const typed = await join(app, code, "+44 7700 900123", { name: "Sam Hill", countryCode: "+961" });
+    expect(await phoneOf(typed)).toBe("+447700900123");
+    const { rows } = await context.admin.query<{ changes: unknown }>("SELECT changes FROM app.audit_log WHERE cafe_id = $1", [owner.cafeId]);
+    for (const name of ["رانيا", "Zoé", "Sam Hill"]) {
+      expect(JSON.stringify(rows)).not.toContain(name);
+      expect(logs.join("\n")).not.toContain(name);
+    }
+  });
+
+  it("refuses a missing or overlong name and a code that is no code, keeping everything typed", async () => {
+    const { app, code, owner } = await cafeWithJoinCode();
+    const phone = uniquePhone();
+    for (const name of ["", "   ", "x".repeat(61)]) {
+      const response = await join(app, code, phone, { name, email: "nour@example.com" });
+      expect(response.statusCode, JSON.stringify(name)).toBe(400);
+      expect(response.body).toContain('<p class="field-error" id="name-error" role="alert">Enter your name, up to 60 characters.</p>');
+      expect(response.body).toMatch(/id="name" [^>]*aria-describedby="name-hint name-error" aria-invalid="true"/);
+      expect(response.body).toContain(`value="${phone}"`);
+      expect(response.body).toContain('value="nour@example.com"');
+    }
+    const badCode = await join(app, code, phone, { countryCode: "+12345" });
+    expect(badCode.statusCode).toBe(400);
+    expect(badCode.body).toContain('<p class="field-error" id="country-code-error" role="alert">Enter a country code, such as +961.</p>');
+    expect(badCode.body).toMatch(/id="country-code" [^>]*value="\+12345" aria-describedby="country-code-hint country-code-error" aria-invalid="true"/);
+    // The number is not judged against a code that is no code.
+    expect(badCode.body).not.toContain('id="phone-error"');
+    const arabic = await join(app, code, phone, { name: "", lang: "ar" });
+    expect(arabic.body).toContain("أدخل اسمك، 60 حرفاً كحد أقصى.");
+    expect(await auditActions(owner.cafeId)).not.toContain("card.created");
   });
 
   it("asks for offers with a box ticked at first, and turns them on only when it is sent ticked (AC 4)", async () => {
@@ -208,7 +264,7 @@ describe("signup", () => {
     const join = await h.app.inject({ method: "GET", url: "/api/cafe/join", headers: withCookie(owner.session) });
     const code = /\/join\/([0-9a-f]{32})$/.exec(join.json<{ joinUrl: string }>().joinUrl)?.[1] ?? "missing";
     const signup = (address: string) =>
-      h.app.inject({ method: "POST", url: `/join/${code}`, remoteAddress: address, ...formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" }) });
+      h.app.inject({ method: "POST", url: `/join/${code}`, remoteAddress: address, ...formBody({ name: "Rania Haddad", phone: uniquePhone(), privacy: "yes", lang: "en" }) });
     expect((await signup("198.51.100.1")).statusCode).toBe(303);
     expect((await signup("198.51.100.2")).statusCode).toBe(303);
     const blocked = await signup("198.51.100.3");
@@ -325,7 +381,7 @@ describe("cross-site form posts", () => {
   it("accepts a form posted from its own page, from a browser that says nothing, or with its own Origin", async () => {
     const { app, code } = await cafeWithJoinCode();
     for (const headers of [{ "sec-fetch-site": "same-origin" }, {}, { origin: new URL(PUBLIC_URL).origin }]) {
-      const body = formBody({ phone: uniquePhone(), privacy: "yes", lang: "en" });
+      const body = formBody({ name: "Rania Haddad", phone: uniquePhone(), privacy: "yes", lang: "en" });
       const response = await app.inject({ method: "POST", url: `/join/${code}`, headers: { ...headers, ...body.headers }, payload: body.payload });
       expect({ headers, status: response.statusCode }).toEqual({ headers, status: 303 });
     }

@@ -15,7 +15,7 @@ const CLASS = googleLoyaltyClass(
   { id: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", name: "Café Najjar", colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null },
   "https://card.example.test",
 );
-const OBJECT = googleLoyaltyObject(ISSUER, { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", epoch: 1, stamps: 2, program: undefined, qr: QR, offer: undefined, feedbackUrl: undefined, look: { colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, stampShape: "circle" } }, "https://card.example.test");
+const OBJECT = googleLoyaltyObject(ISSUER, { cafeId: "0b9a3c4d-1e2f-4a5b-8c7d-6e5f4a3b2c1d", cardId: "6f1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f40", epoch: 1, holderName: null, stamps: 2, program: undefined, qr: QR, offer: undefined, feedbackUrl: undefined, look: { colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, stampShape: "circle" } }, "https://card.example.test");
 const MESSAGE = googleOfferMessage({
   kind: "campaign",
   campaignId: "2d7e0c1b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",

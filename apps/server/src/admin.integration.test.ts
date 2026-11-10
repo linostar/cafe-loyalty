@@ -448,7 +448,7 @@ describe("the admin screen (AC 39)", () => {
     expect(page.statusCode).toBe(403);
     // The page names the café, so the customer knows which one to ask.
     expect(page.body).toMatch(/<h1>⁨[^⁩]+⁩ is not taking new members right now\./);
-    const signup = await app.app.inject({ method: "POST", url: `/join/${code}`, ...formBody({ phone: "70 123 456", privacy: "yes", lang: "ar" }) });
+    const signup = await app.app.inject({ method: "POST", url: `/join/${code}`, ...formBody({ name: "رانيا", phone: "70 123 456", privacy: "yes", lang: "ar" }) });
     expect(signup.statusCode).toBe(403);
     expect(signup.body).toContain("لا يستقبل أعضاء جدداً حالياً.");
     expect((await context.admin.query("SELECT 1 FROM app.cards WHERE cafe_id = $1", [app.owner.cafeId])).rowCount).toBe(1);
