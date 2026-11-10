@@ -532,8 +532,8 @@ test.describe("setup wizard (D1)", () => {
     await page.getByRole("button", { name: "Skip this step" }).press("Enter");
 
     await expect(page.getByRole("heading", { level: 3, name: "Step 5 of 5 Your signup QR" })).toBeFocused();
-    await expect(page.getByRole("img", { name: "QR code customers scan to get a loyalty card" })).toBeVisible();
-    await page.getByRole("button", { name: "Print", exact: true }).press("Enter");
+    await expect(page.getByRole("img", { name: "QR code customers scan to get a loyalty card" })).toHaveCount(2);
+    await page.getByRole("button", { name: "Print the Arabic sheet" }).press("Enter");
     await expect.poll(() => server.milestones).toEqual(["signupQrPrintedAt"]);
     await expect(page.getByText("Done", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Finish setup" }).press("Enter");
@@ -611,40 +611,60 @@ test.describe("setup checklist (D22)", () => {
 });
 
 test.describe("printable signup QR (D6)", () => {
-  for (const [locale, print] of [
-    ["en-US", "Print"],
-    ["ar-LB", "طباعة"],
+  for (const [locale, print, sheets] of [
+    ["en-US", "Print", { ar: ["Arabic sheet", "Print the Arabic sheet"], en: ["English sheet", "Print the English sheet"] }],
+    ["ar-LB", "طباعة", { ar: ["الورقة العربية", "طباعة الورقة العربية"], en: ["الورقة الإنكليزية", "طباعة الورقة الإنكليزية"] }],
   ] as const) {
     test.describe(locale, () => {
       test.use({ locale });
 
-      test("opens from the Café page and prints the sheet alone, in both languages, recording the first print", async ({ page }) => {
+      test("opens from the Café page and prints the Arabic or the English sheet alone, recording the first print", async ({ page }) => {
         const server = setupServer({ program: PROGRAM, setupFinishedAt: "2026-10-19T09:00:00.000Z" });
         await page.addInitScript(fakePrint);
         await mockApi(page, server.routes);
         await page.goto("/cafe");
         await page.getByRole("link", { name: print, exact: true }).click();
         await expect(page).toHaveURL(/\/cafe\/print-qr$/);
-        const sheet = page.locator(".print-sheet");
-        // Both languages whatever the dashboard's, each marked as its own.
-        await expect(sheet).toContainText(SESSION.cafe.name);
-        await expect(sheet.locator('[lang="en"]')).toContainText("Get your loyalty card");
-        await expect(sheet.locator('[lang="ar"][dir="rtl"]')).toContainText("احصل على بطاقة الولاء");
-        await expect(sheet.getByRole("img")).toBeVisible();
+        // Both sheets whatever the dashboard's language, each in its own language only.
+        const arabic = page.getByRole("region", { name: sheets.ar[0] }).locator(".print-sheet");
+        const english = page.getByRole("region", { name: sheets.en[0] }).locator(".print-sheet");
+        await expect(arabic).toHaveAttribute("lang", "ar");
+        await expect(arabic).toHaveAttribute("dir", "rtl");
+        await expect(arabic).toContainText("احصل على بطاقة الولاء");
+        await expect(arabic).not.toContainText("Get your loyalty card");
+        await expect(english).toHaveAttribute("lang", "en");
+        await expect(english).toContainText("Get your loyalty card");
+        await expect(english).not.toContainText("احصل على بطاقة الولاء");
+        for (const sheet of [arabic, english]) {
+          await expect(sheet).toContainText(SESSION.cafe.name);
+          await expect(sheet.getByRole("img")).toBeVisible();
+        }
 
-        const button = page.getByRole("button", { name: print, exact: true });
-        await button.click();
-        await button.click();
+        // Each sheet's button prints it alone (the fake print leaves the chosen sheet set, as a dialog still open would).
+        const printArabic = page.getByRole("button", { name: sheets.ar[1] });
+        await printArabic.click();
+        await printArabic.click();
         await expect.poll(() => server.milestones).toEqual(["signupQrPrintedAt"]);
-
-        // On paper: only the sheet, the code about 8 cm across (96 CSS px to the inch).
         await page.emulateMedia({ media: "print" });
-        for (const chrome of [page.getByRole("navigation", { name: locale === "ar-LB" ? "لوحة التحكم" : "Dashboard" }), page.getByRole("banner"), button]) {
+        for (const chrome of [page.getByRole("navigation", { name: locale === "ar-LB" ? "لوحة التحكم" : "Dashboard" }), page.getByRole("banner"), printArabic]) {
           await expect(chrome).toBeHidden();
         }
-        await expect(sheet).toBeVisible();
-        const width = await sheet.getByRole("img").evaluate((image) => image.getBoundingClientRect().width);
+        await expect(arabic).toBeVisible();
+        await expect(english).toBeHidden();
+        // The code about 8 cm across on paper (96 CSS px to the inch).
+        const width = await arabic.getByRole("img").evaluate((image) => image.getBoundingClientRect().width);
         expect(Math.abs(width - (8 / 2.54) * 96)).toBeLessThanOrEqual(2);
+        await page.emulateMedia({ media: "screen" });
+        await page.getByRole("button", { name: sheets.en[1] }).click();
+        await page.emulateMedia({ media: "print" });
+        await expect(english).toBeVisible();
+        await expect(arabic).toBeHidden();
+
+        // The browser's own Print command (after the dialog closes): both sheets, the English one on a page of its own.
+        await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+        await expect(arabic).toBeVisible();
+        await expect(english).toBeVisible();
+        expect(await page.getByRole("region", { name: sheets.en[0] }).evaluate((column) => getComputedStyle(column).breakBefore)).toBe("page");
       });
     });
   }

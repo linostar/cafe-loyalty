@@ -149,12 +149,13 @@ describe("the setup wizard (D1)", () => {
       fireEvent.click(screen.getByRole("button", { name: label }));
     }
     expect(screen.getByRole("heading", { level: 3, name: "Step 5 of 5 Your signup QR" })).toHaveFocus();
-    expect(await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" })).toBeInTheDocument();
+    // An Arabic sheet and an English one, each with the code.
+    expect(await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" })).toHaveLength(2);
     const print = vi.fn(() => window.dispatchEvent(new Event("beforeprint")));
     vi.stubGlobal("print", print);
     // Pressed again until the page listens for printing (an effect, which may run just after the code shows).
     await waitFor(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Print" }));
+      fireEvent.click(screen.getByRole("button", { name: "Print the English sheet" }));
       expect(writes).toEqual(["/api/cafe/join/printed"]);
     });
     expect(print).toHaveBeenCalled();
@@ -259,11 +260,11 @@ describe("the setup wizard (D1)", () => {
     for (const label of ["Skip this step", "Skip this step", "Skip this step", "Skip this step"]) {
       fireEvent.click(screen.getByRole("button", { name: label }));
     }
-    await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" });
+    await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" });
     vi.stubGlobal("print", () => window.dispatchEvent(new Event("beforeprint")));
     // Pressed again until the page listens for printing (an effect, which may run just after the code shows).
     await waitFor(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Print" }));
+      fireEvent.click(screen.getByRole("button", { name: "Print the English sheet" }));
       expect(held.answer).toBeDefined();
     });
     fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
@@ -349,7 +350,7 @@ describe("the wizard's checks (D1)", () => {
       method === "POST" && path === "/api/cafe/join/printed" ? unreachable() : undefined,
     );
     render(<App />);
-    await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" });
+    await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" });
     await waitFor(() => {
       window.dispatchEvent(new Event("beforeprint"));
       expect(screen.getByRole("alert")).toHaveTextContent(`Could not record this print for the setup checklist: ${UNREACHABLE}`);
@@ -364,7 +365,7 @@ describe("the wizard's checks (D1)", () => {
         : undefined,
     );
     render(<App />);
-    await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" });
+    await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" });
     await waitFor(() => {
       window.dispatchEvent(new Event("beforeprint"));
       expect(screen.getByLabelText("Email")).toBeInTheDocument();
@@ -374,20 +375,26 @@ describe("the wizard's checks (D1)", () => {
 });
 
 describe("the print page (D6)", () => {
-  it("shows the café's name and both languages' instructions whatever the page's, and records the first print once", async () => {
+  it("shows an Arabic and an English sheet, each with the café's name and its own language only, and records the first print once", async () => {
     window.history.replaceState(null, "", "/cafe/print-qr");
     const { writes } = serve({ cafe: { ...CAFE, setupFinishedAt: PRINTED_AT }, program: null, orderTypes: [] });
     render(<App />);
     expect(await screen.findByRole("heading", { level: 2, name: "Print the signup QR" })).toBeInTheDocument();
-    await screen.findByRole("img", { name: "QR code customers scan to get a loyalty card" });
+    await screen.findAllByRole("img", { name: "QR code customers scan to get a loyalty card" });
     // A sub-page of the Café page: its link, and More holding it, are marked current.
     const nav = screen.getByRole("navigation", { name: "Dashboard" });
     expect(within(nav).getByRole("link", { name: "Café" })).toHaveAttribute("aria-current", "true");
     expect(within(nav).getByRole("button", { name: "More" })).toHaveClass("is-current");
-    const sheet = document.querySelector(".print-sheet");
-    expect(sheet).toHaveTextContent("Café Najjar");
-    expect(sheet?.querySelector('[lang="ar"]')).toHaveTextContent("احصل على بطاقة الولاء");
-    expect(sheet?.querySelector('[lang="en"]')).toHaveTextContent("Get your loyalty card");
+    const arabic = within(screen.getByRole("region", { name: "Arabic sheet" }));
+    const english = within(screen.getByRole("region", { name: "English sheet" }));
+    for (const sheet of [arabic, english]) {
+      expect(sheet.getByText("Café Najjar")).toBeInTheDocument();
+      expect(sheet.getByRole("img", { name: "QR code customers scan to get a loyalty card" })).toBeInTheDocument();
+    }
+    expect(arabic.getByText("احصل على بطاقة الولاء").closest(".print-sheet")).toHaveAttribute("lang", "ar");
+    expect(arabic.queryByText("Get your loyalty card")).toBeNull();
+    expect(english.getByText("Get your loyalty card").closest(".print-sheet")).toHaveAttribute("lang", "en");
+    expect(english.queryByText("احصل على بطاقة الولاء")).toBeNull();
     // Printed again and again (the browser's own command too) until the page listens: recorded once all the same.
     await waitFor(() => {
       window.dispatchEvent(new Event("beforeprint"));

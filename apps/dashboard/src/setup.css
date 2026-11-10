@@ -6,7 +6,14 @@
   font-weight: var(--weight-regular);
 }
 
-/* The sheet as printed (D6): the café's name, the code at about 8 cm and both languages' instructions. */
+/* The Arabic and English sheets side by side where they fit, each with its Print button under it. */
+.print-sheets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-4);
+}
+
+/* A sheet as printed (D6): the café's name, the code at about 8 cm and its language's instructions. */
 .print-sheet {
   display: flex;
   flex-direction: column;
@@ -53,6 +60,16 @@
   .print-sheet {
     border: 0;
     box-shadow: none;
+  }
+
+  /* A sheet's own Print button prints that sheet alone; the browser's Print command prints both, a page each. */
+  .print-sheets[data-printing="ar"] > [data-sheet="en"],
+  .print-sheets[data-printing="en"] > [data-sheet="ar"] {
+    display: none;
+  }
+
+  .print-sheets:not([data-printing]) > .print-column + .print-column {
+    break-before: page;
   }
 
   .print-qr {

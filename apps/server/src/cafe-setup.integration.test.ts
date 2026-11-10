@@ -1,5 +1,5 @@
 import { pbkdf2Sync, randomUUID } from "node:crypto";
-import { deviceInfoSchema, deviceStaffSchema, pairResponseSchema, tokenRenewalResponseSchema } from "@cafe-loyalty/shared";
+import { deviceCatalogSchema, deviceInfoSchema, deviceStaffSchema, pairResponseSchema, tokenRenewalResponseSchema, type CafeSetup } from "@cafe-loyalty/shared";
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { registerAccessControl } from "./access.js";
@@ -365,6 +365,36 @@ describe("device tokens", () => {
     expect(staff.map((member) => member.name)).toEqual(["Rami"]);
     const rami = staff[0];
     expect(rami && pbkdf2Sync("482913", Buffer.from(rami.pinSalt, "base64url"), rami.pinIterations, 32, "sha256").toString("base64url")).toBe(rami?.pinHash);
+  });
+
+  it("leave a blank Arabic name out, keep it through other edits, and give the counter the English one", async () => {
+    const { app, as, owner, device } = await pairedApp();
+    const program = (await as("PUT", "/api/cafe/program", { stampsRequired: 8, rewardNameAr: "  ", rewardNameEn: "Free coffee" })).json<CafeSetup>();
+    expect(program.program).toEqual({ stampsRequired: 8, rewardNameAr: "", rewardNameEn: "Free coffee" });
+    const plain = (await as("POST", "/api/cafe/order-types", { ...ORDER_TYPE, nameAr: "" })).json<CafeSetup>().orderTypes[0]?.id ?? "";
+    const named = (await as("POST", "/api/cafe/order-types", { ...ORDER_TYPE, nameEn: "Latte", nameAr: "لاتيه" })).json<CafeSetup>();
+    const latte = named.orderTypes.find((type) => type.nameEn === "Latte")?.id ?? "";
+    expect(named.orderTypes.find((type) => type.id === plain)?.nameAr).toBe("");
+    // An edit that leaves the Arabic name out keeps it; a blank one clears it.
+    expect((await as("PATCH", `/api/cafe/order-types/${latte}`, { priceCents: 300 })).json<CafeSetup>().orderTypes.find((type) => type.id === latte)?.nameAr).toBe("لاتيه");
+    const { rows } = await context.admin.query<{ name_ar: string | null }>("SELECT name_ar FROM app.order_types WHERE cafe_id = $1 AND id = $2", [owner.cafeId, plain]);
+    expect(rows).toEqual([{ name_ar: null }]);
+
+    // A campaign without an Arabic name: the owner's list keeps it blank (so "Start again" copies no English into it).
+    const campaign = { nameAr: "", nameEn: "Afternoon", weekdays: [1, 2, 3, 4, 5, 6, 7], startsMinute: 0, endsMinute: 1440, discount: { kind: "percent", value: 10 }, orderTypeIds: [plain] };
+    expect((await as("POST", "/api/campaigns", campaign)).json<{ running: { nameAr: string }[] }>().running.map((running) => running.nameAr)).toEqual([""]);
+
+    // The counter always gets a name: the English one where the Arabic is left out (older counters need one).
+    const catalog = deviceCatalogSchema.parse((await app.inject({ method: "GET", url: "/api/device/catalog", headers: withBearer(device.accessToken) })).json());
+    expect(catalog.program).toMatchObject({ rewardNameAr: "Free coffee", rewardNameEn: "Free coffee" });
+    expect(catalog.campaigns.map((running) => [running.nameEn, running.nameAr])).toEqual([["Afternoon", "Afternoon"]]);
+    expect(catalog.orderTypes.map((type) => [type.nameEn, type.nameAr])).toEqual(
+      expect.arrayContaining([
+        ["Espresso", "Espresso"],
+        ["Latte", "لاتيه"],
+      ]),
+    );
+    expect((await as("PATCH", `/api/cafe/order-types/${latte}`, { nameAr: "" })).json<CafeSetup>().orderTypes.find((type) => type.id === latte)?.nameAr).toBe("");
   });
 
   it("expire, and renew with a signature from the device key", async () => {

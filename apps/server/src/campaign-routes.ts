@@ -71,7 +71,7 @@ export async function loadCampaigns(trx: Transaction<Database>, filter: { ids?: 
     .execute();
   return rows.map((row) => ({
     id: row.id,
-    nameAr: row.name_ar,
+    nameAr: row.name_ar ?? "",
     nameEn: row.name_en,
     weekdays: row.weekdays,
     startsMinute: row.starts_minute,
@@ -150,7 +150,7 @@ export function campaignRoutes(app: FastifyInstance, options: CampaignRoutesOpti
         .insertInto("campaigns")
         .values({
           cafe_id: owner.cafeId,
-          name_ar: body.nameAr,
+          name_ar: body.nameAr === "" ? null : body.nameAr,
           name_en: body.nameEn,
           weekdays: [...body.weekdays].sort((a, b) => a - b),
           starts_minute: body.startsMinute,

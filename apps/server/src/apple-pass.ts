@@ -149,17 +149,17 @@ function offerFields(content: ApplePassContent) {
   }
   return {
     auxiliaryFields: [
-      { key: "offer", label: "offer_label", value: "offer_value", textAlignment: CENTRED, ...(offer.mayNotify ? { changeMessage: "offer_change" } : {}) },
+      { key: "offer", label: "offer_label", value: "offer_value", textAlignment: START, ...(offer.mayNotify ? { changeMessage: "offer_change" } : {}) },
     ],
     backFields: [{ key: "offer_details", label: "offer_details_label", value: "offer_details_value" }],
   };
 }
 
 /**
- * The reward and the offer centred in their row under the strip. A store card shows secondary and auxiliary fields in
- * one row, so with an offer they sit side by side, each centred in its half.
+ * The reward and the offer start-aligned in their row under the strip (left in English, right in Arabic), label and
+ * value alike. A store card shows secondary and auxiliary fields in one row, so with an offer they sit side by side.
  */
-const CENTRED = "PKTextAlignmentCenter";
+const START = "PKTextAlignmentNatural";
 
 /** Clear space above the café's logo, in points: Wallet puts the header's logo close to the pass's top edge. */
 export const LOGO_TOP_SPACE = 6;
@@ -218,7 +218,7 @@ export async function buildApplePass(config: ApplePassConfig, publicUrl: string,
       // The holder's name beside the logo, on a card that has one: a card without a name builds the pass as before.
       ...(content.holderName === null || moved ? {} : { headerFields: [{ key: "holder", value: "holder_value" }] }),
       primaryFields: moved ? [{ key: "moved", label: "moved_label", value: "moved_value" }] : [],
-      secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: CENTRED }],
+      secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: START }],
       auxiliaryFields: offer.auxiliaryFields,
       // The feedback link is on the back, silently (AC 37): Wallet makes the URL in its text a link.
       backFields: [

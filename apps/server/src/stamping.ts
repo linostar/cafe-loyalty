@@ -15,6 +15,7 @@ import {
   type VisitRecordedPayload,
   apiMessage,
   apiText,
+  arabicOr,
 } from "@cafe-loyalty/shared";
 import type { FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -419,7 +420,8 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
       return {
         catalogVersion: cafe.catalog_version,
         timeZone: cafe.time_zone,
-        campaigns: await loadCampaigns(trx, { runningNow: true }),
+        // The owner's list keeps a left-out Arabic name blank; the counter gets the English one (older counters need one).
+        campaigns: (await loadCampaigns(trx, { runningNow: true })).map((campaign) => ({ ...campaign, nameAr: arabicOr(campaign.nameAr, campaign.nameEn) })),
         winBackOffers: offers.flatMap((offer) =>
           offer.discount_kind === null || offer.discount_value === null || offer.min_margin_percent === null
             ? []
@@ -427,14 +429,14 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
         ),
         orderTypes: types.map((type) => ({
           id: type.id,
-          nameAr: type.name_ar,
+          nameAr: arabicOr(type.name_ar, type.name_en),
           nameEn: type.name_en,
           priceCents: type.price_cents,
           costCents: type.cost_cents,
           stampsEarned: type.stamps_earned,
         })),
         program:
-          program === undefined ? null : { stampsRequired: program.stamps_required, rewardNameAr: program.reward_name_ar, rewardNameEn: program.reward_name_en },
+          program === undefined ? null : { stampsRequired: program.stamps_required, rewardNameAr: arabicOr(program.reward_name_ar, program.reward_name_en), rewardNameEn: program.reward_name_en },
       };
     });
   });
@@ -470,7 +472,7 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
       withCafe(db, device.cafeId, async (trx): Promise<{ redemption: Redemption; created: boolean }> => {
         const card = await findCard(trx, secrets, device.cafeId, { kind: "qr", token: body.cardQr });
         const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
-        const names = { rewardNameAr: program?.reward_name_ar ?? "", rewardNameEn: program?.reward_name_en ?? "" };
+        const names = { rewardNameAr: program === undefined ? "" : arabicOr(program.reward_name_ar, program.reward_name_en), rewardNameEn: program?.reward_name_en ?? "" };
         const earlier = await trx
           .selectFrom("redemptions")
           .select(["card_id", "stamps_used", "stamps_left"])

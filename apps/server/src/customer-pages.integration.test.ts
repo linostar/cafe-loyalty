@@ -490,6 +490,34 @@ describe("web card", () => {
     expect((await app.inject({ method: "GET", url: "/stamps/v4/bean-1f5a85-ffffff-4-9.png" })).statusCode).toBe(404);
   });
 
+  it("shows the English reward, campaign and order type names on the Arabic card where the café left the Arabic out", async () => {
+    const { app, code, owner } = await cafeWithJoinCode();
+    const as = (method: "POST" | "PUT", url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers: withCookie(owner.session), payload });
+    await as("PUT", "/api/cafe/program", { stampsRequired: 9, rewardNameAr: "", rewardNameEn: "Free coffee" });
+    const coffee =
+      (await as("POST", "/api/cafe/order-types", { nameAr: "", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1, active: true })).json<{ orderTypes: { id: string }[] }>()
+        .orderTypes[0]?.id ?? "missing";
+    const secret = secretOf(await join(app, code, uniquePhone(), { offers: "yes" }));
+    const card = await cardRow(secret);
+    const created = await as("POST", "/api/campaigns", {
+      nameAr: "",
+      nameEn: "Afternoon",
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+      startsMinute: 0,
+      endsMinute: 1440,
+      discount: { kind: "percent", value: 20 },
+      orderTypeIds: [coffee],
+    });
+    expect(created.statusCode).toBe(201);
+    const campaignId = created.json<{ running: { id: string }[] }>().running[0]?.id;
+    await context.admin.query("INSERT INTO app.campaign_announcements (cafe_id, campaign_id, card_id) VALUES ($1, $2, $3)", [owner.cafeId, campaignId, card?.id]);
+    const page = (await app.inject({ method: "GET", url: `/c/${secret}?lang=ar` })).body;
+    expect(page).toContain("⁨Free coffee⁩");
+    expect(page).toContain("Afternoon");
+    expect(page).toContain("Coffee");
+    expect(page).not.toContain("⁨⁩");
+  });
+
   it("shows the program's stamps as a grid with the stamps left or the reward ready, and the offer the card holds (AC 14)", async () => {
     const { app, code, owner } = await cafeWithJoinCode();
     const as = (method: "POST" | "PUT", url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers: withCookie(owner.session), payload });

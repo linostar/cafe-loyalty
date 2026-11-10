@@ -88,10 +88,10 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
     program:
       program === undefined
         ? null
-        : { stampsRequired: program.stamps_required, rewardNameAr: program.reward_name_ar, rewardNameEn: program.reward_name_en },
+        : { stampsRequired: program.stamps_required, rewardNameAr: program.reward_name_ar ?? "", rewardNameEn: program.reward_name_en },
     orderTypes: orderTypes.map((row) => ({
       id: row.id,
-      nameAr: row.name_ar,
+      nameAr: row.name_ar ?? "",
       nameEn: row.name_en,
       priceCents: row.price_cents,
       costCents: row.cost_cents,
@@ -346,7 +346,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     const owner = ownerOf(request);
     const body = parseInput(loyaltyProgramSchema, request.body);
     return withCafe(db, owner.cafeId, async (trx) => {
-      const values = { stamps_required: body.stampsRequired, reward_name_ar: body.rewardNameAr, reward_name_en: body.rewardNameEn };
+      const values = { stamps_required: body.stampsRequired, reward_name_ar: body.rewardNameAr === "" ? null : body.rewardNameAr, reward_name_en: body.rewardNameEn };
       const saved = await trx
         .insertInto("loyalty_programs")
         .values({ cafe_id: owner.cafeId, ...values })
@@ -367,7 +367,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         .insertInto("order_types")
         .values({
           cafe_id: owner.cafeId,
-          name_ar: body.nameAr,
+          name_ar: body.nameAr === "" ? null : body.nameAr,
           name_en: body.nameEn,
           price_cents: body.priceCents,
           cost_cents: body.costCents,
@@ -400,7 +400,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         throw new ApiError("NOT_FOUND", apiText("This order type does not exist. Reload the page to see the current list."));
       }
       const next = {
-        name_ar: body.nameAr ?? current.name_ar,
+        name_ar: body.nameAr === undefined ? current.name_ar : body.nameAr === "" ? null : body.nameAr,
         name_en: body.nameEn ?? current.name_en,
         price_cents: body.priceCents ?? current.price_cents,
         cost_cents: body.costCents ?? current.cost_cents,

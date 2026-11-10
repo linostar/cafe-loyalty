@@ -9,6 +9,13 @@ import { syncSignatureSchema } from "./sync.js";
 const id = z.uuid().transform((value) => value.toLowerCase());
 const text = (max: number) => z.string().trim().min(1, apiText("Fill this in.")).max(max, apiMessage("Use at most {max} characters.", { max }));
 const timestamp = z.iso.datetime({ offset: false });
+/** An Arabic name the café may leave out: blank ("") means none, stored as NULL and shown in English (`arabicOr`). */
+const optionalArabic = (max: number) => z.string().trim().max(max, apiMessage("Use at most {max} characters.", { max }));
+
+/** The Arabic name to show: the café's own, or the English one when it left the Arabic out (null or blank). */
+export function arabicOr(ar: string | null | undefined, en: string): string {
+  return ar === null || ar === undefined || ar.trim() === "" ? en : ar;
+}
 
 /** Changes to a request object must name at least one field. */
 const atLeastOneField = (value: Record<string, unknown>) => Object.values(value).some((entry) => entry !== undefined);
@@ -86,12 +93,12 @@ export const cafeUpdateSchema = z
 
 export const loyaltyProgramSchema = z.object({
   stampsRequired: z.int().min(1, apiText("Use at least 1 stamp.")).max(50, apiText("Use at most 50 stamps.")),
-  rewardNameAr: text(80),
+  rewardNameAr: optionalArabic(80),
   rewardNameEn: text(80),
 });
 
 const orderTypeFields = {
-  nameAr: text(60),
+  nameAr: optionalArabic(60),
   nameEn: text(60),
   /** USD in integer cents. */
   priceCents: centsSchema,
@@ -285,7 +292,7 @@ export const MAX_RUNNING_CAMPAIGNS = 20;
  */
 export const campaignCreateSchema = z
   .object({
-    nameAr: text(60),
+    nameAr: optionalArabic(60),
     nameEn: text(60),
     weekdays: z
       .array(z.int().min(1).max(7))

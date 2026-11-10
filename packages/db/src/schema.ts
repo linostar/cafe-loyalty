@@ -44,7 +44,8 @@ export interface LoyaltyProgramsTable {
   id: ColumnType<string, string | undefined, never>;
   cafe_id: ColumnType<string, string, never>;
   stamps_required: number;
-  reward_name_ar: string;
+  /** Null when the café left it out: show reward_name_en (migration 0034). */
+  reward_name_ar: string | null;
   reward_name_en: string;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
@@ -53,7 +54,8 @@ export interface LoyaltyProgramsTable {
 export interface OrderTypesTable {
   id: ColumnType<string, string | undefined, never>;
   cafe_id: ColumnType<string, string, never>;
-  name_ar: string;
+  /** Null when the café left it out: show name_en (migration 0034). */
+  name_ar: string | null;
   name_en: string;
   price_cents: number;
   cost_cents: number;
@@ -332,7 +334,8 @@ export interface VisitItemsTable {
 export interface CampaignsTable {
   id: ColumnType<string, string | undefined, never>;
   cafe_id: ColumnType<string, string, never>;
-  name_ar: ColumnType<string, string, never>;
+  /** Null when the café left it out: show name_en (migration 0034). */
+  name_ar: ColumnType<string | null, string | null, never>;
   name_en: ColumnType<string, string, never>;
   /** ISO weekdays, 1 = Monday. */
   weekdays: ColumnType<number[], number[], never>;

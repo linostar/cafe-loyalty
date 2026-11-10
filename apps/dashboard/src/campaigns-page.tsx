@@ -1,4 +1,5 @@
 import {
+  arabicOr,
   cafeSetupSchema,
   campaignsSchema,
   formatUsd,
@@ -20,6 +21,7 @@ import { PageStatus, useApiData } from "./session.js";
 import { useUnsavedChanges, type UnsavedChanges } from "./unsaved-changes.js";
 
 const AR = {
+  "Leave it empty to show the English name.": "اتركه فارغاً لعرض الاسم بالإنجليزية.",
   "{value}% off": "خصم {value}%",
   "{amount} off": "خصم {amount}",
   "a removed order type": "نوع طلب محذوف",
@@ -117,7 +119,7 @@ const timeOf = (minute: number): string => `${String(Math.floor(minute / 60) % 2
 const discountText = (t: T, discount: Campaign["discount"]): string =>
   discount.kind === "percent" ? t("{value}% off", { value: discount.value }) : t("{amount} off", { amount: formatUsd(discount.value, "en") });
 
-const nameOf = (lang: Lang, named: { nameEn: string; nameAr: string }): string => (lang === "ar" ? named.nameAr : named.nameEn);
+const nameOf = (lang: Lang, named: { nameEn: string; nameAr: string }): string => (lang === "ar" ? arabicOr(named.nameAr, named.nameEn) : named.nameEn);
 
 /** "Mon, Tue, Wed, 15:00 to 17:00: 20% off Latte, Cake". */
 function describe(t: T, lang: Lang, campaign: Campaign, orderTypes: readonly OrderType[]): string {
@@ -320,7 +322,12 @@ function NewCampaignForm({
           value={nameAr}
           onChange={setNameAr}
           maxLength={60}
-          hint={suchAs(t, "عصر هادئ", "ar")}
+          optional
+          hint={
+            <>
+              {suchAs(t, "عصر هادئ", "ar")} {t("Leave it empty to show the English name.")}
+            </>
+          }
           error={fieldErrors.nameAr}
         />
       </div>

@@ -52,7 +52,7 @@ export function joinView(lang: Lang, view: JoinView): string {
 <h1>${t(lang, "joinTitle", { cafe: cafeName })}</h1>
 ${program === undefined ? null : html`<p>${t(lang, "programSummary", { stamps: count(lang, "stampsToCollect", program.stampsRequired), reward: program.reward })}</p>`}
 </header>
-<form method="post" action="${view.path}" novalidate class="card">
+<form method="post" action="${view.path}" novalidate class="card join-form">
 <input type="hidden" name="lang" value="${lang}">
 <input type="hidden" name="form" value="${view.formToken}">
 <label for="name">${t(lang, "nameLabel")}</label>

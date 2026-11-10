@@ -1,3 +1,4 @@
+import { arabicOr } from "@cafe-loyalty/shared";
 import { feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Kysely } from "kysely";
@@ -214,7 +215,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       program:
         found.program === undefined
           ? undefined
-          : { stampsRequired: found.program.stamps_required, rewardNameAr: found.program.reward_name_ar, rewardNameEn: found.program.reward_name_en },
+          : { stampsRequired: found.program.stamps_required, rewardNameAr: arabicOr(found.program.reward_name_ar, found.program.reward_name_en), rewardNameEn: found.program.reward_name_en },
       qr: current ? signCardQr(options.secrets, { cardId: pass.card_id, cafeId: pass.cafe_id, epoch: pass.epoch }) : null,
       offers: found.offers,
       feedbackUrl: current && found.feedback !== undefined ? feedbackUrl(options.publicUrl, options.secrets, found.feedback) : undefined,
