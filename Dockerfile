@@ -21,7 +21,7 @@ RUN [ -n "$BUILD_ID" ] && [ -n "$BUILT_AT" ] && head -n 1 release-commits.txt | 
 RUN pnpm build
 # Only what runs: the server's and worker's production dependencies, their builds, and the two web builds.
 RUN mkdir web && mv apps/dashboard/dist web/dashboard && mv apps/counter/dist web/counter \
-  && rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/counter apps/dashboard \
+  && rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/counter apps/dashboard apps/landing \
   && pnpm install --offline --frozen-lockfile --prod --filter "@cafe-loyalty/server..." --filter "@cafe-loyalty/worker..." \
   && rm -rf apps/server/src apps/server/sync-fixtures apps/worker/src packages/db/src packages/shared/src packages/ui/src/*.ts deploy
 

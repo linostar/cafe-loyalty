@@ -97,6 +97,17 @@ describe("loadServerConfig", () => {
     expect(loadServerConfig({ ...valid, BUILT_AT: undefined }).BUILT_AT.getTime()).toBeGreaterThanOrEqual(before);
   });
 
+  it("turns the pilot request form on with both its settings, never one alone", () => {
+    expect(loadServerConfig(valid).pilotRequests).toBeUndefined();
+    expect(loadServerConfig({ ...valid, LANDING_URL: "https://landing.example.com", PILOT_REQUEST_EMAIL: "Pilots@Example.com" }).pilotRequests).toEqual({
+      landingUrl: "https://landing.example.com",
+      recipient: "pilots@example.com",
+    });
+    expect(() => loadServerConfig({ ...valid, LANDING_URL: "https://landing.example.com" })).toThrow(/PILOT_REQUEST_EMAIL/);
+    expect(() => loadServerConfig({ ...valid, PILOT_REQUEST_EMAIL: "pilots@example.com" })).toThrow(/LANDING_URL/);
+    expect(() => loadServerConfig({ ...valid, LANDING_URL: "https://landing.example.com/page", PILOT_REQUEST_EMAIL: "pilots@example.com" })).toThrow(/LANDING_URL/);
+  });
+
   it("requires the dashboard address without a path", () => {
     expect(() => loadServerConfig({ ...valid, DASHBOARD_URL: "https://example.com/dashboard" })).toThrow(/DASHBOARD_URL/);
     expect(loadServerConfig({ ...valid, DASHBOARD_URL: "https://dashboard.example.com/" }).DASHBOARD_URL).toBe("https://dashboard.example.com/");

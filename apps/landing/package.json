@@ -1,0 +1,20 @@
+{
+  "name": "@cafe-loyalty/landing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "build:site": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@cafe-loyalty/shared": "workspace:*",
+    "@cafe-loyalty/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^8.3.6"
+  }
+}

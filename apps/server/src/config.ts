@@ -1,5 +1,5 @@
 import { base64PemSchema, googleIssuerIdSchema, googleServiceAccountSchema, keyFitsCertificate, keyringSchema } from "@cafe-loyalty/db";
-import { loadEnv } from "@cafe-loyalty/shared";
+import { loadEnv, ownerEmailSchema } from "@cafe-loyalty/shared";
 import { z } from "zod";
 
 const flag = z.enum(["true", "false"]).transform((value) => value === "true");
@@ -21,6 +21,7 @@ const secretBytes = (name: string) =>
   z.string().refine((value) => BASE64.test(value) && Buffer.from(value, "base64").length >= 32, `Use at least 32 random bytes in base64 (${name}).`);
 
 export const counterUrlSchema = originSchema("counter app", "https://counter.example.com");
+export const landingUrlSchema = originSchema("landing page", "https://loyaltyeverywhere.com");
 
 const APPLE_KEYS = ["APPLE_PASS_TYPE_ID", "APPLE_TEAM_ID", "APPLE_PASS_CERTIFICATE", "APPLE_PASS_KEY", "APPLE_WWDR_CERTIFICATE"] as const;
 
@@ -98,6 +99,12 @@ const serverEnvSchema = z.object({
    */
   GOOGLE_WALLET_ISSUER_ID: googleIssuerIdSchema.optional(),
   GOOGLE_WALLET_SERVICE_ACCOUNT: googleServiceAccountSchema.optional(),
+  /**
+   * The landing page's "Request a pilot" form (`POST /pilot-request`): both, or neither for no form. The landing page's
+   * address (the only page that may post it, and where its thanks and sorry pages are) and who gets each request by email.
+   */
+  LANDING_URL: landingUrlSchema.optional(),
+  PILOT_REQUEST_EMAIL: ownerEmailSchema.optional(),
 })
   .superRefine((env, context) => {
     const missingApple = APPLE_KEYS.filter((key) => env[key] === undefined);
@@ -112,6 +119,10 @@ const serverEnvSchema = z.object({
       !keyFitsCertificate(env.APPLE_PASS_CERTIFICATE, env.APPLE_PASS_KEY)
     ) {
       context.addIssue({ code: "custom", path: ["APPLE_PASS_KEY"], message: "Use the private key of APPLE_PASS_CERTIFICATE." });
+    }
+    if ((env.LANDING_URL === undefined) !== (env.PILOT_REQUEST_EMAIL === undefined)) {
+      const missing = env.LANDING_URL === undefined ? "LANDING_URL" : "PILOT_REQUEST_EMAIL";
+      context.addIssue({ code: "custom", path: [missing], message: "Set both LANDING_URL and PILOT_REQUEST_EMAIL, or neither (no pilot request form)." });
     }
     if ((env.GOOGLE_WALLET_ISSUER_ID === undefined) !== (env.GOOGLE_WALLET_SERVICE_ACCOUNT === undefined)) {
       const missing = env.GOOGLE_WALLET_ISSUER_ID === undefined ? "GOOGLE_WALLET_ISSUER_ID" : "GOOGLE_WALLET_SERVICE_ACCOUNT";
@@ -138,8 +149,9 @@ const serverEnvSchema = z.object({
       }
     }
   })
-  .transform(({ APPLE_PASS_TYPE_ID, APPLE_TEAM_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, APPLE_WWDR_CERTIFICATE, GOOGLE_WALLET_ISSUER_ID, GOOGLE_WALLET_SERVICE_ACCOUNT, ...env }) => ({
+  .transform(({ APPLE_PASS_TYPE_ID, APPLE_TEAM_ID, APPLE_PASS_CERTIFICATE, APPLE_PASS_KEY, APPLE_WWDR_CERTIFICATE, GOOGLE_WALLET_ISSUER_ID, GOOGLE_WALLET_SERVICE_ACCOUNT, LANDING_URL, PILOT_REQUEST_EMAIL, ...env }) => ({
     ...env,
+    pilotRequests: LANDING_URL === undefined || PILOT_REQUEST_EMAIL === undefined ? undefined : { landingUrl: LANDING_URL, recipient: PILOT_REQUEST_EMAIL },
     googlePasses:
       GOOGLE_WALLET_ISSUER_ID === undefined || GOOGLE_WALLET_SERVICE_ACCOUNT === undefined
         ? undefined

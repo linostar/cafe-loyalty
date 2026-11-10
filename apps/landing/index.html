@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="theme-color" content="%THEME_COLOR%" />
+    <meta name="description" content="Loyalty cards for independent cafés: stamps in Apple Wallet, Google Wallet or a web card, a counter app that works offline, and offers that never sell below your margin." />
+    <link rel="icon" type="image/svg+xml" href="../../packages/ui/assets/logo.svg" />
+    <link rel="alternate" hreflang="en" href="https://loyaltyeverywhere.com/" />
+    <link rel="alternate" hreflang="ar" href="https://loyaltyeverywhere.com/ar/" />
+    <link rel="stylesheet" href="/src/landing.css" />
+    <title>%PRODUCT_NAME% · Loyalty cards for independent cafés</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="page">
+        <a class="brand" href="/"><img src="../../packages/ui/assets/logo.svg" alt="" width="36" height="36" />%PRODUCT_NAME%</a>
+        <nav class="header-links" aria-label="Site">
+          <a href="/ar/" lang="ar" hreflang="ar">العربية</a>
+          <a href="#pilot">Request a pilot</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="page">
+          <div>
+            <h1 id="hero-title">A loyalty card your customers already carry</h1>
+            <p class="lead">Stamps in Apple Wallet, Google Wallet or a web card: no app to download and no paper card to lose. Built for independent cafés in Lebanon, in Arabic and English.</p>
+            <div class="actions">
+              <a class="button-link" href="#pilot">Request a pilot</a>
+              <a class="button-link quiet" href="#how">How it works</a>
+            </div>
+          </div>
+          <figure class="sample-card" aria-label="A sample loyalty card: 6 of 10 stamps">
+            <p class="card-name">Your café</p>
+            <ul class="sample-stamps" aria-hidden="true">
+              <li class="is-filled"></li>
+              <li class="is-filled"></li>
+              <li class="is-filled"></li>
+              <li class="is-filled"></li>
+              <li class="is-filled"></li>
+              <li class="is-filled"></li>
+              <li></li>
+              <li></li>
+              <li></li>
+              <li></li>
+            </ul>
+            <p class="card-reward">4 stamps to go for a free coffee.</p>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section-block sunken" id="how" aria-labelledby="how-title">
+        <div class="page">
+          <h2 id="how-title">How it works</h2>
+          <p class="section-intro">Three steps, and nothing for your customers to install.</p>
+          <ol class="grid">
+            <li class="tile">
+              <span class="step-number" aria-hidden="true">1</span>
+              <h3>Customers scan your QR</h3>
+              <p>A printed code at your counter. They enter their name and mobile number and get their card in seconds.</p>
+            </li>
+            <li class="tile">
+              <span class="step-number" aria-hidden="true">2</span>
+              <h3>Baristas add stamps</h3>
+              <p>The counter app runs on any phone. Scan the card or type the number; it keeps working when the internet drops.</p>
+            </li>
+            <li class="tile">
+              <span class="step-number" aria-hidden="true">3</span>
+              <h3>You see what works</h3>
+              <p>Busy and quiet hours, regulars who stopped coming, and what each offer brought in, on your dashboard.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section-block" aria-labelledby="features-title">
+        <div class="page">
+          <h2 id="features-title">Made for how cafés run</h2>
+          <ul class="grid">
+            <li class="tile">
+              <h3>In their wallet</h3>
+              <p>Apple Wallet, Google Wallet or a web card in the browser, in your colours, with your logo and your stamp shape.</p>
+            </li>
+            <li class="tile">
+              <h3>Quiet-hour offers</h3>
+              <p>Fill slow afternoons with offers on the cards of customers who opted in, never priced below the margin you set.</p>
+            </li>
+            <li class="tile">
+              <h3>Bring regulars back</h3>
+              <p>When a regular stops coming, their card can get a welcome-back offer on its own.</p>
+            </li>
+            <li class="tile">
+              <h3>Stamps you can trust</h3>
+              <p>Each barista signs in with a PIN, repeat stamps are held back, and unusual visits wait for your review.</p>
+            </li>
+            <li class="tile">
+              <h3>Feedback and reviews</h3>
+              <p>After a visit, customers can send you a private message or leave a review on Google.</p>
+            </li>
+            <li class="tile">
+              <h3>Private by design</h3>
+              <p>Your café sees a customer's card and name, not their number. Customers can delete their card at any time.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section-block sunken" id="pilot" aria-labelledby="pilot-title">
+        <div class="page">
+          <h2 id="pilot-title">Request a pilot</h2>
+          <p class="section-intro">We are starting with a small number of cafés. Tell us about yours and we will get in touch.</p>
+          <form class="pilot-form" method="post" action="%PILOT_REQUEST_URL%">
+            <input type="hidden" name="lang" value="en" />
+            <div class="field">
+              <label for="cafe">Café name</label>
+              <input id="cafe" name="cafe" type="text" autocomplete="organization" required maxlength="120" />
+            </div>
+            <div class="field">
+              <label for="name">Your name</label>
+              <input id="name" name="name" type="text" autocomplete="name" required maxlength="60" />
+            </div>
+            <div class="field">
+              <label for="phone">Mobile number (WhatsApp)</label>
+              <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" required maxlength="30" aria-describedby="phone-hint" />
+              <p id="phone-hint" class="hint">Such as 70 123 456, or with its country code.</p>
+            </div>
+            <div class="field">
+              <label for="email">Email <span class="optional">(optional)</span></label>
+              <input id="email" name="email" type="email" autocomplete="email" dir="ltr" maxlength="254" />
+            </div>
+            <div class="field">
+              <label for="city">City or area <span class="optional">(optional)</span></label>
+              <input id="city" name="city" type="text" autocomplete="address-level2" maxlength="60" />
+            </div>
+            <div class="field">
+              <label for="message">Anything we should know? <span class="optional">(optional)</span></label>
+              <textarea id="message" name="message" maxlength="1000"></textarea>
+            </div>
+            <div class="trap" aria-hidden="true">
+              <label for="website">Leave this empty</label>
+              <input id="website" name="website" type="text" tabindex="-1" autocomplete="off" />
+            </div>
+            <p class="privacy-note">We use these details only to contact you about the pilot.</p>
+            <button type="submit">Send request</button>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page">
+        <p>%PRODUCT_NAME% · Loyalty cards for independent cafés</p>
+      </div>
+    </footer>
+  </body>
+</html>

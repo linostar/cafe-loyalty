@@ -1,0 +1,290 @@
+/*
+ * The landing page (loyaltyeverywhere.com): the design system's fonts, tokens and base styles, and the page's own
+ * layout. Logical properties only, so the Arabic page (dir="rtl") needs no other styles.
+ */
+@import "@cafe-loyalty/ui/fonts.css";
+@import "@cafe-loyalty/ui/tokens.css";
+@import "@cafe-loyalty/ui/base.css";
+
+.skip-link {
+  position: absolute;
+  inset-inline-start: var(--space-4);
+  inset-block-start: -10rem;
+  z-index: var(--z-overlay);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.skip-link:focus {
+  inset-block-start: var(--space-2);
+}
+
+/* Top bar: the mark and name, the other language, and the way to the pilot form. */
+.site-header {
+  background: var(--color-espresso);
+  color: var(--color-on-espresso);
+}
+
+.site-header .page {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-on-espresso);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  text-decoration: none;
+}
+
+.brand img {
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+}
+
+.header-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.header-links a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  color: var(--color-on-espresso);
+}
+
+.site-header :focus-visible {
+  outline-color: var(--color-focus-inverse);
+}
+
+/* A link that looks like the main button. */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--control-height-touch);
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-sm);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.button-link:hover {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+
+.button-link.quiet {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: none;
+}
+
+.button-link.quiet:hover {
+  background: var(--color-surface-sunken);
+}
+
+/* The opening: what it is, beside a sample card. */
+.hero {
+  padding-block: var(--space-7);
+}
+
+.hero .page {
+  display: grid;
+  gap: var(--space-6);
+  align-items: center;
+}
+
+@media (min-width: 56rem) {
+  .hero .page {
+    grid-template-columns: 1.2fr 1fr;
+  }
+}
+
+.hero h1 {
+  font-size: var(--text-3xl);
+}
+
+.lead {
+  max-inline-size: 36rem;
+  font-size: var(--text-lg);
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block-start: var(--space-5);
+}
+
+/* The sample card, drawn like the web card: the café's name, stamps in rows of five, the reward. */
+.sample-card {
+  justify-self: center;
+  inline-size: min(100%, 22rem);
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--color-espresso);
+  color: var(--color-on-espresso);
+  box-shadow: var(--shadow-lg);
+}
+
+.sample-card .card-name {
+  margin-block-end: var(--space-4);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.sample-stamps {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.sample-stamps li {
+  aspect-ratio: 1;
+  border: 2px solid var(--color-on-espresso-muted);
+  border-radius: 50%;
+}
+
+.sample-stamps li.is-filled {
+  border-color: var(--color-on-espresso);
+  background: var(--color-on-espresso);
+}
+
+.sample-card .card-reward {
+  margin: 0;
+  color: var(--color-on-espresso-muted);
+}
+
+/* Sections */
+.section-block {
+  padding-block: var(--space-7);
+}
+
+.section-block.sunken {
+  background: var(--color-surface-sunken);
+}
+
+.section-block h2 {
+  font-size: var(--text-2xl);
+}
+
+.section-intro {
+  max-inline-size: 40rem;
+  margin-block-end: var(--space-5);
+  color: var(--color-text-muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tile {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.tile h3 {
+  margin-block-end: var(--space-2);
+}
+
+.tile p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  margin-block-end: var(--space-3);
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+  font-weight: var(--weight-bold);
+}
+
+/* The pilot form */
+.pilot-form {
+  max-inline-size: var(--content-narrow);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.pilot-form .field {
+  margin-block-end: var(--space-4);
+}
+
+.pilot-form textarea {
+  min-block-size: 6rem;
+  resize: vertical;
+}
+
+.pilot-form button {
+  inline-size: 100%;
+  min-block-size: var(--control-height-touch);
+}
+
+.optional {
+  font-weight: var(--weight-regular);
+  color: var(--color-text-muted);
+}
+
+/* A field bots fill and people never see. */
+.trap {
+  display: none;
+}
+
+.privacy-note {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* The form's answers (thanks, sorry) */
+.answer {
+  padding-block: var(--space-7);
+}
+
+.site-footer {
+  padding-block: var(--space-5);
+  background: var(--color-espresso);
+  color: var(--color-on-espresso-muted);
+  font-size: var(--text-sm);
+}
+
+.site-footer p {
+  margin: 0;
+}
