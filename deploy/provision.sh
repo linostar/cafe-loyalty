@@ -433,7 +433,7 @@ EMAIL_FROM=
 
 # Optional, production only: the landing page's pilot request form (both); see .env.example.
 # LANDING_URL=https://loyaltyeverywhere.com
-# PILOT_REQUEST_EMAIL=" || true
+# PILOT_REQUEST_EMAIL=sales@loyaltyeverywhere.com" || true
   fi
   # The addresses follow the domains given to this run, and the operator's name its OPERATOR_NAME (after PUBLIC_URL; awk
   # prints it as it is, where sed would read & and backslashes in it).
