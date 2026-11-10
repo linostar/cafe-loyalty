@@ -71,7 +71,7 @@ function serve(
       "/api/auth/session": SESSION,
       "/api/cafe": setup,
       "/api/staff": { staff: lists.staff ?? [] },
-      "/api/devices": { devices: lists.devices ?? [], pairingCodes: [] },
+      "/api/devices": { devices: lists.devices ?? [], pairingCodes: [], counterUrl: "https://counter.example.test" },
       "/api/cafe/join": { joinUrl: "https://card.example.test/join/0123456789abcdef0123456789abcdef" },
       "/api/cafe/wallet-deliveries": { failing: [] },
       "/api/review-queue": { items: [], nextCursor: null },
@@ -291,7 +291,7 @@ describe("Home's setup checklist (D22)", () => {
         return Promise.resolve(respond(200, { staff: [RAMI] }));
       }
       return path === "/api/devices"
-        ? staff.then(() => new Promise((resolve) => setTimeout(resolve, 0))).then(() => respond(200, { devices: [{ ...PHONE, lastSeenAt: new Date().toISOString() }], pairingCodes: [] }))
+        ? staff.then(() => new Promise((resolve) => setTimeout(resolve, 0))).then(() => respond(200, { devices: [{ ...PHONE, lastSeenAt: new Date().toISOString() }], pairingCodes: [], counterUrl: "https://counter.example.test" }))
         : undefined;
     });
     render(<App />);

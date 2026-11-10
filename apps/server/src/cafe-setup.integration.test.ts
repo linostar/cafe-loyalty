@@ -257,7 +257,7 @@ describe("pairing", () => {
     const again = await app.inject({ method: "POST", url: "/api/device/pair", headers: CURRENT_BUILD, payload: { code: code.code, publicKey: publicJwk } });
     expect(again.statusCode).toBe(400);
     expect(again.json()).toMatchObject({ code: "PAIRING_CODE_INVALID", retryable: false });
-    expect((await as("GET", "/api/devices")).json()).toMatchObject({ devices: [{ name: "Counter 1", revoked: false }], pairingCodes: [] });
+    expect((await as("GET", "/api/devices")).json()).toMatchObject({ devices: [{ name: "Counter 1", revoked: false }], pairingCodes: [], counterUrl: COUNTER_URL });
     expect(await auditActions(owner.cafeId)).toEqual(expect.arrayContaining(["pairing_code.created", "device.paired"]) as unknown);
   });
 
@@ -471,6 +471,6 @@ describe("device tokens", () => {
     const first = await pairedApp();
     const second = await ownerApp();
     expect((await second.as("POST", `/api/devices/${first.device.deviceId}/revoke`)).statusCode).toBe(404);
-    expect((await second.as("GET", "/api/devices")).json()).toEqual({ devices: [], pairingCodes: [] });
+    expect((await second.as("GET", "/api/devices")).json()).toEqual({ devices: [], pairingCodes: [], counterUrl: COUNTER_URL });
   });
 });

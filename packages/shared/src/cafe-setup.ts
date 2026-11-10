@@ -191,6 +191,8 @@ export const devicesSchema = z.object({
   devices: z.array(deviceSchema),
   /** Open codes, without the code itself (shown once, when created). */
   pairingCodes: z.array(z.object({ id: z.uuid(), deviceName: z.string(), expiresAt: timestamp })),
+  /** The counter app's address, for a paired phone to find it again (the pairing QR opens it only once). */
+  counterUrl: z.url(),
 });
 
 const base64url = (length: number) => z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${String(length)}}$`), apiText("Not a valid key."));

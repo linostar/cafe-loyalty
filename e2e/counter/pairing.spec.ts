@@ -71,6 +71,35 @@ test("pairs from the dashboard's QR link, locks a barista out after five wrong P
   await expect(page.getByLabel("PIN", { exact: true })).toBeDisabled();
 });
 
+test("says where to find the counter again once paired, and offers the browser's install where it has one", async ({ page }) => {
+  await mockApi(page, {
+    "POST /api/device/pair": reply(201, PAIRED),
+    "GET /api/device/staff": reply(200, { staff: [RAMI] }),
+  });
+  await page.goto("/pair");
+  await page.getByLabel("Pairing code").fill("abcd 1234 efgh");
+  await page.getByRole("button", { name: "Pair this phone" }).click();
+  await expect(page.getByRole("heading", { name: "Who is working?" })).toBeVisible();
+  // In a browser tab with no install offer: the home screen, or a bookmark of its address.
+  await expect(page.getByText(`add it to the home screen from the browser's menu, or bookmark ${new URL(page.url()).host}.`, { exact: false })).toBeVisible();
+  // The browser offers to install it: the counter's own button opens that offer, once.
+  await page.evaluate(() => {
+    const event = Object.assign(new Event("beforeinstallprompt", { cancelable: true }), {
+      prompt: () => {
+        document.body.dataset.prompted = String(Number(document.body.dataset.prompted ?? "0") + 1);
+        return Promise.resolve();
+      },
+    });
+    window.dispatchEvent(event);
+  });
+  await page.getByRole("button", { name: "Install the counter" }).click();
+  await expect(page.locator("body")).toHaveAttribute("data-prompted", "1");
+  await expect(page.getByRole("button", { name: "Install the counter" })).toHaveCount(0);
+  // Installed: nothing more to say.
+  await page.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
+  await expect(page.locator(".install-hint")).toHaveCount(0);
+});
+
 test("signs a barista in with the right PIN and keeps them until switched", async ({ page }) => {
   await mockApi(page, {
     "POST /api/device/pair": reply(201, PAIRED),

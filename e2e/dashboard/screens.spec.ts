@@ -82,6 +82,7 @@ const SIGNED_IN = {
       { id: "ad1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f02", name: "Old phone", revoked: true, pairedAt: "2026-08-01T08:00:00.000Z", lastSeenAt: "2026-09-20T15:00:00.000Z" },
     ],
     pairingCodes: [{ id: "be1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f01", deviceName: "Back bar", expiresAt: "2026-10-09T09:00:00.000Z" }],
+    counterUrl: "https://counter.example.test",
   }),
   "GET /api/review-queue": reply(200, {
     items: [

@@ -125,7 +125,7 @@ async function provenDevice(
   return { deviceId: previous.deviceId, wasRevoked: device.revoked_at !== null };
 }
 
-async function listDevices(trx: Transaction<Database>): Promise<Devices> {
+async function listDevices(trx: Transaction<Database>, counterUrl: string): Promise<Devices> {
   const devices = await trx.selectFrom("devices").select(["id", "name", "paired_at", "last_seen_at", "revoked_at"]).orderBy("paired_at").execute();
   const codes = await trx.selectFrom("pairing_codes").select(["id", "device_name", "expires_at"]).where("expires_at", ">", now()).orderBy("created_at").execute();
   return {
@@ -137,6 +137,7 @@ async function listDevices(trx: Transaction<Database>): Promise<Devices> {
       revoked: row.revoked_at !== null,
     })),
     pairingCodes: codes.map((row) => ({ id: row.id, deviceName: row.device_name, expiresAt: row.expires_at.toISOString() })),
+    counterUrl,
   };
 }
 
@@ -175,7 +176,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
     }
   }
 
-  app.get("/devices", { config: { access: "owner" } }, async (request) => withCafe(db, ownerOf(request).cafeId, listDevices));
+  app.get("/devices", { config: { access: "owner" } }, async (request) => withCafe(db, ownerOf(request).cafeId, (trx) => listDevices(trx, options.counterUrl)));
 
   /** A single-use code to pair a new device, shown once: as text and, through pairingUrl, as a QR. */
   app.post("/devices/pairing-codes", { config: { access: "owner" } }, async (request, reply) => {
@@ -254,7 +255,7 @@ export function deviceRoutes(app: FastifyInstance, options: DeviceRoutesOptions,
         await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "device.revoked", entityType: "device", entityId: id });
         request.log.info({ cafeId: owner.cafeId, deviceId: id }, "device revoked");
       }
-      return listDevices(trx);
+      return listDevices(trx, options.counterUrl);
     });
   });
 

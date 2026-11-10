@@ -151,7 +151,7 @@ test("pairs a phone with a code and a QR, and removes a phone", async ({ page })
   const counter = { id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f43", name: "Front counter", pairedAt: "2026-10-08T12:00:00.000Z", lastSeenAt: "2026-10-08T12:30:00.000Z", revoked: false };
   await mockApi(page, {
     "GET /api/auth/session": reply(200, SESSION),
-    "GET /api/devices": reply(200, { devices: [counter], pairingCodes: [] }),
+    "GET /api/devices": reply(200, { devices: [counter], pairingCodes: [], counterUrl: "https://counter.example.test" }),
     "POST /api/devices/pairing-codes": async (route) => {
       expect(json(route)).toEqual({ deviceName: "Back bar" });
       await route.fulfill({
@@ -165,9 +165,13 @@ test("pairs a phone with a code and a QR, and removes a phone", async ({ page })
         },
       });
     },
-    [`POST /api/devices/${counter.id}/revoke`]: reply(200, { devices: [{ ...counter, revoked: true }], pairingCodes: [] }),
+    [`POST /api/devices/${counter.id}/revoke`]: reply(200, { devices: [{ ...counter, revoked: true }], pairingCodes: [], counterUrl: "https://counter.example.test" }),
   });
   await page.goto("/devices");
+  // Where a paired phone finds the counter again: its address, as a link and a QR, with no code.
+  const openCounter = page.getByRole("region", { name: "Open the counter" });
+  await expect(openCounter.getByRole("link", { name: "counter.example.test" })).toHaveAttribute("href", "https://counter.example.test");
+  await expect(openCounter.getByRole("img", { name: "QR code that opens the counter" })).toBeVisible();
   await page.getByLabel("Phone name").fill("Back bar");
   await page.getByRole("button", { name: "Create pairing code" }).click();
   await expect(page.getByRole("heading", { name: "Pair Back bar" })).toBeFocused();
@@ -484,7 +488,7 @@ const fakePrint = () => {
 };
 
 const RAMI = { id: "5d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f42", name: "Rami", revoked: false, createdAt: "2026-10-08T12:00:00.000Z" };
-const NO_DEVICES = { devices: [], pairingCodes: [] };
+const NO_DEVICES = { devices: [], pairingCodes: [], counterUrl: "https://counter.example.test" };
 
 test.describe("setup wizard (D1)", () => {
   test("takes a new café through the five steps by keyboard, each done in place or skipped, and is not shown again", async ({ page }) => {
@@ -595,7 +599,7 @@ test.describe("setup checklist (D22)", () => {
       "GET /api/devices": async (route) => {
         await staff;
         await route.fulfill({
-          json: { devices: [{ id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f43", name: "Front counter", pairedAt: done, lastSeenAt: new Date().toISOString(), revoked: false }], pairingCodes: [] },
+          json: { devices: [{ id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f43", name: "Front counter", pairedAt: done, lastSeenAt: new Date().toISOString(), revoked: false }], pairingCodes: [], counterUrl: "https://counter.example.test" },
         });
       },
     });
@@ -677,7 +681,7 @@ test.describe("Staff and Devices (D5, D14)", () => {
     const created: unknown[] = [];
     await mockApi(page, {
       "GET /api/auth/session": reply(200, SESSION),
-      "GET /api/devices": reply(200, { devices: [], pairingCodes: [] }),
+      "GET /api/devices": reply(200, { devices: [], pairingCodes: [], counterUrl: "https://counter.example.test" }),
       "POST /api/devices/pairing-codes": async (route) => {
         created.push(json(route));
         // The second is a new code, as the server makes one: its own id, ten minutes from when it is asked for.
@@ -712,7 +716,7 @@ test.describe("Staff and Devices (D5, D14)", () => {
           { id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f46", name: "Front counter", pairedAt: "2026-10-08T12:00:00.000Z", lastSeenAt: "2026-10-08T12:30:00.000Z", revoked: false },
           { id: "7d1c1a52-7c55-4a0e-9a5e-0d4c1b2a3f47", name: "Old phone", pairedAt: "2026-09-08T12:00:00.000Z", lastSeenAt: "2026-09-20T12:30:00.000Z", revoked: true },
         ],
-        pairingCodes: [],
+        pairingCodes: [], counterUrl: "https://counter.example.test",
       }),
     });
     await page.goto("/devices");
