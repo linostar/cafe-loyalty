@@ -380,9 +380,14 @@ describe("device tokens", () => {
     const { rows } = await context.admin.query<{ name_ar: string | null }>("SELECT name_ar FROM app.order_types WHERE cafe_id = $1 AND id = $2", [owner.cafeId, plain]);
     expect(rows).toEqual([{ name_ar: null }]);
 
+    // A campaign without an Arabic name: the owner's list keeps it blank (so "Start again" copies no English into it).
+    const campaign = { nameAr: "", nameEn: "Afternoon", weekdays: [1, 2, 3, 4, 5, 6, 7], startsMinute: 0, endsMinute: 1440, discount: { kind: "percent", value: 10 }, orderTypeIds: [plain] };
+    expect((await as("POST", "/api/campaigns", campaign)).json<{ running: { nameAr: string }[] }>().running.map((running) => running.nameAr)).toEqual([""]);
+
     // The counter always gets a name: the English one where the Arabic is left out (older counters need one).
     const catalog = deviceCatalogSchema.parse((await app.inject({ method: "GET", url: "/api/device/catalog", headers: withBearer(device.accessToken) })).json());
     expect(catalog.program).toMatchObject({ rewardNameAr: "Free coffee", rewardNameEn: "Free coffee" });
+    expect(catalog.campaigns.map((running) => [running.nameEn, running.nameAr])).toEqual([["Afternoon", "Afternoon"]]);
     expect(catalog.orderTypes.map((type) => [type.nameEn, type.nameAr])).toEqual(
       expect.arrayContaining([
         ["Espresso", "Espresso"],

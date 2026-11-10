@@ -420,7 +420,8 @@ export function stampingRoutes(app: FastifyInstance, options: StampingRoutesOpti
       return {
         catalogVersion: cafe.catalog_version,
         timeZone: cafe.time_zone,
-        campaigns: await loadCampaigns(trx, { runningNow: true }),
+        // The owner's list keeps a left-out Arabic name blank; the counter gets the English one (older counters need one).
+        campaigns: (await loadCampaigns(trx, { runningNow: true })).map((campaign) => ({ ...campaign, nameAr: arabicOr(campaign.nameAr, campaign.nameEn) })),
         winBackOffers: offers.flatMap((offer) =>
           offer.discount_kind === null || offer.discount_value === null || offer.min_margin_percent === null
             ? []
