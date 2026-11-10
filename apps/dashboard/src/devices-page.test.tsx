@@ -68,6 +68,8 @@ describe("Devices", () => {
     expect(group).not.toHaveAttribute("open");
     expect(group).toHaveTextContent("Old phone");
     expect(group).not.toHaveTextContent("Front counter");
+    // A phone is paired: where it finds the counter again.
+    expect(screen.getByText(/^A phone stays paired\. To record visits on it again/)).toBeInTheDocument();
   });
 
   it("says when every phone is removed", async () => {
@@ -75,6 +77,9 @@ describe("Devices", () => {
     render(<DevicesPage />);
     expect(await screen.findByText("Every phone is removed. Each stops working the next time it connects. Pair one above to start again.")).toBeInTheDocument();
     expect(screen.getByText("Removed (1)")).toBeInTheDocument();
+    // No phone left to reopen the counter on: pairing comes first.
+    expect(screen.getByText(/^No phone is paired yet: pair one below first\./)).toBeInTheDocument();
+    expect(screen.queryByText(/^A phone stays paired/)).toBeNull();
   });
 
   it("does not bring a dismissed code back when its renewal is answered after Done", async () => {
