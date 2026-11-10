@@ -8,6 +8,7 @@ import { customerPages } from "./customer-pages.js";
 import { registerReadiness } from "./health.js";
 import { createSmtpMailer } from "./mailer.js";
 import { passkitRoutes } from "./passkit-routes.js";
+import { pilotRequests } from "./pilot-requests.js";
 
 let config: ServerConfig;
 try {
@@ -96,6 +97,11 @@ await app.register(customerPages, {
   apple: config.applePasses,
   google: config.googlePasses,
 });
+if (config.pilotRequests === undefined) {
+  app.log.warn("The pilot request form is off: LANDING_URL and PILOT_REQUEST_EMAIL are not set, so the landing page's form gets 404");
+} else {
+  await app.register(pilotRequests, { mailer, background, ...config.pilotRequests });
+}
 if (config.applePasses !== undefined) {
   await app.register(passkitRoutes, { prefix: "/passkit", db: database.db, secrets, apple: config.applePasses, publicUrl: config.PUBLIC_URL });
 }

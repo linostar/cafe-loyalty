@@ -1,0 +1,73 @@
+# The landing page (apps/landing) on GitHub Pages at loyaltyeverywhere.com: built and published on every push to main
+# that changes it, or by hand. The pilot form posts to the server set in the repository variable PILOT_REQUEST_URL
+# (https://<the production card domain>/pilot-request); the build refuses to run without it. See README, Landing page.
+name: Landing page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/landing/**
+      - packages/ui/**
+      - packages/shared/src/brand.ts
+      # A dependency update (the font package, Vite) changes only the lockfile, and must republish the site too.
+      - pnpm-lock.yaml
+      - .github/workflows/landing.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publish at a time; a newer push replaces one still waiting, never one already deploying.
+concurrency:
+  group: landing-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        env:
+          PILOT_REQUEST_URL: ${{ vars.PILOT_REQUEST_URL }}
+        run: pnpm build:packages && pnpm --filter @cafe-loyalty/landing build:site
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/landing/dist
+
+  deploy:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
