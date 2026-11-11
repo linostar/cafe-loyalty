@@ -165,13 +165,23 @@ report_state() {
   echo "$SCRIPT: logs: sudo docker compose --project-directory $dir -f $COMPOSE_FILE logs server worker" >&2
 }
 
+# The last KEEP_RELEASES releases that ran in each releases.log given ("commit digest" lines, newest first). awk keeps
+# the count and reads every line: `head -n` would close the pipe early, and under pipefail the writer's SIGPIPE (141)
+# would stop the deploy silently once an environment had run more than KEEP_RELEASES releases.
+kept_releases() {
+  local log
+  for log in "$@"; do
+    if [[ -f $log ]]; then
+      awk '$2 != "failed" { print $3 " " $4 }' "$log" | tac | awk -v keep="$KEEP_RELEASES" '!seen[$0]++ && ++kept <= keep'
+    fi
+  done
+}
+
 # Removes the images and web builds of all but the last KEEP_RELEASES releases recorded in each environment (the
 # environments share images).
 prune_releases() {
   local keep path digest
-  keep=$(for log in "$SRV_DIR"/*/releases.log; do
-    [[ -f $log ]] && awk '$2 != "failed" { print $3 " " $4 }' "$log" | tac | awk '!seen[$0]++' | head -n "$KEEP_RELEASES"
-  done)
+  keep=$(kept_releases "$SRV_DIR"/*/releases.log)
   for path in "$dir"/web/releases/*; do
     [[ -d $path ]] || continue
     grep -q "^$(basename "$path") " <<<"$keep" || rm -rf "$path"
