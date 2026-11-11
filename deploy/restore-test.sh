@@ -39,7 +39,7 @@ remote=$(env_value "$CONF_DIR/backup.conf" BACKUP_REMOTE)
 exec 9>"$backups/.lock"
 flock -w 900 9 || fail "another backup or restore test of $env is still running."
 
-container=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=postgres | head -n 1)
+container=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=postgres | awk 'NR == 1')
 if [[ -z $container ]]; then
   if [[ -z $name && -z $(docker volume ls -q --filter "label=com.docker.compose.project=$project") ]]; then
     log "$env has no database yet (never deployed); nothing to test."
