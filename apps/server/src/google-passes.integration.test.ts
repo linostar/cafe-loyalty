@@ -26,7 +26,7 @@ const formBody = (fields: Record<string, string>) => ({
 async function cafeApp(overrides: Parameters<typeof harness>[0] = {}) {
   const h = await harness(overrides);
   const owner = await signUp(h.app);
-  const as = (method: "GET" | "POST" | "PUT", url: string, payload: Record<string, unknown> = {}) =>
+  const as = (method: "GET" | "PATCH" | "POST" | "PUT", url: string, payload: Record<string, unknown> = {}) =>
     h.app.inject({ method, url, headers: withCookie(owner.session), ...(method === "GET" ? {} : { payload }) });
   await as("PUT", "/api/cafe/program", { stampsRequired: 2, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" });
   const setup = (await as("POST", "/api/cafe/order-types", { nameAr: "قهوة", nameEn: "Coffee", priceCents: 300, costCents: 90, stampsEarned: 1, active: true })).json<{
@@ -97,7 +97,12 @@ describe("Google pass save links", () => {
     expect((await app.app.inject({ method: "GET", url: `/c/${card.webSecret}?lang=en`, headers: IPHONE })).body).not.toContain("google-pass");
 
     expect(await stamp(app, card.qr)).toBe("OK");
+    // The longest review link a café can set (500 characters): the class in the link goes without it, as the queued
+    // write adds it, so the link stays short enough.
+    const reviewUrl = `https://g.page/r/FakeReviewLink/review?hl=${"a".repeat(500 - "https://g.page/r/FakeReviewLink/review?hl=".length)}`;
+    expect((await app.as("PATCH", "/api/cafe", { googleReviewUrl: reviewUrl })).statusCode).toBe(200);
     const link = await openSaveLink(app, card.webSecret);
+    expect(link.loyaltyClass).not.toHaveProperty("linksModuleData");
     expect(link.claims).toMatchObject({ iss: TEST_GOOGLE.config.serviceAccount.email, aud: "google", typ: "savetowallet", origins: [] });
     // Ids derive from the café and the card at its epoch, so every write lands on the same class and object.
     expect(link.loyaltyClass).toMatchObject({

@@ -37,7 +37,10 @@ export function googleSaveUrl(config: GoogleWalletConfig, publicUrl: string, caf
       // A link, not Google's JavaScript button, so no page origins.
       origins: [],
       payload: {
-        loyaltyClasses: [googleLoyaltyClass(config.issuerId, cafe, publicUrl)],
+        // Without the review link (up to 500 characters), for the link's length: Google keeps a class that exists
+        // (written whole by the worker), and one this link creates is completed by the queued write, as the café has
+        // no google_class_hash until the worker's own class write records one.
+        loyaltyClasses: [googleLoyaltyClass(config.issuerId, { ...cafe, reviewUrl: null }, publicUrl)],
         loyaltyObjects: [saveLinkObject(googleLoyaltyObject(config.issuerId, content, publicUrl))],
       },
     },
