@@ -57,6 +57,8 @@ describe("Counter App", () => {
     fakeApi(() => ({ status: 404, body: envelope("NOT_FOUND") }));
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Pair this phone" })).toBeInTheDocument();
+    // Never paired in this browser: a pairing made in another browser or the home-screen app is not seen here.
+    expect(screen.getByText("Paired this phone already? Each browser and the home-screen app keep their own pairing: open the counter where you paired it.")).toBeInTheDocument();
     expect(screen.getByText("Build test-build")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Online");
     // The chip shows the count, nothing included, and screen readers hear it said in full.

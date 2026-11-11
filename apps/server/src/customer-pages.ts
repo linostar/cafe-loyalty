@@ -627,6 +627,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       qr: signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }),
       offers: found.offers,
       feedbackUrl: found.feedback === undefined ? undefined : feedbackUrl(options.publicUrl, secrets, found.feedback),
+      reviewUrl: found.cafe.reviewUrl,
     });
     request.log.info({ cafeId: card.cafe_id }, "apple pass downloaded");
     return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("content-disposition", 'attachment; filename="card.pkpass"').send(pkpass);

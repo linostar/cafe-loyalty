@@ -219,6 +219,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       qr: current ? signCardQr(options.secrets, { cardId: pass.card_id, cafeId: pass.cafe_id, epoch: pass.epoch }) : null,
       offers: found.offers,
       feedbackUrl: current && found.feedback !== undefined ? feedbackUrl(options.publicUrl, options.secrets, found.feedback) : undefined,
+      reviewUrl: found.cafe.reviewUrl,
     });
     request.log.info({ cafeId: pass.cafe_id, voided: !current }, "apple pass sent");
     return reply.code(200).header("content-type", "application/vnd.apple.pkpass").header("last-modified", found.modifiedAt.toUTCString()).send(pkpass);

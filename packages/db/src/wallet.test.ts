@@ -84,12 +84,12 @@ describe("Google Wallet objects", () => {
   it("builds the café's class with its own logo and background, or the product's logo", () => {
     const hash = Buffer.alloc(32, 0xab);
     expect(
-      googleLoyaltyClass(ISSUER, { id: CONTENT.cafeId, name: "Café Nour", colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logoHash: hash }, "https://card.example.test"),
+      googleLoyaltyClass(ISSUER, { id: CONTENT.cafeId, name: "Café Nour", colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, logoHash: hash, reviewUrl: null }, "https://card.example.test"),
     ).toMatchObject({ issuerName: "Café Nour", hexBackgroundColor: "#1f5a85", programLogo: { sourceUri: { uri: `https://card.example.test/logos/${"ab".repeat(32)}.png` } } });
   });
 
   it("builds the café's class in both languages", () => {
-    const branding = { id: CONTENT.cafeId, name: "Café Najjar", colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null };
+    const branding = { id: CONTENT.cafeId, name: "Café Najjar", colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null, reviewUrl: null };
     expect(googleLoyaltyClass(ISSUER, branding, "https://card.example.test")).toEqual({
       id: googleClassId(ISSUER, CONTENT.cafeId),
       issuerName: "Café Najjar",
@@ -99,6 +99,22 @@ describe("Google Wallet objects", () => {
       hexBackgroundColor: "#4a2c2a",
       reviewStatus: "UNDER_REVIEW",
     });
+  });
+
+  it("links every pass of the café to its review page, in both languages, only when it has one (AC 37)", () => {
+    const branding = { id: CONTENT.cafeId, name: "Café Najjar", colors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" }, logoHash: null };
+    const uri = "https://g.page/r/fake-review-link/review";
+    expect(googleLoyaltyClass(ISSUER, { ...branding, reviewUrl: uri }, "https://card.example.test").linksModuleData).toEqual({
+      uris: [
+        {
+          id: "review",
+          uri,
+          description: "Leave a review on Google",
+          localizedDescription: { defaultValue: { language: "en", value: "Leave a review on Google" }, translatedValues: [{ language: "ar", value: "اترك تقييماً على Google" }] },
+        },
+      ],
+    });
+    expect(googleLoyaltyClass(ISSUER, { ...branding, reviewUrl: null }, "https://card.example.test")).not.toHaveProperty("linksModuleData");
   });
 
   it("builds the current card's object: QR, a picture of its stamps, reward and help, in Arabic and English (AC 10)", () => {
