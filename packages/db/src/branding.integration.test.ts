@@ -172,6 +172,11 @@ describe("a café's branding", () => {
     const next = images();
     expect(await marked(save(next))).toEqual({ a: EVERY, b: [] });
     expect(await mask()).toEqual(next.stampMask);
+    // A recoloured logo: a new logo with the same silhouette keeps it, and "From logo" with it; the pictures name the new logo.
+    const recoloured = { ...images(), stampMask: next.stampMask };
+    expect(await marked(save(recoloured))).toEqual({ a: EVERY, b: [] });
+    expect(await mask()).toEqual(next.stampMask);
+    expect(await shape()).toBe("logo");
     // A logo saved without a silhouette (a release from before 0037) drops the old one, and "From logo" with it.
     const older = () =>
       withCafe(testDb.app.db, cafeA, (trx) =>

@@ -489,6 +489,8 @@ export interface CafeLogosTable {
    * before migration 0037 have none. A new logo without one drops the old one, and none moves a 'logo' café to the circle.
    */
   stamp_mask: ColumnType<Buffer | null, Buffer | undefined, Buffer | null>;
+  /** The hash of the logo stamp_mask was cut from: a silhouette is the current logo's only while it is that logo's. */
+  stamp_mask_for: ColumnType<Buffer | null, Buffer | undefined, Buffer | null>;
   previous_hash: ColumnType<Buffer | null, never, never>;
   previous_square: ColumnType<Buffer | null, never, never>;
   created_at: CreatedAt;
@@ -732,7 +734,7 @@ export const TABLE_COLUMNS = {
     "created_at",
     "layout_version",
   ],
-  cafe_logos: ["cafe_id", "hash", "square", "apple_1x", "apple_2x", "apple_3x", "stamp_mask", "previous_hash", "previous_square", "created_at", "updated_at"],
+  cafe_logos: ["cafe_id", "hash", "square", "apple_1x", "apple_2x", "apple_3x", "stamp_mask", "stamp_mask_for", "previous_hash", "previous_square", "created_at", "updated_at"],
   operators: ["id", "email", "password_hash", "password_changed_at", "created_at"],
   operator_sessions: ["id", "operator_id", "token_hash", "created_at", "last_seen_at", "expires_at"],
   cafe_payments: ["id", "cafe_id", "amount_cents", "paid_on", "method", "reference", "operator_id", "created_at"],

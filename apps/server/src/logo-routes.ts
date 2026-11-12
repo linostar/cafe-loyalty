@@ -67,8 +67,18 @@ export async function setLogo(trx: Transaction<Database>, cafeId: string, images
   await audit(trx, { cafeId, ...actor, action: "cafe.logo_set", entityType: "cafe", entityId: cafeId, changes: { hash: images.hash.toString("hex") } });
 }
 
-/** Removes a café's logo, its cards going back to the product's; audited, with the removed image's hash, when there was one. */
+/**
+ * Locks the café's row (FOR NO KEY UPDATE) for the rest of the transaction: a logo removal and a "From logo" pick take
+ * it first, so one waits for the other and never decides on a silhouette the other is changing.
+ */
+const lockCafe = (trx: Transaction<Database>, cafeId: string) => trx.selectFrom("cafes").select("id").where("id", "=", cafeId).forNoKeyUpdate().execute();
+
+/**
+ * Removes a café's logo, its cards going back to the product's (and a "From logo" café to the circle, migration 0037);
+ * audited, with the removed image's hash, when there was one.
+ */
 export async function unsetLogo(trx: Transaction<Database>, cafeId: string, actor: LogoActor): Promise<void> {
+  await lockCafe(trx, cafeId);
   const removed = await removeCafeLogo(trx, cafeId);
   if (removed !== undefined) {
     await audit(trx, { cafeId, ...actor, action: "cafe.logo_removed", entityType: "cafe", entityId: cafeId, changes: { hash: removed.toString("hex") } });
@@ -80,7 +90,13 @@ export async function unsetLogo(trx: Transaction<Database>, cafeId: string, acto
  * its withCafe: the stamps would have nothing to be drawn from.
  */
 export async function refuseLogoStampWithoutLogo(trx: Transaction<Database>, cafeId: string, shape: StampShape | undefined): Promise<void> {
-  if (shape === "logo" && (await loadStampMask(trx, cafeId)) === undefined) {
+  if (shape !== "logo") {
+    return;
+  }
+  // Read after any removal the lock waited for, so the pick sees its committed result (or the removal, once this
+  // commits, sees "From logo" and moves it to the circle).
+  await lockCafe(trx, cafeId);
+  if ((await loadStampMask(trx, cafeId)) === undefined) {
     const issue = apiText("Upload the logo first: these stamps are made from it.");
     throw new ApiError("VALIDATION_FAILED", issue, [{ path: "stampShape", issue }]);
   }

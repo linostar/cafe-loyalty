@@ -11,18 +11,23 @@ ALTER TABLE cafes
   ADD CONSTRAINT cafes_stamp_shape_check CHECK (stamp_shape IN ('circle', 'cup', 'steamcup', 'plate', 'bean', 'icecream', 'cake', 'burger', 'logo')) NOT VALID;
 
 -- The silhouette of the current logo, or null: a logo uploaded before this release has none until it is uploaded again.
-ALTER TABLE cafe_logos ADD COLUMN stamp_mask bytea CHECK (octet_length(stamp_mask) BETWEEN 1 AND 2097152);
-GRANT UPDATE (stamp_mask) ON cafe_logos TO cl_app;
+-- stamp_mask_for is the hash of the logo it was cut from (two logos can share a silhouette: one recoloured).
+ALTER TABLE cafe_logos
+  ADD COLUMN stamp_mask bytea CHECK (octet_length(stamp_mask) BETWEEN 1 AND 2097152),
+  ADD COLUMN stamp_mask_for bytea CHECK (octet_length(stamp_mask_for) = 32),
+  ADD CONSTRAINT cafe_logos_stamp_mask_check CHECK (num_nulls(stamp_mask, stamp_mask_for) IN (0, 2));
+GRANT UPDATE (stamp_mask, stamp_mask_for) ON cafe_logos TO cl_app;
 
--- A new logo saved without a silhouette of its own (by a release from before this one) drops the previous logo's, so a
--- silhouette always belongs to the logo beside it.
+-- A new logo saved without a silhouette of its own (by a release from before this one, which leaves stamp_mask_for on
+-- the previous logo) drops the previous logo's, so a silhouette always belongs to the logo beside it.
 CREATE FUNCTION drop_stale_stamp_mask() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = app, pg_temp
   AS $$
 BEGIN
-  IF NEW.stamp_mask IS NOT DISTINCT FROM OLD.stamp_mask THEN
+  IF NEW.stamp_mask_for IS DISTINCT FROM NEW.hash THEN
     NEW.stamp_mask := NULL;
+    NEW.stamp_mask_for := NULL;
   END IF;
   RETURN NEW;
 END
@@ -66,7 +71,7 @@ END
 $$;
 
 CREATE TRIGGER cafe_logos_touch_logo_stamp_passes AFTER UPDATE ON cafe_logos
-  FOR EACH ROW WHEN (OLD.stamp_mask IS DISTINCT FROM NEW.stamp_mask AND NEW.stamp_mask IS NOT NULL)
+  FOR EACH ROW WHEN (OLD.hash IS DISTINCT FROM NEW.hash AND NEW.stamp_mask IS NOT NULL)
   EXECUTE FUNCTION touch_logo_stamp_google_passes();
 
 REVOKE ALL ON FUNCTION drop_stale_stamp_mask() FROM PUBLIC;

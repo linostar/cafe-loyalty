@@ -80,7 +80,7 @@ export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string):
  * replaces served until the next change (migration 0024).
  */
 export async function saveCafeLogo(trx: Transaction<Database>, cafeId: string, images: CafeLogoImages): Promise<void> {
-  const values = { hash: images.hash, square: images.square, apple_1x: images.apple1x, apple_2x: images.apple2x, apple_3x: images.apple3x, stamp_mask: images.stampMask };
+  const values = { hash: images.hash, square: images.square, apple_1x: images.apple1x, apple_2x: images.apple2x, apple_3x: images.apple3x, stamp_mask: images.stampMask, stamp_mask_for: images.hash };
   await trx
     .insertInto("cafe_logos")
     .values({ cafe_id: cafeId, ...values })
@@ -96,7 +96,7 @@ export async function removeCafeLogo(trx: Transaction<Database>, cafeId: string)
   const removed = await trx
     .updateTable("cafe_logos")
     // Without its silhouette a café on "From logo" goes back to the circle (trigger, migration 0037).
-    .set({ hash: null, square: null, apple_1x: null, apple_2x: null, apple_3x: null, stamp_mask: null })
+    .set({ hash: null, square: null, apple_1x: null, apple_2x: null, apple_3x: null, stamp_mask: null, stamp_mask_for: null })
     .where("cafe_id", "=", cafeId)
     .where("hash", "is not", null)
     // The row as keep_previous_logo left it: the removed logo is now the previous one.

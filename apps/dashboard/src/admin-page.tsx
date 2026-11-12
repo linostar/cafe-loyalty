@@ -1080,8 +1080,8 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           logoHash={cafe.logoHash}
           upload={async (image) => {
             const saved = await apiRequest("PUT", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema, { image });
-            // Removing the logo also moves a "From logo" café to the circle.
-            put(saved.id, { logoHash: saved.logoHash, stampShape: saved.stampShape }, null);
+            // An upload never changes the shape: only the logo is taken, so a shape saved meanwhile is not overwritten.
+            put(saved.id, { logoHash: saved.logoHash }, null);
           }}
           remove={async () => {
             const saved = await apiRequest("DELETE", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema);

@@ -716,13 +716,18 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           throw new PageError(503, "failed");
         }
         enforce(limits.stampPicturesPerIp, clientKey(request.ip));
+        // Reserved before anything is awaited, so a burst of requests for one picture draws it once, within capacity.
         // "From logo" is drawn with the current silhouette of the logo the address names; any other logo is not found.
-        const mask = picture.logoHash === undefined ? undefined : await findStampMask(db, picture.logoHash);
-        if (picture.logoHash !== undefined && mask === undefined) {
-          throw new PageError(404, "notFound");
-        }
+        const { logoHash } = picture;
+        const mask = logoHash === undefined ? Promise.resolve(undefined) : findStampMask(db, logoHash);
         // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
-        drawing = stampPicturePng(picture, 3, version, mask)
+        drawing = mask
+          .then((found) => {
+            if (logoHash !== undefined && found === undefined) {
+              throw new PageError(404, "notFound");
+            }
+            return stampPicturePng(picture, 3, version, found);
+          })
           .then((drawn) => {
             stampPictures.set(file, drawn);
             if (stampPictures.size > 256) {
