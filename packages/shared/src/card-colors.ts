@@ -51,14 +51,25 @@ export const cardColorsSchema = z
     }
   });
 
-/** The stamp templates a café's cards draw their stamps in, empty or full (the Apple strip, the Google hero image, the web card). */
+/** The drawn stamp templates a café's cards draw their stamps in, empty or full (the Apple strip, the Google hero image, the web card). */
 export const STAMP_SHAPES = ["circle", "cup", "steamcup", "plate", "bean", "icecream", "cake", "burger"] as const;
-export type StampShape = (typeof STAMP_SHAPES)[number];
+export type DrawnStampShape = (typeof STAMP_SHAPES)[number];
+
+/**
+ * The template made from the café's logo ("From logo"): a one-colour silhouette cut from it when it is uploaded, solid
+ * for a full stamp and faded for an empty one. Only a café with a logo can pick it; removing the logo goes back to the
+ * circle.
+ */
+export const LOGO_STAMP_SHAPE = "logo";
+export type StampShape = DrawnStampShape | typeof LOGO_STAMP_SHAPE;
+
+/** How strongly an empty "From logo" stamp shows its silhouette (a full one is solid). */
+export const LOGO_STAMP_EMPTY_OPACITY = 0.35;
 
 /** Every café's shape until its owner or the operator picks another. */
 export const DEFAULT_STAMP_SHAPE: StampShape = "circle";
 
-export const stampShapeSchema = z.enum(STAMP_SHAPES, apiText("Pick one of the stamp shapes."));
+export const stampShapeSchema = z.enum([...STAMP_SHAPES, LOGO_STAMP_SHAPE], apiText("Pick one of the stamp shapes."));
 
 /**
  * The stamp templates, drawn on a 24-unit square (the server's pass pictures and web card, the dashboard's preview):
@@ -66,7 +77,7 @@ export const stampShapeSchema = z.enum(STAMP_SHAPES, apiText("Pick one of the st
  * always outlined in the stamp's colour, and `inner` (a plate's rim, a bean's crease) is outlined in the stamp's colour
  * on an empty stamp and in the card's background on a full one. Lines are STAMP_STROKE wide.
  */
-export const STAMP_SHAPE_PATHS: Readonly<Record<StampShape, { body: string; extra?: string; inner?: string }>> = {
+export const STAMP_SHAPE_PATHS: Readonly<Record<DrawnStampShape, { body: string; extra?: string; inner?: string }>> = {
   circle: { body: "M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19Z" },
   cup: { body: "M3.5 7h12v6.5a5.5 5.5 0 0 1-5.5 5.5h-1a5.5 5.5 0 0 1-5.5-5.5Z", extra: "M15.5 9h1.75a2.75 2.75 0 0 1 0 5.5h-1.75M2.5 21.5h15" },
   // The cup with three wisps of steam rising from it, always outlined.

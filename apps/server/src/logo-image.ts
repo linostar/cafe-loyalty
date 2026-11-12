@@ -76,10 +76,113 @@ export async function processLogo(base64: string): Promise<CafeLogoImages> {
         .resize(APPLE_LOGO_POINTS.width * scale, APPLE_LOGO_POINTS.height * scale, { fit: "inside", withoutEnlargement: true })
         .png({ compressionLevel: 9 })
         .toBuffer();
-    const [apple1x, apple2x, apple3x] = await Promise.all([apple(1), apple(2), apple(3)]);
-    return { hash: createHash("sha256").update(square).digest(), square, apple1x, apple2x, apple3x };
+    const [apple1x, apple2x, apple3x, stampMask] = await Promise.all([apple(1), apple(2), apple(3), stampSilhouette(base)]);
+    return { hash: createHash("sha256").update(square).digest(), square, apple1x, apple2x, apple3x, stampMask };
   } catch {
     // A file whose header reads but whose pixels do not (truncated, corrupt).
     throw notAnImage();
   }
+}
+
+/** The side of a logo's silhouette for "From logo" stamps: twice the largest stamp drawn (a 3x strip's, about 110 px). */
+export const STAMP_MASK_SIDE = 256;
+/** A logo with at least this share of see-through pixels has a transparent background, and its alpha is the silhouette. */
+const TRANSPARENT_SHARE = 0.05;
+
+/**
+ * The threshold that best splits a histogram of 0-255 values in two (Otsu's method): the one with the largest
+ * variance between the two groups.
+ */
+export function otsuThreshold(histogram: readonly number[]): number {
+  const total = histogram.reduce((sum, count) => sum + count, 0);
+  const sumAll = histogram.reduce((sum, count, value) => sum + count * value, 0);
+  let below = 0;
+  let sumBelow = 0;
+  let best = { threshold: 0, variance: -1 };
+  for (let value = 0; value < 256; value += 1) {
+    below += histogram[value] ?? 0;
+    sumBelow += value * (histogram[value] ?? 0);
+    const above = total - below;
+    if (below === 0 || above === 0) {
+      continue;
+    }
+    const variance = below * above * (sumBelow / below - (sumAll - sumBelow) / above) ** 2;
+    if (variance > best.variance) {
+      best = { threshold: value, variance };
+    }
+  }
+  return best.threshold;
+}
+
+/**
+ * A logo's one-colour silhouette for "From logo" stamps: a STAMP_MASK_SIDE square PNG, white, whose alpha is the
+ * silhouette, trimmed to it and centred. A logo on a transparent background gives its own alpha; an opaque one is cut
+ * in two by brightness (otsuThreshold), the side most of its border falls on taken as the background. A logo with
+ * nothing to cut out (one flat colour) gives a full square, which the owner sees in the preview.
+ */
+export async function stampSilhouette(logo: Buffer): Promise<Buffer> {
+  const { data, info } = await sharp(logo)
+    .resize(STAMP_MASK_SIDE, STAMP_MASK_SIDE, { fit: "inside" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  const pixels = width * height;
+  const ink = Buffer.alloc(pixels);
+  let transparent = 0;
+  for (let index = 0; index < pixels; index += 1) {
+    if ((data[index * 4 + 3] ?? 0) < 128) {
+      transparent += 1;
+    }
+  }
+  if (transparent >= pixels * TRANSPARENT_SHARE) {
+    for (let index = 0; index < pixels; index += 1) {
+      ink[index] = data[index * 4 + 3] ?? 0;
+    }
+  } else {
+    const brightness = new Uint8Array(pixels);
+    const histogram = new Array<number>(256).fill(0);
+    for (let index = 0; index < pixels; index += 1) {
+      const value = Math.round(0.2126 * (data[index * 4] ?? 0) + 0.7152 * (data[index * 4 + 1] ?? 0) + 0.0722 * (data[index * 4 + 2] ?? 0));
+      brightness[index] = value;
+      histogram[value] = (histogram[value] ?? 0) + 1;
+    }
+    const threshold = otsuThreshold(histogram);
+    let border = 0;
+    let lightBorder = 0;
+    for (let index = 0; index < pixels; index += 1) {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) {
+        border += 1;
+        lightBorder += (brightness[index] ?? 0) > threshold ? 1 : 0;
+      }
+    }
+    const lightBackground = lightBorder * 2 >= border;
+    for (let index = 0; index < pixels; index += 1) {
+      ink[index] = (brightness[index] ?? 0) > threshold === lightBackground ? 0 : 255;
+    }
+  }
+  // Trimmed to the silhouette, so a logo with space around it fills the stamp as other shapes do.
+  let box = { left: width, top: height, right: -1, bottom: -1 };
+  for (let index = 0; index < pixels; index += 1) {
+    if ((ink[index] ?? 0) >= 128) {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      box = { left: Math.min(box.left, x), top: Math.min(box.top, y), right: Math.max(box.right, x), bottom: Math.max(box.bottom, y) };
+    }
+  }
+  if (box.right < 0) {
+    ink.fill(255);
+    box = { left: 0, top: 0, right: width - 1, bottom: height - 1 };
+  }
+  const white = Buffer.alloc(pixels * 4, 255);
+  for (let index = 0; index < pixels; index += 1) {
+    white[index * 4 + 3] = ink[index] ?? 0;
+  }
+  return sharp(white, { raw: { width, height, channels: 4 } })
+    .extract({ left: box.left, top: box.top, width: box.right - box.left + 1, height: box.bottom - box.top + 1 })
+    .resize(STAMP_MASK_SIDE, STAMP_MASK_SIDE, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }

@@ -194,6 +194,31 @@ html[lang="en"] .kicker {
   block-size: 100%;
 }
 
+/*
+ * A "From logo" stamp: the logo's silhouette (the face's --stamp-logo, cardStyle) in the text colour, solid when
+ * collected and faded when still to go, as on the passes (LOGO_STAMP_EMPTY_OPACITY). In forced colours it keeps the
+ * silhouette in the text colour, which a forced background would otherwise hide.
+ */
+.stamp-logo {
+  inline-size: 100%;
+  block-size: 100%;
+  color: var(--card-foreground, var(--color-on-espresso));
+  background-color: currentColor;
+  -webkit-mask: var(--stamp-logo) center / contain no-repeat;
+  mask: var(--stamp-logo) center / contain no-repeat;
+}
+
+.stamp:not(.is-filled) .stamp-logo {
+  opacity: 0.35;
+}
+
+@media (forced-colors: active) {
+  .stamp-logo {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+  }
+}
+
 /* The reward under the stamps, at the start of the line (as on the Apple pass). */
 .reward {
   margin: 0;

@@ -36,6 +36,8 @@ export interface ApplePassContent {
   colors: CardColors;
   /** The shape the café's stamps are drawn in, on the strip. */
   stampShape: StampShape;
+  /** The logo's silhouette (loadStampMask), which "From logo" stamps are drawn as; without it they are circles. */
+  stampMask: Buffer | undefined;
   /** The café's logo as Apple's logo.png at 1x, 2x and 3x, or undefined: the pass then shows the café's name alone. */
   logo: { apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined;
   /** The holder's name (cards.holder_name), or null on a card made before it was asked: the pass then has no name. */
@@ -185,8 +187,9 @@ async function spacedLogo(logo: { apple1x: Buffer; apple2x: Buffer; apple3x: Buf
 
 /** The strip at Apple's three scales: the card's stamps in the café's shape and colours. */
 async function strips(content: ApplePassContent, required: number): Promise<Record<string, Buffer>> {
+  // The strip is in the pass itself, so it needs no address and no logo hash.
   const picture = { shape: content.stampShape, background: content.colors.background, foreground: content.colors.foreground, stamps: content.stamps, required };
-  const [one, two, three] = await Promise.all([1, 2, 3].map((scale) => stampPicturePng(picture, scale)));
+  const [one, two, three] = await Promise.all([1, 2, 3].map((scale) => stampPicturePng(picture, scale, 3, content.stampMask)));
   return one === undefined || two === undefined || three === undefined ? {} : { "strip.png": one, "strip@2x.png": two, "strip@3x.png": three };
 }
 

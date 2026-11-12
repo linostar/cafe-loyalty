@@ -89,12 +89,16 @@ export const CUSTOMER_CSP = customerCsp();
  * product's colours, whose card stays as it always looked. Only #rrggbb values (as the database keeps them) go in. The
  * copper glow goes: over the café's own background it would lower the 4.5:1 the operator was promised.
  */
-export function cardStyle(colors: CardColors): string | undefined {
+export function cardStyle(colors: CardColors, stampMaskPath: string | null = null): string | undefined {
   const isDefault = colors.background === DEFAULT_CARD_COLORS.background && colors.foreground === DEFAULT_CARD_COLORS.foreground && colors.label === DEFAULT_CARD_COLORS.label;
-  if (isDefault || ![colors.background, colors.foreground, colors.label].every((color) => /^#[0-9a-f]{6}$/.test(color))) {
-    return undefined;
-  }
-  return `.card-face{--card-background:${colors.background};--card-foreground:${colors.foreground};--card-label:${colors.label};--card-glow:transparent}`;
+  const rules = [
+    isDefault || ![colors.background, colors.foreground, colors.label].every((color) => /^#[0-9a-f]{6}$/.test(color))
+      ? null
+      : `.card-face{--card-background:${colors.background};--card-foreground:${colors.foreground};--card-label:${colors.label};--card-glow:transparent}`,
+    // "From logo" stamps are masked with the logo's silhouette (stampMaskPath, db): only that address shape goes in.
+    stampMaskPath !== null && /^\/logos\/[0-9a-f]{64}-stamp\.png$/.test(stampMaskPath) ? `.card-face{--stamp-logo:url("${stampMaskPath}")}` : null,
+  ].filter((rule) => rule !== null);
+  return rules.length === 0 ? undefined : rules.join("");
 }
 
 /** Strings for the customer pages. `{name}` style placeholders are filled by `t`. */

@@ -72,7 +72,7 @@ const EVERY = ["apple-x-2", "apple-y-2", "google-current", "google-current"];
 const NONE = { a: [], b: [] };
 
 /** A logo's images (random bytes: the database does not decode them). */
-const images = (): CafeLogoImages => ({ hash: randomBytes(32), square: randomBytes(8), apple1x: randomBytes(8), apple2x: randomBytes(8), apple3x: randomBytes(8) });
+const images = (): CafeLogoImages => ({ hash: randomBytes(32), square: randomBytes(8), apple1x: randomBytes(8), apple2x: randomBytes(8), apple3x: randomBytes(8), stampMask: randomBytes(8) });
 
 beforeAll(async () => {
   testDb = await createTestDatabase();
@@ -159,6 +159,39 @@ describe("a café's branding", () => {
     await withCafe(testDb.app.db, cafeB, (trx) => saveCafeLogo(trx, cafeB, third));
     expect(await row()).toEqual({ hash: third.hash, previous_hash: null, previous_square: null });
     await withCafe(testDb.app.db, cafeB, (trx) => trx.deleteFrom("cafe_logos").execute());
+  });
+
+  it("draws \"From logo\" from the current logo: every pass marked on a new one, and back to the circle without one", async () => {
+    const shape = async () => (await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafes").select("stamp_shape").executeTakeFirstOrThrow())).stamp_shape;
+    const mask = async () => (await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafe_logos").select("stamp_mask").executeTakeFirstOrThrow())).stamp_mask;
+    const save = (values: CafeLogoImages) => () => withCafe(testDb.app.db, cafeA, (trx) => saveCafeLogo(trx, cafeA, values));
+    const remove = () => withCafe(testDb.app.db, cafeA, (trx) => removeCafeLogo(trx, cafeA));
+    await save(images())();
+    expect(await marked(update({ stamp_shape: "logo" }))).toEqual({ a: EVERY, b: [] });
+    // A new logo is a new silhouette on every Google object's stamp picture, not only the class's pass.
+    const next = images();
+    expect(await marked(save(next))).toEqual({ a: EVERY, b: [] });
+    expect(await mask()).toEqual(next.stampMask);
+    // A recoloured logo: a new logo with the same silhouette keeps it, and "From logo" with it; the pictures name the new logo.
+    const recoloured = { ...images(), stampMask: next.stampMask };
+    expect(await marked(save(recoloured))).toEqual({ a: EVERY, b: [] });
+    expect(await mask()).toEqual(next.stampMask);
+    expect(await shape()).toBe("logo");
+    // A logo saved without a silhouette (a release from before 0037) drops the old one, and "From logo" with it.
+    const older = () =>
+      withCafe(testDb.app.db, cafeA, (trx) =>
+        trx.updateTable("cafe_logos").set({ hash: randomBytes(32), square: randomBytes(8), apple_1x: randomBytes(8), apple_2x: randomBytes(8), apple_3x: randomBytes(8) }).execute(),
+      );
+    expect(await marked(older)).toEqual({ a: EVERY, b: [] });
+    expect(await mask()).toBeNull();
+    expect(await shape()).toBe("circle");
+    // Removing the logo goes back to the circle too.
+    await save(images())();
+    await update({ stamp_shape: "logo" })();
+    expect(await marked(remove)).toEqual({ a: EVERY, b: [] });
+    expect(await shape()).toBe("circle");
+    // Leaves café A without a logo for the tests after it.
+    await withCafe(testDb.app.db, cafeA, (trx) => trx.deleteFrom("cafe_logos").execute());
   });
 
   it("finds a logo by its hash or its previous hash with no café set, and nothing by another hash", async () => {

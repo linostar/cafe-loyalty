@@ -1,4 +1,4 @@
-import { STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { LOGO_STAMP_SHAPE, STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { useId, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
@@ -9,6 +9,7 @@ const AR = {
   "4 of 9 stamps": "4 من 9 أختام",
   "Stamp shape": "شكل الأختام",
   "Cards show the stamps collected as full shapes and the ones to go as outlines.": "تُظهر البطاقات الأختام المجمّعة أشكالاً ممتلئة، والباقية أشكالاً مفرّغة.",
+  "From logo": "من الشعار",
   Circle: "دائرة",
   Cup: "فنجان",
   Plate: "طبق",
@@ -33,14 +34,34 @@ const AR = {
 } as const;
 
 /** Each stamp shape's name, as the picker lists them. */
-const SHAPE_NAMES = { circle: "Circle", cup: "Cup", steamcup: "Steaming cup", plate: "Plate", bean: "Coffee bean", icecream: "Ice cream", cake: "Cake", burger: "Burger" } as const satisfies Record<StampShape, keyof typeof AR>;
+const SHAPE_NAMES = {
+  circle: "Circle",
+  cup: "Cup",
+  steamcup: "Steaming cup",
+  plate: "Plate",
+  bean: "Coffee bean",
+  icecream: "Ice cream",
+  cake: "Cake",
+  burger: "Burger",
+  logo: "From logo",
+} as const satisfies Record<StampShape, keyof typeof AR>;
 
 /**
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full (filled and outlined, so as big
  * as an empty one) or outlined. A full stamp's inner lines take the card's background (`.stamp-icon-inner`, app.css).
+ * "From logo" is the logo's silhouette (stampMaskUrl) masking currentColor, faded when empty; a circle without a logo.
  */
-export function StampIcon({ shape, full }: { shape: StampShape; full: boolean }) {
-  const { body, extra, inner } = STAMP_SHAPE_PATHS[shape];
+export function StampIcon({ shape, full, logoHash }: { shape: StampShape; full: boolean; logoHash: string | null }) {
+  if (shape === LOGO_STAMP_SHAPE && logoHash !== null) {
+    return (
+      <span
+        className={full ? "stamp-icon stamp-icon-logo" : "stamp-icon stamp-icon-logo is-empty"}
+        style={{ "--stamp-logo": `url("${stampMaskUrl(logoHash)}")` } as CSSProperties}
+        aria-hidden="true"
+      />
+    );
+  }
+  const { body, extra, inner } = STAMP_SHAPE_PATHS[shape === LOGO_STAMP_SHAPE ? "circle" : shape];
   const line = { fill: "none", stroke: "currentColor", strokeWidth: STAMP_STROKE, strokeLinecap: "round", strokeLinejoin: "round" } as const;
   return (
     <svg className="stamp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -56,6 +77,9 @@ const SAMPLE_STAMPS = 9;
 
 /** A café's logo as the dashboard loads it (its domain forwards only /api to the server). */
 export const logoUrl = (hash: string): string => `/api/logos/${hash}.png`;
+
+/** The silhouette of a café's logo, which its "From logo" stamps are drawn as. */
+export const stampMaskUrl = (hash: string): string => `/api/logos/${hash}-stamp.png`;
 
 /**
  * The face of a café's card as customers see it (web card and wallets): its colours, logo and name, with sample stamps
@@ -74,7 +98,7 @@ export function CardPreview({ name, colors, logoHash, stampShape }: { name: stri
         <ol className="card-preview-stamps" style={{ "--stamp-columns": stampGrid(SAMPLE_STAMPS).columns } as CSSProperties} aria-hidden="true">
           {Array.from({ length: SAMPLE_STAMPS }, (_, index) => (
             <li key={index} className={index < 4 ? "is-filled" : undefined}>
-              <StampIcon shape={stampShape} full={index < 4} />
+              <StampIcon shape={stampShape} full={index < 4} logoHash={logoHash} />
             </li>
           ))}
         </ol>
@@ -86,9 +110,10 @@ export function CardPreview({ name, colors, logoHash, stampShape }: { name: stri
 
 /**
  * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the
- * templates (STAMP_SHAPES) as radio buttons, each with its picture, saved together.
+ * templates (STAMP_SHAPES) as radio buttons, each with its picture, saved together. "From logo" is listed only while
+ * the café has a logo, drawn from its silhouette; removing the logo moves the café to the circle (the server).
  */
-export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shape: StampShape) => Promise<unknown> }) {
+export function StampShapeForm({ shape, logoHash, save }: { shape: StampShape; logoHash: string | null; save: (shape: StampShape) => Promise<unknown> }) {
   const t = useT(AR);
   const id = useId();
   const [picked, setPicked] = useState(shape);
@@ -113,7 +138,7 @@ export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shap
           {t("Cards show the stamps collected as full shapes and the ones to go as outlines.")}
         </p>
         <div className="choices stamp-shapes">
-          {STAMP_SHAPES.map((option) => (
+          {(logoHash === null ? STAMP_SHAPES : ([...STAMP_SHAPES, LOGO_STAMP_SHAPE] as const)).map((option: StampShape) => (
             <label key={option}>
               <input
                 type="radio"
@@ -124,7 +149,7 @@ export function StampShapeForm({ shape, save }: { shape: StampShape; save: (shap
                   setPicked(option);
                 }}
               />{" "}
-              <StampIcon shape={option} full />
+              <StampIcon shape={option} full logoHash={logoHash} />
               {t(SHAPE_NAMES[option])}
             </label>
           ))}

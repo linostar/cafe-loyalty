@@ -24,7 +24,7 @@ import { audit, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { insertInvite, inviteLink } from "./invites.js";
 import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo } from "./logo-image.js";
-import { setLogo, unsetLogo } from "./logo-routes.js";
+import { refuseLogoStampWithoutLogo, setLogo, unsetLogo } from "./logo-routes.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 export interface AdminRoutesOptions {
@@ -353,6 +353,9 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
         colors !== undefined && (colors.background !== before.card_background || colors.foreground !== before.card_foreground || colors.label !== before.card_label);
       const nameChanged = body.name !== undefined && body.name !== before.name;
       const shapeChanged = body.stampShape !== undefined && body.stampShape !== before.stamp_shape;
+      if (shapeChanged) {
+        await refuseLogoStampWithoutLogo(trx, id, body.stampShape);
+      }
       if (nameChanged || colorsChanged || shapeChanged) {
         await trx
           .updateTable("cafes")

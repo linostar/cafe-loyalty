@@ -231,6 +231,8 @@ export {
   DEFAULT_STAMP_SHAPE,
   MAX_STAMPS_PER_ROW,
   MIN_CARD_CONTRAST,
+  LOGO_STAMP_EMPTY_OPACITY,
+  LOGO_STAMP_SHAPE,
   STAMP_SHAPES,
   STAMP_SHAPE_PATHS,
   STAMP_STROKE,
@@ -240,6 +242,7 @@ export {
   stampGrid,
   stampShapeSchema,
   type CardColors,
+  type DrawnStampShape,
   type StampShape,
 } from "./card-colors.js";
 export { offerResultSchema, resultsMonthSchema, resultsQuerySchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";

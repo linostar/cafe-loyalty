@@ -278,6 +278,7 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
       await route.fulfill({ json: setup });
     },
     [`GET /api/logos/${HASH}.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
+    [`GET /api/logos/${HASH}-stamp.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
   });
   await page.goto("/cafe");
   const section = page.getByRole("region", { name: "Card" });
@@ -290,11 +291,16 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
   await expect(logo.getByRole("status")).toHaveText("Saved. Cards in wallets show it within a few minutes.");
   expect(uploads).toEqual([{ image: png.toString("base64") }]);
   await expect(section.locator(".card-preview-face img")).toHaveAttribute("src", `/api/logos/${HASH}.png`);
+  // With a logo, its silhouette is one more stamp shape, drawn from it.
+  const shapes = section.getByRole("form", { name: "Stamp shape" }).getByRole("group", { name: "Stamp shape" });
+  await expect(shapes.getByRole("radio", { name: "From logo" })).toBeVisible();
+  await expect(shapes.locator(".stamp-icon-logo")).toHaveAttribute("style", new RegExp(`/api/logos/${HASH}-stamp\\.png`));
 
   await logo.getByRole("button", { name: "Remove logo" }).click();
   await expect(logo.getByRole("status")).toHaveText("Logo removed.");
   expect(uploads).toEqual([{ image: png.toString("base64") }, "removed"]);
   await expect(section.locator(".card-preview-face img")).toHaveCount(0);
+  await expect(shapes.getByRole("radio", { name: "From logo" })).toHaveCount(0);
   await expect(logo.getByRole("button", { name: "Remove logo" })).toHaveCount(0);
   // The button went with the logo: the keyboard is on the file field, not dropped to the page (WCAG 2.4.3).
   await expect(logo.getByLabel("Logo")).toBeFocused();

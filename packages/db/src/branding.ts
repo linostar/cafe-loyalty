@@ -15,13 +15,14 @@ export interface CafeBranding {
   reviewUrl: string | null;
 }
 
-/** A café's logo in the sizes its cards use, with the SHA-256 of the square PNG. */
+/** A café's logo in the sizes its cards use, with the SHA-256 of the square PNG and its silhouette for "From logo" stamps. */
 export interface CafeLogoImages {
   hash: Buffer;
   square: Buffer;
   apple1x: Buffer;
   apple2x: Buffer;
   apple3x: Buffer;
+  stampMask: Buffer;
 }
 
 /** A café's branding, read inside its withCafe. */
@@ -42,9 +43,14 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
   };
 }
 
-/** What a picture of a card's stamps shows: the shape, the card's background and text colours, and its count. */
+/**
+ * What a picture of a card's stamps shows: the shape (for "From logo", the hash of the logo it is cut from), the card's
+ * background and text colours, and its count.
+ */
 export interface StampPicture {
   shape: StampShape;
+  /** The logo's hash, for the 'logo' shape (its address names it); no other shape has one. */
+  logoHash?: Buffer;
   background: string;
   foreground: string;
   stamps: number;
@@ -58,7 +64,7 @@ export interface StampPicture {
  * or Google keeps showing the picture it cached.
  */
 export const stampPicturePath = (picture: StampPicture): string =>
-  `/stamps/v3/${picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
+  `/stamps/v3/${picture.shape === "logo" && picture.logoHash !== undefined ? `logo.${picture.logoHash.toString("hex")}` : picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
 
 /** The Apple logo.png images of a café's logo, or undefined without one (the pass then has the product's). */
 export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string): Promise<{ apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined> {
@@ -74,7 +80,7 @@ export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string):
  * replaces served until the next change (migration 0024).
  */
 export async function saveCafeLogo(trx: Transaction<Database>, cafeId: string, images: CafeLogoImages): Promise<void> {
-  const values = { hash: images.hash, square: images.square, apple_1x: images.apple1x, apple_2x: images.apple2x, apple_3x: images.apple3x };
+  const values = { hash: images.hash, square: images.square, apple_1x: images.apple1x, apple_2x: images.apple2x, apple_3x: images.apple3x, stamp_mask: images.stampMask, stamp_mask_for: images.hash };
   await trx
     .insertInto("cafe_logos")
     .values({ cafe_id: cafeId, ...values })
@@ -89,7 +95,8 @@ export async function saveCafeLogo(trx: Transaction<Database>, cafeId: string, i
 export async function removeCafeLogo(trx: Transaction<Database>, cafeId: string): Promise<Buffer | undefined> {
   const removed = await trx
     .updateTable("cafe_logos")
-    .set({ hash: null, square: null, apple_1x: null, apple_2x: null, apple_3x: null })
+    // Without its silhouette a café on "From logo" goes back to the circle (trigger, migration 0037).
+    .set({ hash: null, square: null, apple_1x: null, apple_2x: null, apple_3x: null, stamp_mask: null, stamp_mask_for: null })
     .where("cafe_id", "=", cafeId)
     .where("hash", "is not", null)
     // The row as keep_previous_logo left it: the removed logo is now the previous one.
@@ -97,6 +104,15 @@ export async function removeCafeLogo(trx: Transaction<Database>, cafeId: string)
     .executeTakeFirst();
   return removed?.previous_hash ?? undefined;
 }
+
+/** The silhouette of a café's current logo, for its "From logo" stamps, or undefined (no logo, or one from before 0037). */
+export async function loadStampMask(trx: Transaction<Database>, cafeId: string): Promise<Buffer | undefined> {
+  const logo = await trx.selectFrom("cafe_logos").select("stamp_mask").where("cafe_id", "=", cafeId).executeTakeFirst();
+  return logo?.stamp_mask ?? undefined;
+}
+
+/** Where a café's logo's silhouette is served, publicly (the web card's "From logo" stamps), by the logo's hash. */
+export const stampMaskPath = (hash: Buffer): string => `/logos/${hash.toString("hex")}-stamp.png`;
 
 /** Where a café's logo is served, publicly (Google fetches it, the web card shows it): by its hash, naming no café. */
 export const cafeLogoPath = (hash: Buffer): string => `/logos/${hash.toString("hex")}.png`;
