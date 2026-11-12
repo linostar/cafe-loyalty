@@ -15,7 +15,7 @@ ALTER TABLE cafes
 ALTER TABLE cafe_logos
   ADD COLUMN stamp_mask bytea CHECK (octet_length(stamp_mask) BETWEEN 1 AND 2097152),
   ADD COLUMN stamp_mask_for bytea CHECK (octet_length(stamp_mask_for) = 32),
-  ADD CONSTRAINT cafe_logos_stamp_mask_check CHECK (num_nulls(stamp_mask, stamp_mask_for) IN (0, 2));
+  ADD CONSTRAINT cafe_logos_stamp_mask_pair_check CHECK (num_nulls(stamp_mask, stamp_mask_for) IN (0, 2));
 GRANT UPDATE (stamp_mask, stamp_mask_for) ON cafe_logos TO cl_app;
 
 -- A new logo saved without a silhouette of its own (by a release from before this one, which leaves stamp_mask_for on
