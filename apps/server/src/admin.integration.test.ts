@@ -541,7 +541,8 @@ describe("a café's name, card colours and logo", () => {
     }
     expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "circle" } });
 
-    const hash = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo() })).json<{ cafe: { logoHash: string } }>().cafe.logoHash;
+    // An image of its own: the file's tests share a database, and logos are found by their hash whatever the café.
+    const hash = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo(240, 240, 120) })).json<{ cafe: { logoHash: string } }>().cafe.logoHash;
     const picked = await app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "logo" });
     expect(picked.statusCode).toBe(200);
     expect(picked.json()).toMatchObject({ cafe: { stampShape: "logo" } });
