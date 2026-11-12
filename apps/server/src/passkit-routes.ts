@@ -1,5 +1,5 @@
 import { arabicOr } from "@cafe-loyalty/shared";
-import { feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
+import { feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, loadStampMask, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Kysely } from "kysely";
 import { APPLE_PASS_LAYOUT_VERSION, buildApplePass, type ApplePassConfig } from "./apple-pass.js";
@@ -194,6 +194,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
         card,
         cafe,
         logo: await loadAppleLogo(trx, pass.cafe_id),
+        stampMask: cafe.stampShape === "logo" ? await loadStampMask(trx, pass.cafe_id) : undefined,
         program,
         offers: await loadCardOffer(trx, pass.card_id),
         feedback: await loadFeedbackRequest(trx, pass.card_id),
@@ -209,6 +210,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
       cafeName: found.cafe.name,
       colors: found.cafe.colors,
       stampShape: found.cafe.stampShape,
+      stampMask: found.stampMask,
       logo: found.logo,
       holderName: found.card.holder_name,
       stamps: found.card.stamps,

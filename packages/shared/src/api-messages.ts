@@ -44,6 +44,7 @@ export const API_MESSAGES_AR = {
   "Upload the logo as a PNG or JPEG image.":"ارفع الشعار كصورة PNG أو JPEG.",
   "Use a logo of at most 2 MB.": "استخدم شعاراً بحجم 2 ميغابايت كحد أقصى.",
   "Use a logo at least 64 pixels wide and high.": "استخدم شعاراً بعرض وارتفاع 64 بكسل على الأقل.",
+  "Upload the logo first: these stamps are made from it.": "ارفع الشعار أولاً: هذه الأختام مصنوعة منه.",
   "This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one.":
     "سُجّلت هذه الدفعة سابقاً بتفاصيل أخرى. أعد تحميل الصفحة لرؤيتها، ثم سجّل أي دفعة أخرى كدفعة جديدة.",
   "Choose pilot, active or suspended.": "اختر تجريبية أو فعّالة أو موقوفة.",

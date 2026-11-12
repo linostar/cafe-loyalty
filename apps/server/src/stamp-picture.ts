@@ -1,5 +1,5 @@
 import type { StampPicture } from "@cafe-loyalty/db";
-import { STAMP_SHAPE_PATHS, STAMP_STROKE, stampGrid, stampShapeSchema, type StampShape } from "@cafe-loyalty/shared";
+import { LOGO_STAMP_EMPTY_OPACITY, STAMP_SHAPE_PATHS, STAMP_STROKE, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /**
@@ -7,7 +7,7 @@ import sharp from "sharp";
  * full stamp is filled and outlined with the empty one's line (`outlineFull`), so the two are the same size; pictures
  * of an older layout (StampLayoutVersion 1, 2) drew it filled only, a line's half width smaller all round.
  */
-function stampShapeMarkup(shape: StampShape, full: boolean, paint: { stamp: string; background: string }, outlineFull = true): string {
+function stampShapeMarkup(shape: DrawnStampShape, full: boolean, paint: { stamp: string; background: string }, outlineFull = true): string {
   const { body, extra, inner } = STAMP_SHAPE_PATHS[shape];
   const line = (d: string, color: string, extraAttributes = "") =>
     `<path d="${d}" fill="none" stroke="${color}" stroke-width="${String(STAMP_STROKE)}" stroke-linecap="round" stroke-linejoin="round"${extraAttributes}/>`;
@@ -25,7 +25,7 @@ function stampShapeMarkup(shape: StampShape, full: boolean, paint: { stamp: stri
  * One stamp of the web card as an inline SVG (no image request): drawn in currentColor, which customer.css sets for full
  * and empty stamps; a full stamp's inner lines take the card's background there (`.stamp-inner`).
  */
-export function stampSlotSvg(shape: StampShape, full: boolean): string {
+export function stampSlotSvg(shape: DrawnStampShape, full: boolean): string {
   return `<svg viewBox="0 0 24 24" focusable="false">${stampShapeMarkup(shape, full, { stamp: "currentColor", background: "currentColor" })}</svg>`;
 }
 
@@ -64,36 +64,54 @@ export function stampLayout(required: number, version: StampLayoutVersion = 3): 
   return { size, positions };
 }
 
-/** The strip's SVG at `scale` (1, 2 or 3): the card's background, its stamps full in the text colour, the rest outlined. */
-export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 3): string {
+/**
+ * The strip's SVG at `scale` (1, 2 or 3): the card's background, its stamps full in the text colour, the rest outlined.
+ * "From logo" stamps are the logo's silhouette (`mask`, stampSilhouette) in the text colour, solid when full and faded
+ * when empty; without the silhouette they are drawn as circles.
+ */
+export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 3, mask?: Buffer): string {
   const { size, positions } = stampLayout(picture.required, version);
   const paint = { stamp: picture.foreground, background: picture.background };
+  const logo = picture.shape === "logo" ? mask : undefined;
+  const shape = picture.shape === "logo" ? "circle" : picture.shape;
+  const stamp = (full: boolean) =>
+    logo === undefined
+      ? stampShapeMarkup(shape, full, paint, version === 3)
+      : `<rect width="24" height="24" fill="${picture.foreground}" mask="url(#logo-stamp)"${full ? "" : ` opacity="${String(LOGO_STAMP_EMPTY_OPACITY)}"`}/>`;
   const stamps = positions.map(
-    ({ x, y }, index) =>
-      `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${(size / 24).toFixed(4)})">${stampShapeMarkup(picture.shape, index < picture.stamps, paint, version === 3)}</g>`,
+    ({ x, y }, index) => `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${(size / 24).toFixed(4)})">${stamp(index < picture.stamps)}</g>`,
   );
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(STRIP_WIDTH * scale)}" height="${String(STRIP_HEIGHT * scale)}" viewBox="0 0 ${String(STRIP_WIDTH)} ${String(STRIP_HEIGHT)}"><rect width="${String(STRIP_WIDTH)}" height="${String(STRIP_HEIGHT)}" fill="${picture.background}"/>${stamps.join("")}</svg>`;
+  // The silhouette's alpha masks each stamp's square (a white mask: its luminance is its alpha).
+  const defs =
+    logo === undefined
+      ? ""
+      : `<defs><mask id="logo-stamp" maskContentUnits="objectBoundingBox"><image href="data:image/png;base64,${logo.toString("base64")}" width="1" height="1" preserveAspectRatio="xMidYMid meet"/></mask></defs>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(STRIP_WIDTH * scale)}" height="${String(STRIP_HEIGHT * scale)}" viewBox="0 0 ${String(STRIP_WIDTH)} ${String(STRIP_HEIGHT)}">${defs}<rect width="${String(STRIP_WIDTH)}" height="${String(STRIP_HEIGHT)}" fill="${picture.background}"/>${stamps.join("")}</svg>`;
 }
 
-/** The strip as a PNG at `scale`. */
-export const stampPicturePng = (picture: StampPicture, scale: number, version: StampLayoutVersion = 3): Promise<Buffer> =>
-  sharp(Buffer.from(stampPictureSvg(picture, scale, version))).png().toBuffer();
+/** The strip as a PNG at `scale`; "From logo" pictures need the logo's silhouette (`mask`). */
+export const stampPicturePng = (picture: StampPicture, scale: number, version: StampLayoutVersion = 3, mask?: Buffer): Promise<Buffer> =>
+  sharp(Buffer.from(stampPictureSvg(picture, scale, version, mask))).png().toBuffer();
 
 /** The most stamps a program takes (cafe-setup's stampsRequired, loyalty_programs' CHECK). */
 const MAX_REQUIRED = 50;
 
 /**
- * The picture a stamp address names (stampPicturePath: `<shape>-<background>-<text colour>-<stamps>-<required>.png`), or
- * undefined for anything else: a known shape, lowercase colours, and 0 <= stamps <= required <= 50, so an address can
- * only ask for a picture a card could show.
+ * The picture a stamp address names (stampPicturePath: `<shape>-<background>-<text colour>-<stamps>-<required>.png`, the
+ * shape `logo.<logo hash>` for "From logo"), or undefined for anything else: a known shape (with a logo's hash for
+ * "From logo" and only then), lowercase colours, and 0 <= stamps <= required <= 50, so an address can only ask for a
+ * picture a card could show (a logo's is drawn only once its silhouette is found).
  */
 export function parseStampPicture(file: string): StampPicture | undefined {
-  const match = /^([a-z]+)-([0-9a-f]{6})-([0-9a-f]{6})-(0|[1-9]\d?)-([1-9]\d?)\.png$/.exec(file);
+  const match = /^([a-z]+)(?:\.([0-9a-f]{64}))?-([0-9a-f]{6})-([0-9a-f]{6})-(0|[1-9]\d?)-([1-9]\d?)\.png$/.exec(file);
   if (match === null) {
     return undefined;
   }
-  const [, name, background = "", foreground = "", stamps = "", required = ""] = match;
+  const [, name, logoHash, background = "", foreground = "", stamps = "", required = ""] = match;
   const shape = stampShapeSchema.safeParse(name);
   const picture = { background: `#${background}`, foreground: `#${foreground}`, stamps: Number(stamps), required: Number(required) };
-  return shape.success && picture.stamps <= picture.required && picture.required <= MAX_REQUIRED ? { ...picture, shape: shape.data } : undefined;
+  const hashed = logoHash !== undefined;
+  return shape.success && (shape.data === "logo") === hashed && picture.stamps <= picture.required && picture.required <= MAX_REQUIRED
+    ? { ...picture, shape: shape.data, ...(hashed ? { logoHash: Buffer.from(logoHash, "hex") } : {}) }
+    : undefined;
 }

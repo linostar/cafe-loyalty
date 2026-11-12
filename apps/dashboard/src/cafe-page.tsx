@@ -706,7 +706,13 @@ export function CafePage() {
             upload={(image) => save("PUT", "/api/cafe/logo", { image })}
             remove={() => save("DELETE", "/api/cafe/logo", {})}
           />
-          <StampShapeForm shape={setup.cafe.stampShape} save={(stampShape) => save("PUT", "/api/cafe/stamp-shape", { stampShape })} />
+          {/* A new or removed logo starts the pick again from what the café now has (removal moves "From logo" to the circle). */}
+          <StampShapeForm
+            key={setup.cafe.logoHash ?? "no-logo"}
+            shape={setup.cafe.stampShape}
+            logoHash={setup.cafe.logoHash}
+            save={(stampShape) => save("PUT", "/api/cafe/stamp-shape", { stampShape })}
+          />
         </div>
       </SettingsSection>
       <SettingsSection id="program" title="Program">

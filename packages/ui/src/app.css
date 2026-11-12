@@ -442,6 +442,27 @@ a.action-link:hover {
   stroke: var(--card-background, var(--color-espresso));
 }
 
+/*
+ * A "From logo" stamp (StampIcon with the logo's silhouette as --stamp-logo): the silhouette in currentColor, faded when
+ * still to go (as the cards draw it); in forced colours kept in the text colour, which a forced background would hide.
+ */
+.stamp-icon-logo {
+  background-color: currentColor;
+  -webkit-mask: var(--stamp-logo) center / contain no-repeat;
+  mask: var(--stamp-logo) center / contain no-repeat;
+}
+
+.stamp-icon-logo.is-empty {
+  opacity: 0.35;
+}
+
+@media (forced-colors: active) {
+  .stamp-icon-logo {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+  }
+}
+
 /* The shape picker: each choice's picture before its name, in the text colour (no card background there). */
 .stamp-shapes .stamp-icon {
   margin-inline-end: var(--space-2);

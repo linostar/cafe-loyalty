@@ -24,7 +24,7 @@ import { audit } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo } from "./logo-image.js";
 import { RateLimiter } from "./rate-limit.js";
-import { setLogo, unsetLogo } from "./logo-routes.js";
+import { refuseLogoStampWithoutLogo, setLogo, unsetLogo } from "./logo-routes.js";
 
 export interface CafeRoutesOptions {
   db: Kysely<Database>;
@@ -276,6 +276,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     const owner = ownerOf(request);
     const { stampShape } = parseInput(stampShapeUpdateSchema, request.body);
     return withCafe(db, owner.cafeId, async (trx) => {
+      await refuseLogoStampWithoutLogo(trx, owner.cafeId, stampShape);
       const changed = await trx
         .updateTable("cafes")
         .set({ stamp_shape: stampShape })

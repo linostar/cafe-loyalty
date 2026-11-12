@@ -15,6 +15,7 @@ const content: ApplePassContent = {
   cafeName: "Café Nour",
   colors: { ...DEFAULT_CARD_COLORS },
   stampShape: "circle",
+  stampMask: undefined,
   logo: undefined,
   holderName: null,
   stamps: 4,

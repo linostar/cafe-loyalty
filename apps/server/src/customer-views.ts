@@ -100,6 +100,8 @@ export interface CardView {
   logoPath: string | null;
   /** The shape the café's stamps are drawn in. */
   stampShape: StampShape;
+  /** For "From logo", the address of the logo's silhouette (stampMaskPath) the stamps are masked with; else null. */
+  stampMaskPath: string | null;
   /** The holder's name, given at signup; null on cards made before it was asked. */
   holderName: string | null;
   stamps: number;
@@ -121,9 +123,12 @@ export interface CardView {
  * image the policy would have to allow. Screen readers get the count in words instead ("4 of 9 stamps"). Rows as the
  * passes have them (`columns-<n>`, customer.css: at most 5 a row, spread evenly).
  */
-function stampGridHtml(lang: Lang, shape: StampShape, stamps: number, required: number): SafeHtml {
+function stampGridHtml(lang: Lang, shape: StampShape, logoMask: boolean, stamps: number, required: number): SafeHtml {
+  // "From logo": the logo's silhouette, through the face's --stamp-logo mask (cardStyle, customer.css); without one, circles.
+  const drawn = shape === "logo" ? "circle" : shape;
+  const stamp = (full: boolean) => (shape === "logo" && logoMask ? new SafeHtml('<span class="stamp-logo"></span>') : new SafeHtml(stampSlotSvg(drawn, full)));
   const slots = Array.from({ length: required }, (_, index) =>
-    index < stamps ? html`<li class="stamp is-filled">${new SafeHtml(stampSlotSvg(shape, true))}</li>` : html`<li class="stamp">${new SafeHtml(stampSlotSvg(shape, false))}</li>`,
+    index < stamps ? html`<li class="stamp is-filled">${stamp(true)}</li>` : html`<li class="stamp">${stamp(false)}</li>`,
   );
   return html`<p class="visually-hidden">${stampsText(lang, stamps, required)}</p>
 <ol class="stamp-grid columns-${String(stampGrid(required).columns)}" aria-hidden="true">${slots}</ol>`;
@@ -147,7 +152,7 @@ ${view.logoPath === null ? null : html`<img class="card-logo" src="${view.logoPa
 <p class="kicker">${t(lang, "siteTitle")}</p>
 <h1 id="card-title">${t(lang, "cardTitle", { cafe: view.cafeName })}</h1>
 ${view.holderName === null ? null : html`<p class="holder" dir="auto">${view.holderName}</p>`}
-${program === undefined ? null : stampGridHtml(lang, view.stampShape, stamps, program.stampsRequired)}
+${program === undefined ? null : stampGridHtml(lang, view.stampShape, view.stampMaskPath !== null, stamps, program.stampsRequired)}
 ${program === undefined
   ? null
   : ready
@@ -188,7 +193,7 @@ ${view.feedbackHref === undefined
 </section>`}
 <p class="link-row"><a class="link-button next" href="${view.path}/settings?lang=${lang}"><span>${t(lang, "settingsLink")}</span>${chevron("forward")}</a></p>`,
     view.otherLangHref,
-    cardStyle(view.colors),
+    cardStyle(view.colors, view.stampMaskPath),
   );
 }
 

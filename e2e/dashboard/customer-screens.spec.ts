@@ -48,6 +48,7 @@ const card = (lang: Lang, overrides: Partial<CardView> = {}): string =>
     colors: { ...DEFAULT_CARD_COLORS },
     logoPath: null,
     stampShape: "circle",
+    stampMaskPath: null,
     holderName: lang === "ar" ? "رانيا حداد" : "Rania Haddad",
     stamps: 4,
     program: PROGRAM[lang],

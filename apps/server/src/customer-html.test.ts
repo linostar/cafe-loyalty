@@ -2,7 +2,24 @@ import { createHash } from "node:crypto";
 import { MAX_STAMPS_PER_ROW, PRODUCT_NAME, stampGrid } from "@cafe-loyalty/shared";
 import { stylesheets } from "@cafe-loyalty/ui";
 import { describe, expect, it } from "vitest";
-import { CUSTOMER_CSP, FONT_FILES, SafeHtml, count, html, page, pickLang, t } from "./customer-html.js";
+import { CUSTOMER_CSP, FONT_FILES, SafeHtml, cardStyle, count, html, page, pickLang, t } from "./customer-html.js";
+
+describe("cardStyle", () => {
+  const colors = { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" };
+  const productColors = { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" };
+  const mask = `/logos/${"ab".repeat(32)}-stamp.png`;
+
+  it("gives a \"From logo\" card its silhouette's address, with the product's colours or the café's own", () => {
+    expect(cardStyle(productColors, mask)).toBe(`.card-face{--stamp-logo:url("${mask}")}`);
+    expect(cardStyle(colors, mask)).toContain(`--stamp-logo:url("${mask}")`);
+    expect(cardStyle(colors, mask)).toContain("--card-background:#1f5a85");
+  });
+
+  it("puts in only a silhouette's address, nothing else", () => {
+    expect(cardStyle(productColors, '/logos/x");}body{display:none')).toBeUndefined();
+    expect(cardStyle(colors, null)).not.toContain("--stamp-logo");
+  });
+});
 
 describe("html", () => {
   it("escapes interpolated text and attribute values", () => {

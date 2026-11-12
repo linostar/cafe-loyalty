@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, offerText, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
+import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, loadStampMask, offerText, stampMaskPath as stampMaskPathOf, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
 import { arabicOr, DEFAULT_COUNTRY_CODE, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -14,7 +14,7 @@ import { CUSTOMER_CSP, FONT_FILES, FONT_PATH, ICON_PATH, LOGO_PATH, cardStyle, c
 import { cardSettingsView, cardView, deletedView, errorView, feedbackView, joinView, recoverView, restoreView, restoredView, undoEmailView, type FeedbackView, type JoinView, type NextStep, type SettingsSection } from "./customer-views.js";
 import { audit, now, secondsFromNow } from "./db-helpers.js";
 import { GOOGLE_LOGO_PNG, GOOGLE_WALLET_BADGES, googleSaveUrl } from "./google-pass.js";
-import { registerLogoFiles } from "./logo-routes.js";
+import { findStampMask, registerLogoFiles } from "./logo-routes.js";
 import type { EmailMessage, Mailer } from "./mailer.js";
 import { queueOne, queuePassUpdate } from "./pass-updates.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
@@ -556,12 +556,14 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4, ecc: "M" }))}`;
     const path = `/c/${secret}`;
     const apple = onAppleDevice(request);
+    const stampMaskPath = cafe.stampShape === "logo" && cafe.logoHash !== null ? stampMaskPathOf(cafe.logoHash) : null;
     const document = cardView(lang, {
       path,
       cafeName: cafe.name,
       colors: cafe.colors,
       logoPath: cafe.logoHash === null ? null : cafeLogoPath(cafe.logoHash),
       stampShape: cafe.stampShape,
+      stampMaskPath,
       holderName: card.holder_name,
       stamps: card.stamps,
       program: program === undefined ? undefined : { stampsRequired: program.stamps_required, reward: lang === "ar" ? arabicOr(program.reward_name_ar, program.reward_name_en) : program.reward_name_en },
@@ -579,7 +581,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
             : null,
       otherLangHref: otherLang(path, lang),
     });
-    return { document, style: cardStyle(cafe.colors) };
+    return { document, style: cardStyle(cafe.colors, stampMaskPath) };
   }
 
   /**
@@ -606,6 +608,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
         cafe: await loadCafeBranding(trx, card.cafe_id),
         logo: await loadAppleLogo(trx, card.cafe_id),
+        stampMask: await loadStampMask(trx, card.cafe_id),
         program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
         offers: await loadCardOffer(trx, card.id),
         feedback: await loadFeedbackRequest(trx, card.id),
@@ -617,6 +620,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       cafeName: found.cafe.name,
       colors: found.cafe.colors,
       stampShape: found.cafe.stampShape,
+      stampMask: found.cafe.stampShape === "logo" ? found.stampMask : undefined,
       logo: found.logo,
       holderName: card.holder_name,
       stamps: found.stamps,
@@ -712,8 +716,13 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
           throw new PageError(503, "failed");
         }
         enforce(limits.stampPicturesPerIp, clientKey(request.ip));
+        // "From logo" is drawn with the current silhouette of the logo the address names; any other logo is not found.
+        const mask = picture.logoHash === undefined ? undefined : await findStampMask(db, picture.logoHash);
+        if (picture.logoHash !== undefined && mask === undefined) {
+          throw new PageError(404, "notFound");
+        }
         // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
-        drawing = stampPicturePng(picture, 3, version)
+        drawing = stampPicturePng(picture, 3, version, mask)
           .then((drawn) => {
             stampPictures.set(file, drawn);
             if (stampPictures.size > 256) {

@@ -531,6 +531,39 @@ describe("a café's name, card colours and logo", () => {
     ]);
   });
 
+  it("get \"From logo\" stamps only with a logo, drawn from its silhouette, and go back to the circle when it is removed", async () => {
+    const app = await adminApp();
+    const url = `/api/admin/cafes/${app.owner.cafeId}`;
+    for (const refused of [app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "logo" }), app.asOperator("PATCH", url, { stampShape: "logo" })]) {
+      const response = await refused;
+      expect(response.statusCode).toBe(400);
+      expect(response.json<{ details: { path: string; issue: string }[] }>().details).toEqual([{ path: "stampShape", issue: "Upload the logo first: these stamps are made from it." }]);
+    }
+    expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "circle" } });
+
+    const hash = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo() })).json<{ cafe: { logoHash: string } }>().cafe.logoHash;
+    const picked = await app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "logo" });
+    expect(picked.statusCode).toBe(200);
+    expect(picked.json()).toMatchObject({ cafe: { stampShape: "logo" } });
+    // The silhouette on both addresses (the web card's and the dashboard's masks), and stamp pictures drawn from it.
+    for (const address of [`/logos/${hash}-stamp.png`, `/api/logos/${hash}-stamp.png`]) {
+      const served = await app.app.inject({ method: "GET", url: address });
+      expect(served.statusCode, address).toBe(200);
+      expect(served.headers["content-type"]).toBe("image/png");
+    }
+    const picture = await app.app.inject({ method: "GET", url: `/stamps/v3/logo.${hash}-4a2c2a-ffffff-1-2.png` });
+    expect(picture.statusCode).toBe(200);
+    expect(picture.headers["content-type"]).toBe("image/png");
+    // No other logo's silhouette or stamps.
+    expect((await app.app.inject({ method: "GET", url: `/logos/${"ab".repeat(32)}-stamp.png` })).statusCode).toBe(404);
+    expect((await app.app.inject({ method: "GET", url: `/stamps/v3/logo.${"ab".repeat(32)}-4a2c2a-ffffff-1-2.png` })).statusCode).toBe(404);
+
+    // Removing the logo goes back to the circle, whoever removes it.
+    const removed = await app.asOperator("DELETE", `${url}/logo`);
+    expect(removed.json()).toMatchObject({ logoHash: null, stampShape: "circle" });
+    expect((await app.app.inject({ method: "GET", url: `/logos/${hash}-stamp.png` })).statusCode).toBe(404);
+  });
+
   it("get a logo from the operator or the owner, served by its hash on both addresses until the change after the one that replaced or removed it", async () => {
     const app = await adminApp();
     const set = await app.asOperator("PUT", `/api/admin/cafes/${app.owner.cafeId}/logo`, { image: await pngLogo() });
