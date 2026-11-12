@@ -115,6 +115,13 @@ describe("a café's branding", () => {
     await expect(update({ stamp_shape: "star" })()).rejects.toMatchObject({ code: "23514" });
   });
 
+  it("marks every current pass (and the Google class's pass) when the review link is set, changed or cleared, not when saved again", async () => {
+    expect(await marked(update({ google_review_url: "https://g.page/r/fake-review-link/review" }))).toEqual({ a: CURRENT, b: [] });
+    expect(await marked(update({ google_review_url: "https://g.page/r/fake-review-link/review" }))).toEqual(NONE);
+    expect(await marked(update({ google_review_url: "https://g.page/r/other-fake-link/review" }))).toEqual({ a: CURRENT, b: [] });
+    expect(await marked(update({ google_review_url: null }))).toEqual({ a: CURRENT, b: [] });
+  });
+
   it("leaves the passes alone on any other change, the same name again, or the worker's Google class record", async () => {
     expect(await marked(update({ min_margin_percent: 35 }))).toEqual(NONE);
     expect(await marked(update({ name: "Café Renamed" }))).toEqual(NONE);

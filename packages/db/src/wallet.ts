@@ -32,6 +32,9 @@ export const PASS_TEXT = {
     passFeedbackLink: "Tell us",
     // Not a promise of a Google review: the café may have no review link.
     passFeedbackText: "Tell the café privately how your visit went.",
+    passReviewLabel: "Leave a review",
+    passReviewLink: "Leave a review on Google",
+    passReviewText: "Tell others about the café on Google.",
   },
   ar: {
     passDescription: "بطاقة الولاء في {cafe}",
@@ -55,6 +58,9 @@ export const PASS_TEXT = {
     passFeedbackLabel: "كيف كانت زيارتك؟",
     passFeedbackLink: "أخبرنا",
     passFeedbackText: "أخبر المقهى بشكل خاص كيف كانت زيارتك.",
+    passReviewLabel: "اترك تقييماً",
+    passReviewLink: "اترك تقييماً على Google",
+    passReviewText: "أخبر الآخرين عن المقهى على Google.",
   },
 } as const satisfies Record<"ar" | "en", Record<string, string>>;
 
@@ -117,11 +123,11 @@ export const PASS_BACKGROUND = [74, 44, 42] as const;
  * and records the new one, so passes nobody updates otherwise get it too (Apple: 3 drew the stamps on a strip; Google:
  * 2 made them the hero image; Apple 4 and Google 3: rows of at most 5 stamps; Apple 5 and Google 4: full stamps as big
  * as empty ones, and on Apple the reward and offer centred and space above the logo; Apple 6: the reward and offer
- * start-aligned, migration 0035). An Apple pass on another layout
- * also counts as changed when next fetched (passkit-routes.ts).
+ * start-aligned, migration 0035; Apple 7 and Google 5: the café's review link on every pass, migration 0036). An Apple
+ * pass on another layout also counts as changed when next fetched (passkit-routes.ts).
  */
-export const APPLE_PASS_LAYOUT_VERSION = 6;
-export const GOOGLE_PASS_LAYOUT_VERSION = 4;
+export const APPLE_PASS_LAYOUT_VERSION = 7;
+export const GOOGLE_PASS_LAYOUT_VERSION = 5;
 
 /** Google Wallet settings (GOOGLE_WALLET_* variables). */
 export interface GoogleWalletConfig {
@@ -189,10 +195,11 @@ const textModule = (id: string, header: ReturnType<typeof localized>, body: Retu
 });
 
 /**
- * A café's loyalty class: its name, logo (its own, or the product's) and card background; Google picks the text colour.
- * Written with the café's first object, and again by the worker whenever it is built differently (cafes.google_class_hash).
+ * A café's loyalty class: its name, logo (its own, or the product's), card background and review link (on every pass of
+ * the café, beside an object's own links); Google picks the text colour. Written with the café's first object, and again
+ * by the worker whenever it is built differently (cafes.google_class_hash).
  */
-export function googleLoyaltyClass(issuerId: string, cafe: Pick<CafeBranding, "id" | "name" | "colors" | "logoHash">, publicUrl: string) {
+export function googleLoyaltyClass(issuerId: string, cafe: Pick<CafeBranding, "id" | "name" | "colors" | "logoHash" | "reviewUrl">, publicUrl: string) {
   return {
     id: googleClassId(issuerId, cafe.id),
     issuerName: cafe.name,
@@ -200,6 +207,10 @@ export function googleLoyaltyClass(issuerId: string, cafe: Pick<CafeBranding, "i
     localizedProgramName: passText("passProgramName"),
     programLogo: { sourceUri: { uri: cafe.logoHash === null ? googleLogoUrl(publicUrl) : new URL(cafeLogoPath(cafe.logoHash), publicUrl).toString() } },
     hexBackgroundColor: cafe.colors.background,
+    // Always there, whoever the customer and however the visit went: never gated (AC 37).
+    ...(cafe.reviewUrl === null
+      ? {}
+      : { linksModuleData: { uris: [{ id: "review", uri: cafe.reviewUrl, description: PASS_TEXT.en.passReviewLink, localizedDescription: passText("passReviewLink") }] } }),
     reviewStatus: "UNDER_REVIEW",
   };
 }

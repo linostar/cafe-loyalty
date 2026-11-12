@@ -48,6 +48,8 @@ export interface ApplePassContent {
   offers: { optedIn: boolean; offer: CardOffer | undefined };
   /** The feedback page of the card's latest feedback request (feedbackUrl, AC 37), if it has one. */
   feedbackUrl: string | undefined;
+  /** The café's Google review link (cafes.google_review_url), or null without one: on every current pass (AC 37). */
+  reviewUrl: string | null;
 }
 
 /**
@@ -118,6 +120,7 @@ function passStrings(lang: Lang, content: ApplePassContent): Record<string, stri
     ...(content.holderName === null || moved ? {} : { holder_value: content.holderName }),
     ...offerStrings(lang, content.offers.offer),
     ...(content.feedbackUrl === undefined ? {} : { feedback_label: t(lang, "passFeedbackLabel"), feedback_value: `${t(lang, "passFeedbackText")}\n${content.feedbackUrl}` }),
+    ...(content.reviewUrl === null ? {} : { review_label: t(lang, "passReviewLabel"), review_value: `${t(lang, "passReviewText")}\n${content.reviewUrl}` }),
   };
   return Object.fromEntries(Object.entries(strings).map(([key, value]) => [key, stringsValue(value)]));
 }
@@ -220,11 +223,13 @@ export async function buildApplePass(config: ApplePassConfig, publicUrl: string,
       primaryFields: moved ? [{ key: "moved", label: "moved_label", value: "moved_value" }] : [],
       secondaryFields: program === undefined || moved ? [] : [{ key: "reward", label: "reward_label", value: "reward_value", textAlignment: START }],
       auxiliaryFields: offer.auxiliaryFields,
-      // The feedback link is on the back, silently (AC 37): Wallet makes the URL in its text a link.
+      // The feedback and review links are on the back, silently (AC 37): Wallet makes the URL in its text a link. The
+      // review link is always there (never gated on a visit or its feedback).
       backFields: [
         ...(program === undefined || moved ? [] : [{ key: "stamps", value: "stamps_value" }]),
         ...offer.backFields,
         ...(content.feedbackUrl === undefined || moved ? [] : [{ key: "feedback", label: "feedback_label", value: "feedback_value" }]),
+        ...(content.reviewUrl === null || moved ? [] : [{ key: "review", label: "review_label", value: "review_value" }]),
         { key: "about", label: "about_label", value: "about_value" },
       ],
     },

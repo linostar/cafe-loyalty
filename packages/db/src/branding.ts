@@ -3,8 +3,8 @@ import type { Transaction } from "kysely";
 import type { Database } from "./schema.js";
 
 /**
- * What every card of a café shows of it: its name, its card colours, its logo's hash (null: the product's logo) and the
- * shape its stamps are drawn in.
+ * What every card of a café shows of it: its name, its card colours, its logo's hash (null: the product's logo), the
+ * shape its stamps are drawn in and its Google review link (null: none), on every pass whatever the visit.
  */
 export interface CafeBranding {
   id: string;
@@ -12,6 +12,7 @@ export interface CafeBranding {
   colors: CardColors;
   logoHash: Buffer | null;
   stampShape: StampShape;
+  reviewUrl: string | null;
 }
 
 /** A café's logo in the sizes its cards use, with the SHA-256 of the square PNG. */
@@ -28,7 +29,7 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
   const cafe = await trx
     .selectFrom("cafes")
     .leftJoin("cafe_logos", "cafe_logos.cafe_id", "cafes.id")
-    .select(["cafes.id", "cafes.name", "cafes.card_background", "cafes.card_foreground", "cafes.card_label", "cafes.stamp_shape", "cafe_logos.hash"])
+    .select(["cafes.id", "cafes.name", "cafes.card_background", "cafes.card_foreground", "cafes.card_label", "cafes.stamp_shape", "cafes.google_review_url", "cafe_logos.hash"])
     .where("cafes.id", "=", cafeId)
     .executeTakeFirstOrThrow();
   return {
@@ -37,6 +38,7 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
     colors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
     logoHash: cafe.hash,
     stampShape: cafe.stamp_shape,
+    reviewUrl: cafe.google_review_url,
   };
 }
 

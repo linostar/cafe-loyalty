@@ -83,6 +83,8 @@ const AR = {
     "بقي هذا الهاتف دون اتصال مدة طويلة ويجب ربطه مجدداً. الأختام المنتظرة محفوظة وتُرسل بعد ربطه.",
   "This phone is paired as {device} at {cafe}. Pairing it again replaces that.": "هذا الهاتف مربوط باسم {device} في {cafe}. ربطه مجدداً يستبدل ذلك.",
   "Pair this phone": "اربط هذا الهاتف",
+  "Paired this phone already? Each browser and the home-screen app keep their own pairing: open the counter where you paired it.":
+    "سبق أن ربطت هذا الهاتف؟ لكل متصفح ولتطبيق الشاشة الرئيسية ربطه الخاص: افتح الكاونتر حيث ربطته.",
   "On the owner's dashboard, open Devices and create a pairing code. Scan its QR code with this phone's camera, or type the code here.":
     "في لوحة تحكم المالك، افتح «الأجهزة» وأنشئ رمز ربط. امسح رمز QR الخاص به بكاميرا هذا الهاتف، أو اكتب الرمز هنا.",
   "This phone is still paired with {cafe} and has 1 item waiting to send there. Pair it with {cafe} first to send it. Starting over here discards it for good.":
@@ -407,6 +409,13 @@ function PairScreen({ device, waiting, onPaired, onBusy }: PairScreenProps) {
     intro = <p className="warning-box">{t("This phone was offline too long and must be paired again. Its waiting stamps are kept and sent once it is paired.")}</p>;
   } else if (device?.paired === true) {
     intro = <p>{t("This phone is paired as {device} at {cafe}. Pairing it again replaces that.", { device: device.deviceName, cafe: device.cafe.name })}</p>;
+  } else if (device === undefined) {
+    // Nothing paired in this browser: storage is per browser (Safari, the home-screen app, Chrome), never per phone.
+    intro = (
+      <p className="notice notice-info">
+        {t("Paired this phone already? Each browser and the home-screen app keep their own pairing: open the counter where you paired it.")}
+      </p>
+    );
   }
 
   return (
