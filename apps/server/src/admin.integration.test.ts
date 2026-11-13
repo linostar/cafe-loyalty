@@ -192,6 +192,7 @@ describe("operator accounts (AC 39)", () => {
     const operatorRoutes = app.routes.filter((route) => route.access === "operator" && route.method !== "HEAD");
     expect(operatorRoutes.map((route) => `${route.method} ${route.url}`).sort()).toEqual([
       "DELETE /api/admin/cafes/:id/logo",
+      "DELETE /api/admin/cafes/:id/picture",
       "GET /api/admin/cafes",
       "GET /api/admin/session",
       "PATCH /api/admin/cafes/:id",
@@ -202,6 +203,7 @@ describe("operator accounts (AC 39)", () => {
       "POST /api/admin/cafes/:id/payments/:paymentId/void",
       "POST /api/admin/password",
       "PUT /api/admin/cafes/:id/logo",
+      "PUT /api/admin/cafes/:id/picture",
     ]);
     for (const route of operatorRoutes) {
       const call = (headers: Record<string, string>) =>
@@ -636,8 +638,8 @@ describe("a café's name, card colours and logo", () => {
     expect((await app.app.inject({ method: "GET", url: "/stamps/v3/picture-4a2c2a-ffffff-1-2.png" })).statusCode).toBe(404);
     expect((await app.app.inject({ method: "GET", url: `/logos/${hash}.png` })).statusCode).toBe(404);
 
-    // A logo's upload and removal leave the picture, and the stamps drawn from it, alone.
-    const logo = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo() })).json<{ cafe: { logoHash: string } }>().cafe.logoHash;
+    // A logo's upload and removal leave the picture, and the stamps drawn from it, alone (a logo image of its own).
+    const logo = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo(310, 130, 15) })).json<{ cafe: { logoHash: string } }>().cafe.logoHash;
     expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { logoHash: logo, stampShape: "picture", pictureMaskHash: hash } });
     await app.asOwner("DELETE", "/api/cafe/logo");
     expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { logoHash: null, stampShape: "picture", pictureMaskHash: hash } });
