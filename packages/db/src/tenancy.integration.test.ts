@@ -230,6 +230,11 @@ const FIXTURES: Readonly<Record<Exclude<TableName, "cafes" | GlobalTable>, (trx:
       .insertInto("cafe_logos")
       .values({ cafe_id: cafeId, hash: randomBytes(32), square: randomBytes(8), apple_1x: randomBytes(8), apple_2x: randomBytes(8), apple_3x: randomBytes(8) })
       .execute(),
+  cafe_pictures: (trx, cafeId) =>
+    trx
+      .insertInto("cafe_pictures")
+      .values({ cafe_id: cafeId, square: randomBytes(8), stamp_mask: randomBytes(8), stamp_mask_hash: randomBytes(32), stamp_mask_version: 2 })
+      .execute(),
   card_lapses: (trx, cafeId) =>
     trx
       .insertInto("card_lapses")

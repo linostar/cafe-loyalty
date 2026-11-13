@@ -105,6 +105,8 @@ export const adminCafeSchema = z.object({
   logoHash: logoHashSchema.nullable().default(null),
   /** The logo's silhouette for "From logo" stamps (null: none, so the option is not offered). */
   stampMaskHash: logoHashSchema.nullable().default(null),
+  /** The silhouette of the café's "From picture" picture (by its own hash), or null without one. */
+  pictureMaskHash: logoHashSchema.nullable().default(null),
   stampShape: stampShapeShapeSchema,
   paidCents: z.int(),
   payments: z.array(adminPaymentSchema),

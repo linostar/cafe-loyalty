@@ -308,6 +308,58 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
   await expect(logo.getByLabel("Logo")).toBeFocused();
 });
 
+test("uploads a picture for \"From picture\" stamps from the shape picker, never as the logo, then replaces and removes it", async ({ page }) => {
+  const MASK = "ab".repeat(32);
+  const NEXT = "ba".repeat(32);
+  const png = await readFile(ICON_PNG_PATH);
+  let setup = { cafe: { ...CAFE, stampShape: "circle", logoHash: null as string | null, pictureMaskHash: null as string | null }, program: PROGRAM, orderTypes: [ESPRESSO] };
+  const sent: unknown[] = [];
+  await mockApi(page, {
+    "GET /api/auth/session": reply(200, SESSION),
+    "GET /api/cafe": (route) => route.fulfill({ json: setup }),
+    "GET /api/cafe/join": reply(200, JOIN),
+    // An upload also picks "From picture"; removing the picture moves the café to the circle.
+    "PUT /api/cafe/picture": async (route) => {
+      sent.push(json(route));
+      setup = { ...setup, cafe: { ...setup.cafe, stampShape: "picture", pictureMaskHash: setup.cafe.pictureMaskHash === null ? MASK : NEXT } };
+      await route.fulfill({ json: setup });
+    },
+    "DELETE /api/cafe/picture": async (route) => {
+      sent.push("removed");
+      setup = { ...setup, cafe: { ...setup.cafe, stampShape: "circle", pictureMaskHash: null } };
+      await route.fulfill({ json: setup });
+    },
+    [`GET /api/logos/${MASK}-stamp.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
+    [`GET /api/logos/${NEXT}-stamp.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
+  });
+  await page.goto("/cafe");
+  const section = page.getByRole("region", { name: "Card" });
+  const shapes = section.getByRole("form", { name: "Stamp shape" }).getByRole("group", { name: "Stamp shape" });
+  const pictureForm = section.getByRole("form", { name: `Stamp picture of ${CAFE.name}` });
+  await expect(pictureForm).toHaveCount(0);
+  // Picking it shows its upload, under the shapes.
+  await shapes.getByRole("radio", { name: "From picture" }).check();
+  await expect(pictureForm.getByRole("button", { name: "Remove picture" })).toHaveCount(0);
+  await pictureForm.getByLabel("Stamp picture").setInputFiles({ name: "stamp.png", mimeType: "image/png", buffer: png });
+  await pictureForm.getByRole("button", { name: "Upload picture" }).click();
+  await expect(pictureForm.getByRole("status")).toHaveText("Saved. Cards in wallets show the new stamps within a few minutes.");
+  expect(sent).toEqual([{ image: png.toString("base64") }]);
+  // The preview's stamps and the option are drawn from its silhouette; the card has no logo.
+  await expect(section.locator(".card-preview-stamps .stamp-icon-logo").first()).toHaveAttribute("style", new RegExp(`/api/logos/${MASK}-stamp\\.png`));
+  await expect(section.locator(".card-preview-face img")).toHaveCount(0);
+  await expect(shapes.getByRole("radio", { name: "From picture" })).toBeChecked();
+
+  await pictureForm.getByLabel("Stamp picture").setInputFiles({ name: "other.png", mimeType: "image/png", buffer: png });
+  await pictureForm.getByRole("button", { name: "Replace picture" }).click();
+  await expect(section.locator(".card-preview-stamps .stamp-icon-logo").first()).toHaveAttribute("style", new RegExp(`/api/logos/${NEXT}-stamp\\.png`));
+
+  await pictureForm.getByRole("button", { name: "Remove picture" }).click();
+  await expect(pictureForm.getByRole("status")).toHaveText("Picture removed.");
+  expect(sent).toEqual([{ image: png.toString("base64") }, { image: png.toString("base64") }, "removed"]);
+  await expect(section.locator(".card-preview-stamps .stamp-icon-logo")).toHaveCount(0);
+  await expect(pictureForm.getByRole("button", { name: "Upload picture" })).toBeVisible();
+});
+
 test("picks the shape the card's stamps are drawn in, which the preview then shows", async ({ page }) => {
   let setup = { cafe: { ...CAFE, stampShape: "circle" }, program: PROGRAM, orderTypes: [ESPRESSO] };
   const sent: unknown[] = [];
@@ -330,10 +382,11 @@ test("picks the shape the card's stamps are drawn in, which the preview then sho
   await expect(section.getByText("4 of 9 stamps")).toHaveClass("visually-hidden");
   const form = section.getByRole("form", { name: "Stamp shape" });
   const shapes = form.getByRole("group", { name: "Stamp shape" });
-  for (const name of ["Circle", "Cup", "Steaming cup", "Plate", "Coffee bean", "Ice cream", "Cake", "Burger"]) {
+  // "From picture" is always offered; "From logo" only with a logo.
+  for (const name of ["Circle", "Cup", "Steaming cup", "Plate", "Coffee bean", "Ice cream", "Cake", "Burger", "From picture"]) {
     await expect(shapes.getByRole("radio", { name, exact: true })).toBeVisible();
   }
-  await expect(shapes.getByRole("radio")).toHaveCount(8);
+  await expect(shapes.getByRole("radio")).toHaveCount(9);
   await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
   // The 9 sample stamps in rows as the cards have them: 5, then 4.
   const tops = await section.locator(".card-preview-stamps li").evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));

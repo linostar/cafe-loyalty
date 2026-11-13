@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Updateable } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { removeCafeLogo, saveCafeLogo, type CafeLogoImages } from "./branding.js";
+import { loadCafeBranding, removeCafeLogo, removeCafePicture, saveCafeLogo, saveCafePicture, type CafeLogoImages, type CafePictureImages } from "./branding.js";
 import { withCafe, withLookup } from "./database.js";
 import type { CafesTable } from "./schema.js";
 import { createTestDatabase, type TestDatabase } from "./testing/test-database.js";
@@ -203,6 +203,49 @@ describe("a café's branding", () => {
     expect(await marked(remove)).toEqual({ a: EVERY, b: [] });
     expect(await shape()).toBe("circle");
     // Leaves café A without a logo for the tests after it.
+    await withCafe(testDb.app.db, cafeA, (trx) => trx.deleteFrom("cafe_logos").execute());
+  });
+
+  it("draws \"From picture\" from the café's own picture, never its logo: every pass marked on a new one, and back to the circle without one", async () => {
+    const shape = async () => (await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafes").select("stamp_shape").executeTakeFirstOrThrow())).stamp_shape;
+    const branding = () => withCafe(testDb.app.db, cafeA, (trx) => loadCafeBranding(trx, cafeA));
+    const picture = (): CafePictureImages => ({ square: randomBytes(8), stampMask: randomBytes(8), stampMaskHash: randomBytes(32), stampMaskVersion: 2 });
+    const save = (values: CafePictureImages) => () => withCafe(testDb.app.db, cafeA, (trx) => saveCafePicture(trx, cafeA, values));
+    const remove = () => withCafe(testDb.app.db, cafeA, (trx) => removeCafePicture(trx, cafeA));
+    const first = picture();
+    // A first picture shows on no card until the café picks it.
+    expect(await marked(save(first))).toEqual(NONE);
+    expect(await marked(update({ stamp_shape: "picture" }))).toEqual({ a: EVERY, b: [] });
+    expect(await branding()).toMatchObject({ stampShape: "picture", logoHash: null, stampMaskHash: first.stampMaskHash });
+    // A logo is the card's logo (its class's pass is marked), not the stamps': they keep the picture's silhouette.
+    const logo = images();
+    expect(await marked(() => withCafe(testDb.app.db, cafeA, (trx) => saveCafeLogo(trx, cafeA, logo)))).toEqual({ a: CURRENT, b: [] });
+    expect(await branding()).toMatchObject({ stampShape: "picture", logoHash: logo.hash, stampMaskHash: first.stampMaskHash });
+    expect(await marked(() => withCafe(testDb.app.db, cafeA, (trx) => removeCafeLogo(trx, cafeA)))).toEqual({ a: CURRENT, b: [] });
+    expect(await shape()).toBe("picture");
+    // A new picture (a replacement, or a re-cut) changes every pass's stamps; the same one again changes nothing.
+    const next = picture();
+    expect(await marked(save(next))).toEqual({ a: EVERY, b: [] });
+    expect(await marked(save(next))).toEqual(NONE);
+    expect((await branding()).stampMaskHash).toEqual(next.stampMaskHash);
+    // Found by its silhouette's hash with no café set (its public address), and by nothing else.
+    const lookup = (hash: Buffer) => withLookup(testDb.app.db, { secretHash: hash }, (trx) => trx.selectFrom("cafe_pictures").select("cafe_id").execute());
+    expect(await lookup(next.stampMaskHash)).toEqual([{ cafe_id: cafeA }]);
+    expect(await lookup(first.stampMaskHash)).toEqual([]);
+    // Removing it goes back to the circle; removed already, nothing changes.
+    expect(await marked(async () => {
+      expect(await remove()).toEqual(next.stampMaskHash);
+    })).toEqual({ a: EVERY, b: [] });
+    expect(await shape()).toBe("circle");
+    expect(await marked(async () => {
+      expect(await remove()).toBeUndefined();
+    })).toEqual(NONE);
+    // A picture removed while another shape is picked leaves that shape.
+    await save(picture())();
+    await update({ stamp_shape: "cup" })();
+    expect(await marked(remove)).toEqual(NONE);
+    expect(await shape()).toBe("cup");
+    await update({ stamp_shape: "circle" })();
     await withCafe(testDb.app.db, cafeA, (trx) => trx.deleteFrom("cafe_logos").execute());
   });
 

@@ -604,6 +604,87 @@ describe("a café's name, card colours and logo", () => {
     expect(await row()).toEqual(before);
   });
 
+  it("get \"From picture\" stamps from a picture of their own, never their logo, picked by its upload and back to the circle when it is removed", async () => {
+    const app = await adminApp();
+    const url = `/api/admin/cafes/${app.owner.cafeId}`;
+    const details = (response: LightMyRequestResponse) => response.json<{ details: { path: string; issue: string }[] }>().details;
+    for (const refused of [app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "picture" }), app.asOperator("PATCH", url, { stampShape: "picture" })]) {
+      const response = await refused;
+      expect(response.statusCode).toBe(400);
+      expect(details(response)).toEqual([{ path: "stampShape", issue: "Upload a picture first: these stamps are made from it." }]);
+    }
+    const notAnImage = await app.asOwner("PUT", "/api/cafe/picture", { image: Buffer.from("not an image").toString("base64") });
+    expect(notAnImage.statusCode).toBe(400);
+    expect(details(notAnImage)).toEqual([{ path: "image", issue: "Upload the picture as a PNG or JPEG image." }]);
+
+    // Images of their own (the file's tests share a database, and silhouettes are found by their hash whatever the café):
+    // a one-colour image is its whole shape, so these sizes cut silhouettes no other test's image does.
+    const uploaded = await app.asOwner("PUT", "/api/cafe/picture", { image: await pngLogo(330, 150, 90) });
+    expect(uploaded.statusCode).toBe(200);
+    const cafe = uploaded.json<{ cafe: { pictureMaskHash: string } }>().cafe;
+    // Picked by the upload, and never the card's logo.
+    expect(cafe).toMatchObject({ stampShape: "picture", logoHash: null, stampMaskHash: null });
+    const hash = cafe.pictureMaskHash;
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    for (const address of [`/logos/${hash}-stamp.png`, `/api/logos/${hash}-stamp.png`]) {
+      const served = await app.app.inject({ method: "GET", url: address });
+      expect(served.statusCode, address).toBe(200);
+      expect(createHash("sha256").update(served.rawPayload).digest("hex")).toBe(hash);
+    }
+    // Its stamp pictures share the silhouettes' address; none is named after the shape alone.
+    expect((await app.app.inject({ method: "GET", url: `/stamps/v3/logo.${hash}-4a2c2a-ffffff-1-2.png` })).statusCode).toBe(200);
+    expect((await app.app.inject({ method: "GET", url: "/stamps/v3/picture-4a2c2a-ffffff-1-2.png" })).statusCode).toBe(404);
+    expect((await app.app.inject({ method: "GET", url: `/logos/${hash}.png` })).statusCode).toBe(404);
+
+    // A logo's upload and removal leave the picture, and the stamps drawn from it, alone.
+    const logo = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo() })).json<{ cafe: { logoHash: string } }>().cafe.logoHash;
+    expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { logoHash: logo, stampShape: "picture", pictureMaskHash: hash } });
+    await app.asOwner("DELETE", "/api/cafe/logo");
+    expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { logoHash: null, stampShape: "picture", pictureMaskHash: hash } });
+
+    // Another shape, then the operator's replacement: a new silhouette, picked again.
+    await app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "cup" });
+    const replaced = await app.asOperator("PUT", `${url}/picture`, { image: await pngLogo(150, 330, 90) });
+    expect(replaced.statusCode).toBe(200);
+    const next = replaced.json<{ pictureMaskHash: string }>().pictureMaskHash;
+    expect(next).not.toBe(hash);
+    expect(replaced.json()).toMatchObject({ stampShape: "picture", logoHash: null });
+    expect((await app.app.inject({ method: "GET", url: `/logos/${hash}-stamp.png` })).statusCode).toBe(404);
+
+    // Removing it goes back to the circle, whoever removes it; picking it again is refused.
+    const removed = await app.asOwner("DELETE", "/api/cafe/picture");
+    expect(removed.json()).toMatchObject({ cafe: { stampShape: "circle", pictureMaskHash: null } });
+    expect((await app.app.inject({ method: "GET", url: `/logos/${next}-stamp.png` })).statusCode).toBe(404);
+    expect((await app.asOperator("PATCH", url, { stampShape: "picture" })).statusCode).toBe(400);
+    // Removed already: nothing to remove or audit.
+    expect((await app.asOperator("DELETE", `${url}/picture`)).json()).toMatchObject({ stampShape: "circle", pictureMaskHash: null });
+
+    const { rows } = await context.admin.query<{ actor_type: string; action: string; changes: unknown }>(
+      "SELECT actor_type, action, changes FROM app.audit_log WHERE cafe_id = $1 AND action LIKE 'cafe.picture_%' ORDER BY id",
+      [app.owner.cafeId],
+    );
+    expect(rows).toEqual([
+      { actor_type: "owner", action: "cafe.picture_set", changes: { stampMaskHash: hash, stampShape: "picture" } },
+      { actor_type: "operator", action: "cafe.picture_set", changes: { stampMaskHash: next, stampShape: "picture" } },
+      { actor_type: "owner", action: "cafe.picture_removed", changes: { stampMaskHash: next } },
+    ]);
+  });
+
+  it("get their picture's silhouette cut again at start-up when it was cut the older way, still drawing their stamps", async () => {
+    const app = await adminApp();
+    // An image of its own (the file's tests share a database).
+    await app.asOwner("PUT", "/api/cafe/picture", { image: await pngLogo(140, 350, 70) });
+    const row = async () =>
+      (await context.admin.query<{ stamp_mask_hash: Buffer; stamp_mask_version: number }>("SELECT stamp_mask_hash, stamp_mask_version FROM app.cafe_pictures WHERE cafe_id = $1", [app.owner.cafeId]))
+        .rows[0];
+    await context.admin.query("UPDATE app.cafe_pictures SET stamp_mask_version = 1 WHERE cafe_id = $1", [app.owner.cafeId]);
+    const log = { error: () => undefined } as unknown as Parameters<typeof recutStampMasks>[1];
+    expect(await recutStampMasks(context.testDb.app.db, log)).toBeGreaterThanOrEqual(1);
+    const recut = await row();
+    expect(recut?.stamp_mask_version).toBe(STAMP_MASK_VERSION);
+    expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "picture", pictureMaskHash: recut?.stamp_mask_hash.toString("hex") } });
+  });
+
   it("get a logo from the operator or the owner, served by its hash on both addresses until the change after the one that replaced or removed it", async () => {
     const app = await adminApp();
     const set = await app.asOperator("PUT", `/api/admin/cafes/${app.owner.cafeId}/logo`, { image: await pngLogo() });

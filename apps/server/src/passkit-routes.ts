@@ -1,4 +1,4 @@
-import { arabicOr } from "@cafe-loyalty/shared";
+import { arabicOr, isSilhouetteShape } from "@cafe-loyalty/shared";
 import { feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, loadStampMask, withCafe, withLookup, type Database } from "@cafe-loyalty/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql, type Kysely } from "kysely";
@@ -194,7 +194,7 @@ export function passkitRoutes(app: FastifyInstance, options: PasskitRoutesOption
         card,
         cafe,
         logo: await loadAppleLogo(trx, pass.cafe_id),
-        stampMask: cafe.stampShape === "logo" ? await loadStampMask(trx, pass.cafe_id) : undefined,
+        stampMask: isSilhouetteShape(cafe.stampShape) ? await loadStampMask(trx, pass.cafe_id, cafe.stampShape) : undefined,
         program,
         offers: await loadCardOffer(trx, pass.card_id),
         feedback: await loadFeedbackRequest(trx, pass.card_id),

@@ -1,4 +1,4 @@
-import type { CardColors, StampShape } from "@cafe-loyalty/shared";
+import { isSilhouetteShape, type CardColors, type SilhouetteStampShape, type StampShape } from "@cafe-loyalty/shared";
 import type { Transaction } from "kysely";
 import type { Database } from "./schema.js";
 
@@ -13,8 +13,19 @@ export interface CafeBranding {
   logoHash: Buffer | null;
   stampShape: StampShape;
   reviewUrl: string | null;
-  /** The SHA-256 of the logo's silhouette ("From logo" stamps), or null without one: its address and its pictures'. */
+  /**
+   * The SHA-256 of the silhouette its stamps are drawn from, or null without one: the picture's for "From picture", else
+   * the logo's ("From logo"). Its address and its stamp pictures'.
+   */
   stampMaskHash: Buffer | null;
+}
+
+/** A café's "From picture" picture: the upload as a square PNG and the silhouette cut from it (cafe_pictures). */
+export interface CafePictureImages {
+  square: Buffer;
+  stampMask: Buffer;
+  stampMaskHash: Buffer;
+  stampMaskVersion: number;
 }
 
 /** A café's logo in the sizes its cards use, with the SHA-256 of the square PNG and its silhouette for "From logo" stamps. */
@@ -35,7 +46,19 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
   const cafe = await trx
     .selectFrom("cafes")
     .leftJoin("cafe_logos", "cafe_logos.cafe_id", "cafes.id")
-    .select(["cafes.id", "cafes.name", "cafes.card_background", "cafes.card_foreground", "cafes.card_label", "cafes.stamp_shape", "cafes.google_review_url", "cafe_logos.hash", "cafe_logos.stamp_mask_hash"])
+    .leftJoin("cafe_pictures", "cafe_pictures.cafe_id", "cafes.id")
+    .select([
+      "cafes.id",
+      "cafes.name",
+      "cafes.card_background",
+      "cafes.card_foreground",
+      "cafes.card_label",
+      "cafes.stamp_shape",
+      "cafes.google_review_url",
+      "cafe_logos.hash",
+      "cafe_logos.stamp_mask_hash",
+      "cafe_pictures.stamp_mask_hash as picture_mask_hash",
+    ])
     .where("cafes.id", "=", cafeId)
     .executeTakeFirstOrThrow();
   return {
@@ -45,7 +68,7 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
     logoHash: cafe.hash,
     stampShape: cafe.stamp_shape,
     reviewUrl: cafe.google_review_url,
-    stampMaskHash: cafe.stamp_mask_hash,
+    stampMaskHash: cafe.stamp_shape === "picture" ? cafe.picture_mask_hash : cafe.stamp_mask_hash,
   };
 }
 
@@ -55,7 +78,10 @@ export async function loadCafeBranding(trx: Transaction<Database>, cafeId: strin
  */
 export interface StampPicture {
   shape: StampShape;
-  /** The silhouette's hash, for the 'logo' shape (its address names it); no other shape has one. */
+  /**
+   * The silhouette's hash, for the 'logo' and 'picture' shapes (its address names it, as `logo.<hash>`: both are drawn
+   * the same from it); no other shape has one.
+   */
   maskHash?: Buffer;
   background: string;
   foreground: string;
@@ -70,7 +96,7 @@ export interface StampPicture {
  * or Google keeps showing the picture it cached.
  */
 export const stampPicturePath = (picture: StampPicture): string =>
-  `/stamps/v3/${picture.shape === "logo" && picture.maskHash !== undefined ? `logo.${picture.maskHash.toString("hex")}` : picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
+  `/stamps/v3/${isSilhouetteShape(picture.shape) && picture.maskHash !== undefined ? `logo.${picture.maskHash.toString("hex")}` : picture.shape}-${picture.background.slice(1)}-${picture.foreground.slice(1)}-${String(Math.min(picture.stamps, picture.required))}-${String(picture.required)}.png`;
 
 /** The Apple logo.png images of a café's logo, or undefined without one (the pass then has the product's). */
 export async function loadAppleLogo(trx: Transaction<Database>, cafeId: string): Promise<{ apple1x: Buffer; apple2x: Buffer; apple3x: Buffer } | undefined> {
@@ -111,13 +137,39 @@ export async function removeCafeLogo(trx: Transaction<Database>, cafeId: string)
   return removed?.previous_hash ?? undefined;
 }
 
-/** The silhouette of a café's current logo, for its "From logo" stamps, or undefined (no logo, or one from before 0037). */
-export async function loadStampMask(trx: Transaction<Database>, cafeId: string): Promise<Buffer | undefined> {
-  const logo = await trx.selectFrom("cafe_logos").select("stamp_mask").where("cafe_id", "=", cafeId).executeTakeFirst();
-  return logo?.stamp_mask ?? undefined;
+/**
+ * The silhouette a café's stamps of this shape are drawn from, or undefined: its current logo's for "From logo" (none
+ * without a logo, or for one from before 0037), its picture's for "From picture" (none without a picture).
+ */
+export async function loadStampMask(trx: Transaction<Database>, cafeId: string, shape: SilhouetteStampShape = "logo"): Promise<Buffer | undefined> {
+  const found = await trx
+    .selectFrom(shape === "picture" ? "cafe_pictures" : "cafe_logos")
+    .select("stamp_mask")
+    .where("cafe_id", "=", cafeId)
+    .executeTakeFirst();
+  return found?.stamp_mask ?? undefined;
 }
 
-/** Where a café's logo's silhouette is served, publicly (the web card's "From logo" stamps), by its own hash. */
+/** Sets or replaces a café's "From picture" picture, inside its withCafe (a replacement of a café on it marks its passes, 0040). */
+export async function saveCafePicture(trx: Transaction<Database>, cafeId: string, picture: CafePictureImages): Promise<void> {
+  const values = { square: picture.square, stamp_mask: picture.stampMask, stamp_mask_hash: picture.stampMaskHash, stamp_mask_version: picture.stampMaskVersion };
+  await trx
+    .insertInto("cafe_pictures")
+    .values({ cafe_id: cafeId, ...values })
+    .onConflict((conflict) => conflict.column("cafe_id").doUpdateSet(values))
+    .execute();
+}
+
+/**
+ * Removes a café's "From picture" picture (a café on it goes back to the circle, trigger, migration 0040); the removed
+ * silhouette's hash, or undefined when there was none.
+ */
+export async function removeCafePicture(trx: Transaction<Database>, cafeId: string): Promise<Buffer | undefined> {
+  const removed = await trx.deleteFrom("cafe_pictures").where("cafe_id", "=", cafeId).returning("stamp_mask_hash").executeTakeFirst();
+  return removed?.stamp_mask_hash;
+}
+
+/** Where a silhouette (a logo's or a picture's) is served, publicly (the web card's stamps), by its own hash. */
 export const stampMaskPath = (hash: Buffer): string => `/logos/${hash.toString("hex")}-stamp.png`;
 
 /** Where a café's logo is served, publicly (Google fetches it, the web card shows it): by its hash, naming no café. */

@@ -233,6 +233,8 @@ export {
   MIN_CARD_CONTRAST,
   LOGO_STAMP_EMPTY_OPACITY,
   LOGO_STAMP_SHAPE,
+  PICTURE_STAMP_SHAPE,
+  isSilhouetteShape,
   STAMP_SHAPES,
   STAMP_SHAPE_PATHS,
   STAMP_STROKE,
@@ -243,6 +245,7 @@ export {
   stampShapeSchema,
   type CardColors,
   type DrawnStampShape,
+  type SilhouetteStampShape,
   type StampShape,
 } from "./card-colors.js";
 export { offerResultSchema, resultsMonthSchema, resultsQuerySchema, resultsReportSchema, type OfferResult, type ResultsReport } from "./results.js";

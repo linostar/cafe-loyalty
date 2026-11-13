@@ -1,5 +1,5 @@
 import type { StampPicture } from "@cafe-loyalty/db";
-import { LOGO_STAMP_EMPTY_OPACITY, STAMP_SHAPE_PATHS, STAMP_STROKE, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
+import { LOGO_STAMP_EMPTY_OPACITY, STAMP_SHAPE_PATHS, STAMP_STROKE, isSilhouetteShape, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /**
@@ -72,8 +72,8 @@ export function stampLayout(required: number, version: StampLayoutVersion = 3): 
 export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 3, mask?: Buffer): string {
   const { size, positions } = stampLayout(picture.required, version);
   const paint = { stamp: picture.foreground, background: picture.background };
-  const logo = picture.shape === "logo" ? mask : undefined;
-  const shape = picture.shape === "logo" ? "circle" : picture.shape;
+  const logo = isSilhouetteShape(picture.shape) ? mask : undefined;
+  const shape = isSilhouetteShape(picture.shape) ? "circle" : picture.shape;
   const stamp = (full: boolean) =>
     logo === undefined
       ? stampShapeMarkup(shape, full, paint, version === 3)
@@ -111,7 +111,8 @@ export function parseStampPicture(file: string): StampPicture | undefined {
   const shape = stampShapeSchema.safeParse(name);
   const picture = { background: `#${background}`, foreground: `#${foreground}`, stamps: Number(stamps), required: Number(required) };
   const hashed = maskHash !== undefined;
-  return shape.success && (shape.data === "logo") === hashed && picture.stamps <= picture.required && picture.required <= MAX_REQUIRED
+  // Every silhouette's address is `logo.<hash>` (stampPicturePath, for "From picture" too): no other names one.
+  return shape.success && shape.data !== "picture" && (shape.data === "logo") === hashed && picture.stamps <= picture.required && picture.required <= MAX_REQUIRED
     ? { ...picture, shape: shape.data, ...(hashed ? { maskHash: Buffer.from(maskHash, "hex") } : {}) }
     : undefined;
 }

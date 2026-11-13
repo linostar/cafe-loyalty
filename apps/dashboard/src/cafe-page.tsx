@@ -703,6 +703,7 @@ export function CafePage() {
             colors={setup.cafe.cardColors}
             logoHash={setup.cafe.logoHash}
             stampMaskHash={setup.cafe.stampMaskHash}
+            pictureMaskHash={setup.cafe.pictureMaskHash}
             stampShape={setup.cafe.stampShape}
           />
           <p className="hint">{t("The card's colours are set by the service's operator: ask them to change them.")}</p>
@@ -715,9 +716,15 @@ export function CafePage() {
           {/* A new or removed logo starts the pick again from what the café now has (removal moves "From logo" to the circle). */}
           <StampShapeForm
             key={setup.cafe.stampMaskHash ?? "no-logo"}
+            cafeName={setup.cafe.name}
             shape={setup.cafe.stampShape}
             maskHash={setup.cafe.stampMaskHash}
+            pictureMaskHash={setup.cafe.pictureMaskHash}
             save={(stampShape) => save("PUT", "/api/cafe/stamp-shape", { stampShape })}
+            picture={{
+              upload: (image) => save("PUT", "/api/cafe/picture", { image }),
+              remove: () => save("DELETE", "/api/cafe/picture", {}),
+            }}
           />
         </div>
       </SettingsSection>

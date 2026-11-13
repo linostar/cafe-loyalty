@@ -333,7 +333,7 @@ function CardForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
       {colorField("background", t("Background colour"))}
       {colorField("foreground", t("Text colour"))}
       {colorField("label", t("Label colour"))}
-      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} stampMaskHash={cafe.stampMaskHash} stampShape={cafe.stampShape} />
+      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} stampMaskHash={cafe.stampMaskHash} pictureMaskHash={cafe.pictureMaskHash} stampShape={cafe.stampShape} />
       <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save card")}
       </button>
@@ -1092,11 +1092,25 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
         <StampShapeForm
           // A new or removed logo starts the pick again from what the café now has.
           key={cafe.stampMaskHash ?? "no-logo"}
+          cafeName={cafe.name}
           shape={cafe.stampShape}
           maskHash={cafe.stampMaskHash}
+          pictureMaskHash={cafe.pictureMaskHash}
           save={async (stampShape) => {
             const saved = await apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { stampShape });
             put(saved.id, { stampShape: saved.stampShape }, null);
+          }}
+          picture={{
+            upload: async (image) => {
+              const saved = await apiRequest("PUT", `/api/admin/cafes/${cafe.id}/picture`, adminCafeSchema, { image });
+              // An upload also picks "From picture" (the server).
+              put(saved.id, { pictureMaskHash: saved.pictureMaskHash, stampShape: saved.stampShape }, null);
+            },
+            remove: async () => {
+              const saved = await apiRequest("DELETE", `/api/admin/cafes/${cafe.id}/picture`, adminCafeSchema);
+              // Removing the picture also moves a "From picture" café to the circle.
+              put(saved.id, { pictureMaskHash: saved.pictureMaskHash, stampShape: saved.stampShape }, null);
+            },
           }}
         />
       </div>

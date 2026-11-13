@@ -118,6 +118,9 @@ describe("parseStampPicture", () => {
       "logo-1f5a85-ffffff-4-9.png",
       `cup.${"ab".repeat(32)}-1f5a85-ffffff-4-9.png`,
       `logo.${"ab".repeat(31)}-1f5a85-ffffff-4-9.png`,
+      // "From picture" is addressed as its silhouette (`logo.<hash>`), never by its own name.
+      "picture-1f5a85-ffffff-4-9.png",
+      `picture.${"ab".repeat(32)}-1f5a85-ffffff-4-9.png`,
     ]) {
       expect(parseStampPicture(file), file).toBeUndefined();
     }
@@ -159,6 +162,15 @@ describe("\"From logo\" stamp pictures", () => {
     expect(faded).toBeGreaterThan(60);
     expect(faded).toBeLessThan(120);
     expect(await at(empty, 0.75)).toEqual([0, 0, 0]);
+  });
+
+  it("addresses and draws \"From picture\" as its silhouette, as \"From logo\" is", async () => {
+    const logo = { shape: "logo" as const, maskHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
+    const picture = { ...logo, shape: "picture" as const };
+    expect(stampPicturePath(picture)).toBe(stampPicturePath(logo));
+    const mask = await halfMask();
+    expect(stampPictureSvg(picture, 1, 3, mask)).toEqual(stampPictureSvg(logo, 1, 3, mask));
+    expect(stampPictureSvg(picture, 1)).toEqual(stampPictureSvg({ ...picture, shape: "circle" }, 1));
   });
 
   it("draws circles without the silhouette", () => {

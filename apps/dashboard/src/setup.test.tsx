@@ -21,6 +21,7 @@ const CAFE = {
   cardColors: { background: "#4a2c2a", foreground: "#ffffff", label: "#ebd6be" },
   logoHash: null,
   stampMaskHash: null,
+  pictureMaskHash: null,
   stampShape: "circle" as const,
 };
 const PROGRAM = { stampsRequired: 9, rewardNameAr: "قهوة مجانية", rewardNameEn: "Free coffee" };
