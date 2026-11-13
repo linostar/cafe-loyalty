@@ -96,7 +96,7 @@ describe("stampPicturePng", () => {
 
 describe("parseStampPicture", () => {
   it("reads back every address stampPicturePath makes", () => {
-    const logo = { ...PICTURE, shape: "logo" as const, logoHash: Buffer.alloc(32, 0xab) };
+    const logo = { ...PICTURE, shape: "logo" as const, maskHash: Buffer.alloc(32, 0xab) };
     for (const picture of [PICTURE, { ...PICTURE, shape: "bean" as const, stamps: 0, required: 1 }, { ...PICTURE, stamps: 50, required: 50 }, logo]) {
       expect(parseStampPicture(stampPicturePath(picture).slice("/stamps/v3/".length))).toEqual(picture);
     }
@@ -114,7 +114,7 @@ describe("parseStampPicture", () => {
       "cup-1f5a85-ffffff-4-9.svg",
       "cup-1f5a85-ffffff-4-9.png.png",
       "../cup-1f5a85-ffffff-4-9.png",
-      // "From logo" names its logo's hash, and only it does.
+      // "From logo" names its silhouette's hash, and only it does.
       "logo-1f5a85-ffffff-4-9.png",
       `cup.${"ab".repeat(32)}-1f5a85-ffffff-4-9.png`,
       `logo.${"ab".repeat(31)}-1f5a85-ffffff-4-9.png`,
@@ -148,7 +148,7 @@ describe("\"From logo\" stamp pictures", () => {
   };
 
   it("draws a full stamp as the silhouette in the text colour and an empty one faded, the rest of the square the background", async () => {
-    const picture = { shape: "logo" as const, logoHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
+    const picture = { shape: "logo" as const, maskHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
     const png = await stampPicturePng(picture, 1, 3, await halfMask());
     const { size, positions } = stampLayout(2);
     const [full, empty] = positions;
@@ -162,7 +162,7 @@ describe("\"From logo\" stamp pictures", () => {
   });
 
   it("draws circles without the silhouette", () => {
-    const picture = { shape: "logo" as const, logoHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
+    const picture = { shape: "logo" as const, maskHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
     expect(stampPictureSvg(picture, 1)).toEqual(stampPictureSvg({ ...picture, shape: "circle" }, 1));
   });
 });

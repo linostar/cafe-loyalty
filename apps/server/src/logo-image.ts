@@ -77,7 +77,7 @@ export async function processLogo(base64: string): Promise<CafeLogoImages> {
         .png({ compressionLevel: 9 })
         .toBuffer();
     const [apple1x, apple2x, apple3x, stampMask] = await Promise.all([apple(1), apple(2), apple(3), stampSilhouette(base)]);
-    return { hash: createHash("sha256").update(square).digest(), square, apple1x, apple2x, apple3x, stampMask };
+    return { hash: createHash("sha256").update(square).digest(), square, apple1x, apple2x, apple3x, ...silhouetteOf(stampMask) };
   } catch {
     // A file whose header reads but whose pixels do not (truncated, corrupt).
     throw notAnImage();
@@ -86,8 +86,22 @@ export async function processLogo(base64: string): Promise<CafeLogoImages> {
 
 /** The side of a logo's silhouette for "From logo" stamps: twice the largest stamp drawn (a 3x strip's, about 110 px). */
 export const STAMP_MASK_SIDE = 256;
-/** A logo with at least this share of see-through pixels has a transparent background, and its alpha is the silhouette. */
-const TRANSPARENT_SHARE = 0.05;
+/**
+ * How silhouettes are cut (cafe_logos.stamp_mask_version): 1 took a transparent logo's alpha alone (its filled outline);
+ * 2 inks a logo's dark visible parts, so its inner detail shows. The server re-cuts older ones at start-up.
+ */
+export const STAMP_MASK_VERSION = 2;
+/** A pixel at least this opaque is part of the logo; anything fainter is see-through. */
+const VISIBLE_ALPHA = 128;
+/** Visible pixels all within this brightness of each other are one colour: the logo is then its whole visible shape. */
+const ONE_COLOUR_RANGE = 48;
+
+/** A silhouette as cafe_logos keeps it: the PNG, its own SHA-256 (its public address) and the cut's version. */
+export const silhouetteOf = (stampMask: Buffer): { stampMask: Buffer; stampMaskHash: Buffer; stampMaskVersion: number } => ({
+  stampMask,
+  stampMaskHash: createHash("sha256").update(stampMask).digest(),
+  stampMaskVersion: STAMP_MASK_VERSION,
+});
 
 /**
  * The threshold that best splits a histogram of 0-255 values in two (Otsu's method): the one with the largest
@@ -115,10 +129,11 @@ export function otsuThreshold(histogram: readonly number[]): number {
 }
 
 /**
- * A logo's one-colour silhouette for "From logo" stamps: a STAMP_MASK_SIDE square PNG, white, whose alpha is the
- * silhouette, trimmed to it and centred. A logo on a transparent background gives its own alpha; an opaque one is cut
- * in two by brightness (otsuThreshold), the side most of its border falls on taken as the background. A logo with
- * nothing to cut out (one flat colour) gives a full square, which the owner sees in the preview.
+ * A logo's two-tone silhouette for "From logo" stamps (STAMP_MASK_VERSION 2): a STAMP_MASK_SIDE square PNG, white, whose
+ * alpha is the silhouette, trimmed to it and centred. Its visible pixels are split in two by brightness (otsuThreshold)
+ * and the dark side is inked, so letters, lines and colour areas inside the logo show; see-through pixels and the light
+ * side are holes. A logo of one colour (light or dark) is its whole visible shape; a logo with nothing visible gives a
+ * full square, which the owner sees in the preview.
  */
 export async function stampSilhouette(logo: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(logo)
@@ -129,39 +144,24 @@ export async function stampSilhouette(logo: Buffer): Promise<Buffer> {
   const { width, height } = info;
   const pixels = width * height;
   const ink = Buffer.alloc(pixels);
-  let transparent = 0;
+  const brightness = new Uint8Array(pixels);
+  const histogram = new Array<number>(256).fill(0);
+  let darkest = 255;
+  let lightest = 0;
   for (let index = 0; index < pixels; index += 1) {
-    if ((data[index * 4 + 3] ?? 0) < 128) {
-      transparent += 1;
+    if ((data[index * 4 + 3] ?? 0) < VISIBLE_ALPHA) {
+      continue;
     }
+    const value = Math.round(0.2126 * (data[index * 4] ?? 0) + 0.7152 * (data[index * 4 + 1] ?? 0) + 0.0722 * (data[index * 4 + 2] ?? 0));
+    brightness[index] = value;
+    histogram[value] = (histogram[value] ?? 0) + 1;
+    darkest = Math.min(darkest, value);
+    lightest = Math.max(lightest, value);
   }
-  if (transparent >= pixels * TRANSPARENT_SHARE) {
-    for (let index = 0; index < pixels; index += 1) {
-      ink[index] = data[index * 4 + 3] ?? 0;
-    }
-  } else {
-    const brightness = new Uint8Array(pixels);
-    const histogram = new Array<number>(256).fill(0);
-    for (let index = 0; index < pixels; index += 1) {
-      const value = Math.round(0.2126 * (data[index * 4] ?? 0) + 0.7152 * (data[index * 4 + 1] ?? 0) + 0.0722 * (data[index * 4 + 2] ?? 0));
-      brightness[index] = value;
-      histogram[value] = (histogram[value] ?? 0) + 1;
-    }
-    const threshold = otsuThreshold(histogram);
-    let border = 0;
-    let lightBorder = 0;
-    for (let index = 0; index < pixels; index += 1) {
-      const x = index % width;
-      const y = Math.floor(index / width);
-      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) {
-        border += 1;
-        lightBorder += (brightness[index] ?? 0) > threshold ? 1 : 0;
-      }
-    }
-    const lightBackground = lightBorder * 2 >= border;
-    for (let index = 0; index < pixels; index += 1) {
-      ink[index] = (brightness[index] ?? 0) > threshold === lightBackground ? 0 : 255;
-    }
+  // One colour: every visible pixel is ink. Otherwise the dark side of the split (at or under the threshold).
+  const threshold = lightest - darkest < ONE_COLOUR_RANGE ? 255 : otsuThreshold(histogram);
+  for (let index = 0; index < pixels; index += 1) {
+    ink[index] = (data[index * 4 + 3] ?? 0) >= VISIBLE_ALPHA && (brightness[index] ?? 0) <= threshold ? 255 : 0;
   }
   // Trimmed to the silhouette, so a logo with space around it fills the stamp as other shapes do.
   let box = { left: width, top: height, right: -1, bottom: -1 };

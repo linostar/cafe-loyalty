@@ -333,7 +333,7 @@ function CardForm({ cafe, onSaved }: { cafe: AdminCafe; onSaved: (cafe: AdminCaf
       {colorField("background", t("Background colour"))}
       {colorField("foreground", t("Text colour"))}
       {colorField("label", t("Label colour"))}
-      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} stampShape={cafe.stampShape} />
+      <CardPreview name={name} colors={colors} logoHash={cafe.logoHash} stampMaskHash={cafe.stampMaskHash} stampShape={cafe.stampShape} />
       <button type="submit" aria-disabled={pending || undefined}>
         {pending ? t("Saving…") : t("Save card")}
       </button>
@@ -1081,19 +1081,19 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
           upload={async (image) => {
             const saved = await apiRequest("PUT", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema, { image });
             // An upload never changes the shape: only the logo is taken, so a shape saved meanwhile is not overwritten.
-            put(saved.id, { logoHash: saved.logoHash }, null);
+            put(saved.id, { logoHash: saved.logoHash, stampMaskHash: saved.stampMaskHash }, null);
           }}
           remove={async () => {
             const saved = await apiRequest("DELETE", `/api/admin/cafes/${cafe.id}/logo`, adminCafeSchema);
             // Removing the logo also moves a "From logo" café to the circle.
-            put(saved.id, { logoHash: saved.logoHash, stampShape: saved.stampShape }, null);
+            put(saved.id, { logoHash: saved.logoHash, stampMaskHash: saved.stampMaskHash, stampShape: saved.stampShape }, null);
           }}
         />
         <StampShapeForm
           // A new or removed logo starts the pick again from what the café now has.
-          key={cafe.logoHash ?? "no-logo"}
+          key={cafe.stampMaskHash ?? "no-logo"}
           shape={cafe.stampShape}
-          logoHash={cafe.logoHash}
+          maskHash={cafe.stampMaskHash}
           save={async (stampShape) => {
             const saved = await apiRequest("PATCH", `/api/admin/cafes/${cafe.id}`, adminCafeSchema, { stampShape });
             put(saved.id, { stampShape: saved.stampShape }, null);

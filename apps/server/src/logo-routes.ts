@@ -1,9 +1,10 @@
-import { loadStampMask, removeCafeLogo, saveCafeLogo, withLookup, type CafeLogoImages, type Database } from "@cafe-loyalty/db";
+import { loadStampMask, removeCafeLogo, saveCafeLogo, withCafe, withLookup, type CafeLogoImages, type Database } from "@cafe-loyalty/db";
 import { ApiError, apiText, type StampShape } from "@cafe-loyalty/shared";
-import type { FastifyInstance } from "fastify";
-import type { Kysely, Transaction } from "kysely";
+import type { FastifyBaseLogger, FastifyInstance } from "fastify";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { audit } from "./db-helpers.js";
+import { STAMP_MASK_VERSION, silhouetteOf, stampSilhouette } from "./logo-image.js";
 
 /** Who changed a café's logo, for its audit entry. */
 export interface LogoActor {
@@ -13,16 +14,18 @@ export interface LogoActor {
 
 const fileParams = z.object({ file: z.string().regex(/^[0-9a-f]{64}(?:-stamp)?\.png$/) });
 
-/** The silhouette ("From logo" stamps) of the current logo with this hash, whatever its café, or undefined. */
+/** The silhouette ("From logo" stamps) with this hash (its own SHA-256), whatever its café, or undefined. */
 export async function findStampMask(db: Kysely<Database>, hash: Buffer): Promise<Buffer | undefined> {
-  const found = await withLookup(db, { secretHash: hash }, (trx) => trx.selectFrom("cafe_logos").select("stamp_mask").where("hash", "=", hash).limit(1).executeTakeFirst());
+  const found = await withLookup(db, { secretHash: hash }, (trx) =>
+    trx.selectFrom("cafe_logos").select("stamp_mask").where("stamp_mask_hash", "=", hash).limit(1).executeTakeFirst(),
+  );
   return found?.stamp_mask ?? undefined;
 }
 
 /**
  * Serves café logos by the hash of their square PNG (`<hash>.png`): publicly, since Google fetches the class logo and
- * the web card shows it, and found through withLookup, so the address names no café. `<hash>-stamp.png` is the current
- * logo's silhouette, which the web card's and the dashboard's "From logo" stamps are masked with. Registered at the
+ * the web card shows it, and found through withLookup, so the address names no café. `<hash>-stamp.png` is a
+ * silhouette, by its own hash (a re-cut is a new address), which the web card's and the dashboard's "From logo" stamps are masked with. Registered at the
  * root (the public domain; immutable, the address changing with the image) and under `/api` (the dashboard, whose own
  * domain only forwards `/api`; `config` then declares its public access).
  */
@@ -100,4 +103,38 @@ export async function refuseLogoStampWithoutLogo(trx: Transaction<Database>, caf
     const issue = apiText("Upload the logo first: these stamps are made from it.");
     throw new ApiError("VALIDATION_FAILED", issue, [{ path: "stampShape", issue }]);
   }
+}
+
+/**
+ * Cuts again, from its stored square, every logo whose silhouette is missing or cut by an older STAMP_MASK_VERSION
+ * (cafes_with_outdated_stamp_masks, migration 0039), each inside its café's withCafe under the café's row lock and only
+ * while the logo is still the one read; a new silhouette marks a "From logo" café's passes (trigger, 0039). Run in the
+ * background at start-up: a café that fails is logged and left for the next start. Returns how many were cut.
+ */
+export async function recutStampMasks(db: Kysely<Database>, log: FastifyBaseLogger): Promise<number> {
+  const { rows } = await sql<{ cafe_id: string }>`SELECT cafe_id FROM app.cafes_with_outdated_stamp_masks(${STAMP_MASK_VERSION})`.execute(db);
+  let recut = 0;
+  for (const { cafe_id: cafeId } of rows) {
+    try {
+      const done = await withCafe(db, cafeId, async (trx) => {
+        await lockCafe(trx, cafeId);
+        const logo = await trx.selectFrom("cafe_logos").select(["hash", "square", "stamp_mask_version"]).where("cafe_id", "=", cafeId).executeTakeFirst();
+        if (logo?.hash == null || logo.square === null || (logo.stamp_mask_version ?? 0) >= STAMP_MASK_VERSION) {
+          return false;
+        }
+        const silhouette = silhouetteOf(await stampSilhouette(logo.square));
+        await trx
+          .updateTable("cafe_logos")
+          .set({ stamp_mask: silhouette.stampMask, stamp_mask_for: logo.hash, stamp_mask_hash: silhouette.stampMaskHash, stamp_mask_version: silhouette.stampMaskVersion })
+          .where("cafe_id", "=", cafeId)
+          .where("hash", "=", logo.hash)
+          .execute();
+        return true;
+      });
+      recut += done ? 1 : 0;
+    } catch (error) {
+      log.error({ err: error, cafeId }, "stamp silhouette re-cut failed");
+    }
+  }
+  return recut;
 }

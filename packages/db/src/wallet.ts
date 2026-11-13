@@ -230,17 +230,17 @@ export interface GooglePassContent {
   /** The feedback page of the card's latest feedback request (feedbackUrl, AC 37), if it has one. */
   feedbackUrl: string | undefined;
   /** How the café draws its stamps: the picture of them is in its shape (or logo) and colours (loadCafeBranding). */
-  look: Pick<CafeBranding, "colors" | "stampShape" | "logoHash">;
+  look: Pick<CafeBranding, "colors" | "stampShape" | "stampMaskHash">;
 }
 
 /** The public address of the picture of a card's stamps (stampPicturePath), for the pass's hero image. */
-export const stampPictureUrl = (publicUrl: string, look: Pick<CafeBranding, "colors" | "stampShape" | "logoHash">, stamps: number, required: number): string =>
+export const stampPictureUrl = (publicUrl: string, look: Pick<CafeBranding, "colors" | "stampShape" | "stampMaskHash">, stamps: number, required: number): string =>
   new URL(
     stampPicturePath({
       // "From logo" without a logo cannot be stored (migration 0037 moves the café to the circle), but a picture is never
       // left without a shape it can draw.
-      shape: look.stampShape === "logo" && look.logoHash === null ? "circle" : look.stampShape,
-      ...(look.stampShape === "logo" && look.logoHash !== null ? { logoHash: look.logoHash } : {}),
+      shape: look.stampShape === "logo" && look.stampMaskHash === null ? "circle" : look.stampShape,
+      ...(look.stampShape === "logo" && look.stampMaskHash !== null ? { maskHash: look.stampMaskHash } : {}),
       background: look.colors.background,
       foreground: look.colors.foreground,
       stamps,

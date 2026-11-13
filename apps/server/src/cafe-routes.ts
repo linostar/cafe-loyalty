@@ -62,7 +62,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
     ])
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
-  const logo = await trx.selectFrom("cafe_logos").select("hash").where("cafe_id", "=", cafeId).executeTakeFirst();
+  const logo = await trx.selectFrom("cafe_logos").select(["hash", "stamp_mask_hash"]).where("cafe_id", "=", cafeId).executeTakeFirst();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
   const orderTypes = await trx
     .selectFrom("order_types")
@@ -83,6 +83,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       signupQrPrintedAt: cafe.signup_qr_printed_at?.toISOString() ?? null,
       cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
       logoHash: logo?.hash?.toString("hex") ?? null,
+      stampMaskHash: logo?.stamp_mask_hash?.toString("hex") ?? null,
       stampShape: cafe.stamp_shape,
     },
     program:
