@@ -556,7 +556,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4, ecc: "M" }))}`;
     const path = `/c/${secret}`;
     const apple = onAppleDevice(request);
-    const stampMaskPath = cafe.stampShape === "logo" && cafe.logoHash !== null ? stampMaskPathOf(cafe.logoHash) : null;
+    const stampMaskPath = cafe.stampShape === "logo" && cafe.stampMaskHash !== null ? stampMaskPathOf(cafe.stampMaskHash) : null;
     const document = cardView(lang, {
       path,
       cafeName: cafe.name,
@@ -717,13 +717,13 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
         }
         enforce(limits.stampPicturesPerIp, clientKey(request.ip));
         // Reserved before anything is awaited, so a burst of requests for one picture draws it once, within capacity.
-        // "From logo" is drawn with the current silhouette of the logo the address names; any other logo is not found.
-        const { logoHash } = picture;
-        const mask = logoHash === undefined ? Promise.resolve(undefined) : findStampMask(db, logoHash);
+        // "From logo" is drawn with the silhouette the address names; any other is not found.
+        const { maskHash } = picture;
+        const mask = maskHash === undefined ? Promise.resolve(undefined) : findStampMask(db, maskHash);
         // Google's hero image is drawn as Apple's 3x strip (1125 x 369, about Google's 3:1).
         drawing = mask
           .then((found) => {
-            if (logoHash !== undefined && found === undefined) {
+            if (maskHash !== undefined && found === undefined) {
               throw new PageError(404, "notFound");
             }
             return stampPicturePng(picture, 3, version, found);

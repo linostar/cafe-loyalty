@@ -71,7 +71,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
   if (cafe === undefined) {
     return undefined;
   }
-  const logo = await trx.selectFrom("cafe_logos").select("hash").where("cafe_id", "=", cafeId).executeTakeFirst();
+  const logo = await trx.selectFrom("cafe_logos").select(["hash", "stamp_mask_hash"]).where("cafe_id", "=", cafeId).executeTakeFirst();
   const payments = await trx
     .selectFrom("cafe_payments")
     .leftJoin("cafe_payment_voids", "cafe_payment_voids.payment_id", "cafe_payments.id")
@@ -112,6 +112,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     createdAt: cafe.created_at.toISOString(),
     cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
     logoHash: logo?.hash?.toString("hex") ?? null,
+    stampMaskHash: logo?.stamp_mask_hash?.toString("hex") ?? null,
     stampShape: cafe.stamp_shape,
     paidCents: Number(paid.total),
     payments: payments.map((payment) => ({

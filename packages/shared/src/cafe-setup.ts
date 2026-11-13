@@ -130,6 +130,8 @@ export const cafeSetupSchema = z.object({
     // The card's colours (set by the operator) and logo (null: the product's); defaults for a server from before them.
     cardColors: cardColorsShapeSchema.default({ ...DEFAULT_CARD_COLORS }),
     logoHash: logoHashSchema.nullable().default(null),
+    // The logo's silhouette for "From logo" stamps (null: none, so the option is not offered).
+    stampMaskHash: logoHashSchema.nullable().default(null),
     // The stamp shape (the owner or the operator); the default for a server from before it.
     stampShape: stampShapeShapeSchema,
   }),

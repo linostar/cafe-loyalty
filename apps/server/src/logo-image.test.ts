@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ApiError } from "@cafe-loyalty/shared";
 import sharp, { type Sharp } from "sharp";
 import { describe, expect, it } from "vitest";
-import { LOGO_MAX_BYTES, LOGO_SQUARE_SIDE, LOGO_STORED_MAX_BYTES, STAMP_MASK_SIDE, otsuThreshold, processLogo, stampSilhouette } from "./logo-image.js";
+import { LOGO_MAX_BYTES, LOGO_SQUARE_SIDE, LOGO_STORED_MAX_BYTES, STAMP_MASK_SIDE, STAMP_MASK_VERSION, otsuThreshold, processLogo, stampSilhouette } from "./logo-image.js";
 
 const red = { r: 200, g: 30, b: 30, alpha: 1 };
 const picture = (width: number, height: number) => sharp({ create: { width, height, channels: 4, background: red } });
@@ -91,19 +91,48 @@ const squareOn = (outside: { r: number; g: number; b: number; alpha: number }, i
     .toBuffer();
 
 describe("a logo's silhouette for \"From logo\" stamps", () => {
-  it("is made with every upload: a white square PNG whose alpha is the silhouette", async () => {
+  it("is made with every upload: a white square PNG whose alpha is the silhouette, with its own hash and version", async () => {
     const logo = await processLogo((await squareOn({ r: 255, g: 255, b: 255, alpha: 1 }, { r: 20, g: 20, b: 20, alpha: 1 })).toString("base64"));
     expect(await size(logo.stampMask)).toEqual({ width: STAMP_MASK_SIDE, height: STAMP_MASK_SIDE, format: "png" });
+    expect(logo.stampMaskHash).toEqual(createHash("sha256").update(logo.stampMask).digest());
+    expect(logo.stampMaskVersion).toBe(STAMP_MASK_VERSION);
   });
 
-  it("takes a transparent logo's own alpha, trimmed to it so it fills the stamp", async () => {
+  it("keeps a transparent logo's inner detail: its dark parts inked, its light parts holes", async () => {
+    // A light 160-pixel badge on a transparent background, with a dark 120 x 30 bar across its middle.
+    const badge = await sharp({ create: { width: 200, height: 200, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+      .composite([
+        { input: { create: { width: 160, height: 160, channels: 4, background: { r: 235, g: 225, b: 200, alpha: 1 } } }, left: 20, top: 20 },
+        { input: { create: { width: 120, height: 30, channels: 4, background: { r: 30, g: 20, b: 20, alpha: 1 } } }, left: 40, top: 85 },
+      ])
+      .png()
+      .toBuffer();
+    const mask = await stampSilhouette(badge);
+    // Trimmed to the dark bar, centred: the bar is inked, and above it is see-through (an inked badge would fill it).
+    expect(await alphaAt(mask, 0.5, 0.5)).toBe(255);
+    expect(await alphaAt(mask, 0.5, 0.15)).toBe(0);
+    const ring = await stampSilhouette(
+      await sharp({ create: { width: 200, height: 200, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+        .composite([
+          { input: { create: { width: 160, height: 160, channels: 4, background: { r: 30, g: 20, b: 20, alpha: 1 } } }, left: 20, top: 20 },
+          { input: { create: { width: 60, height: 60, channels: 4, background: { r: 235, g: 225, b: 200, alpha: 1 } } }, left: 70, top: 70 },
+        ])
+        .png()
+        .toBuffer(),
+    );
+    // A dark badge with a light middle: the badge inked, the middle a hole (an outline would have filled it).
+    expect(await alphaAt(ring, 0.05, 0.05)).toBe(255);
+    expect(await alphaAt(ring, 0.5, 0.5)).toBe(0);
+  });
+
+  it("takes a one-colour transparent logo's whole visible shape, trimmed to it so it fills the stamp", async () => {
     const mask = await stampSilhouette(await squareOn({ r: 0, g: 0, b: 0, alpha: 0 }, { r: 200, g: 30, b: 30, alpha: 1 }));
     // The 100-pixel square, trimmed, fills the whole silhouette.
     expect(await alphaAt(mask, 0.05, 0.05)).toBe(255);
     expect(await alphaAt(mask, 0.5, 0.5)).toBe(255);
   });
 
-  it("cuts an opaque logo by brightness, the side its border is on being the background, dark on light or light on dark", async () => {
+  it("cuts an opaque logo by brightness, its dark parts inked: dark on light, or a dark background around light", async () => {
     const darkOnLight = await stampSilhouette(
       await sharp({ create: { width: 300, height: 200, channels: 3, background: { r: 250, g: 250, b: 250 } } })
         .composite([{ input: { create: { width: 100, height: 100, channels: 3, background: { r: 30, g: 30, b: 30 } } }, left: 0, top: 50 }])
@@ -112,8 +141,10 @@ describe("a logo's silhouette for \"From logo\" stamps", () => {
     );
     // The dark square, trimmed and centred: solid in the middle, see-through beside it.
     expect(await alphaAt(darkOnLight, 0.5, 0.5)).toBe(255);
+    // Light on dark: the dark background is inked and the light square in it is a hole.
     const lightOnDark = await stampSilhouette(await squareOn({ r: 10, g: 10, b: 60, alpha: 1 }, { r: 240, g: 240, b: 240, alpha: 1 }));
-    expect(await alphaAt(lightOnDark, 0.5, 0.5)).toBe(255);
+    expect(await alphaAt(lightOnDark, 0.5, 0.5)).toBe(0);
+    expect(await alphaAt(lightOnDark, 0.05, 0.05)).toBe(255);
     // A wide logo's silhouette, centred on the square, leaves its top and bottom see-through.
     const wide = await stampSilhouette(
       await sharp({ create: { width: 300, height: 200, channels: 3, background: { r: 250, g: 250, b: 250 } } })
@@ -125,10 +156,12 @@ describe("a logo's silhouette for \"From logo\" stamps", () => {
     expect(await alphaAt(wide, 0.5, 0.05)).toBe(0);
   });
 
-  it("is a full square for a logo of one flat colour, which has nothing to cut out", async () => {
-    const mask = await stampSilhouette(await sharp({ create: { width: 100, height: 100, channels: 3, background: { r: 90, g: 90, b: 90 } } }).png().toBuffer());
-    expect(await alphaAt(mask, 0.02, 0.02)).toBe(255);
-    expect(await alphaAt(mask, 0.98, 0.98)).toBe(255);
+  it("is a full square for a logo of one flat colour, light or dark, which has nothing to cut out", async () => {
+    for (const grey of [30, 90, 240]) {
+      const mask = await stampSilhouette(await sharp({ create: { width: 100, height: 100, channels: 3, background: { r: grey, g: grey, b: grey } } }).png().toBuffer());
+      expect(await alphaAt(mask, 0.02, 0.02), String(grey)).toBe(255);
+      expect(await alphaAt(mask, 0.98, 0.98), String(grey)).toBe(255);
+    }
   });
 
   it("splits a histogram where its two groups are furthest apart", () => {

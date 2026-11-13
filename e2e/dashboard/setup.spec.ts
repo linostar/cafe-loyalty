@@ -259,9 +259,11 @@ test("saves the minimum margin campaigns must keep", async ({ page }) => {
 
 test("shows the card in the café's colours and uploads the owner's logo, which the preview then shows, then removes it", async ({ page }) => {
   const HASH = "cd".repeat(32);
+  // The logo's silhouette has a hash of its own ("From logo" stamps).
+  const MASK = "ef".repeat(32);
   const png = await readFile(ICON_PNG_PATH);
   const colours = { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" };
-  let setup = { cafe: { ...CAFE, cardColors: colours, logoHash: null as string | null }, program: PROGRAM, orderTypes: [ESPRESSO] };
+  let setup = { cafe: { ...CAFE, cardColors: colours, logoHash: null as string | null, stampMaskHash: null as string | null }, program: PROGRAM, orderTypes: [ESPRESSO] };
   const uploads: unknown[] = [];
   await mockApi(page, {
     "GET /api/auth/session": reply(200, SESSION),
@@ -269,16 +271,16 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
     "GET /api/cafe/join": reply(200, JOIN),
     "PUT /api/cafe/logo": async (route) => {
       uploads.push(json(route));
-      setup = { ...setup, cafe: { ...setup.cafe, logoHash: HASH } };
+      setup = { ...setup, cafe: { ...setup.cafe, logoHash: HASH, stampMaskHash: MASK } };
       await route.fulfill({ json: setup });
     },
     "DELETE /api/cafe/logo": async (route) => {
       uploads.push("removed");
-      setup = { ...setup, cafe: { ...setup.cafe, logoHash: null } };
+      setup = { ...setup, cafe: { ...setup.cafe, logoHash: null, stampMaskHash: null } };
       await route.fulfill({ json: setup });
     },
     [`GET /api/logos/${HASH}.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
-    [`GET /api/logos/${HASH}-stamp.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
+    [`GET /api/logos/${MASK}-stamp.png`]: (route) => route.fulfill({ status: 200, contentType: "image/png", body: png }),
   });
   await page.goto("/cafe");
   const section = page.getByRole("region", { name: "Card" });
@@ -294,7 +296,7 @@ test("shows the card in the café's colours and uploads the owner's logo, which 
   // With a logo, its silhouette is one more stamp shape, drawn from it.
   const shapes = section.getByRole("form", { name: "Stamp shape" }).getByRole("group", { name: "Stamp shape" });
   await expect(shapes.getByRole("radio", { name: "From logo" })).toBeVisible();
-  await expect(shapes.locator(".stamp-icon-logo")).toHaveAttribute("style", new RegExp(`/api/logos/${HASH}-stamp\\.png`));
+  await expect(shapes.locator(".stamp-icon-logo")).toHaveAttribute("style", new RegExp(`/api/logos/${MASK}-stamp\\.png`));
 
   await logo.getByRole("button", { name: "Remove logo" }).click();
   await expect(logo.getByRole("status")).toHaveText("Logo removed.");

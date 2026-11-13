@@ -72,7 +72,7 @@ const EVERY = ["apple-x-2", "apple-y-2", "google-current", "google-current"];
 const NONE = { a: [], b: [] };
 
 /** A logo's images (random bytes: the database does not decode them). */
-const images = (): CafeLogoImages => ({ hash: randomBytes(32), square: randomBytes(8), apple1x: randomBytes(8), apple2x: randomBytes(8), apple3x: randomBytes(8), stampMask: randomBytes(8) });
+const images = (): CafeLogoImages => ({ hash: randomBytes(32), square: randomBytes(8), apple1x: randomBytes(8), apple2x: randomBytes(8), apple3x: randomBytes(8), stampMask: randomBytes(8), stampMaskHash: randomBytes(32), stampMaskVersion: 2 });
 
 beforeAll(async () => {
   testDb = await createTestDatabase();
@@ -176,6 +176,18 @@ describe("a café's branding", () => {
     const recoloured = { ...images(), stampMask: next.stampMask };
     expect(await marked(save(recoloured))).toEqual({ a: EVERY, b: [] });
     expect(await mask()).toEqual(next.stampMask);
+    expect(await shape()).toBe("logo");
+    // A silhouette cut again (the server's start-up re-cut: the same logo, a new silhouette) changes every pass's stamps.
+    const recut = () => withCafe(testDb.app.db, cafeA, (trx) => trx.updateTable("cafe_logos").set({ stamp_mask: randomBytes(8), stamp_mask_hash: randomBytes(32), stamp_mask_version: 3 }).execute());
+    expect(await marked(recut)).toEqual({ a: EVERY, b: [] });
+    expect(await shape()).toBe("logo");
+    // A silhouette written without its hash (a release from before 0039) drops the hash and version it replaced, so the
+    // next start-up cuts it again; the café stays on "From logo".
+    await withCafe(testDb.app.db, cafeA, (trx) => trx.updateTable("cafe_logos").set({ stamp_mask: randomBytes(8) }).execute());
+    expect(await withCafe(testDb.app.db, cafeA, (trx) => trx.selectFrom("cafe_logos").select(["stamp_mask_hash", "stamp_mask_version"]).executeTakeFirstOrThrow())).toEqual({
+      stamp_mask_hash: null,
+      stamp_mask_version: null,
+    });
     expect(await shape()).toBe("logo");
     // A logo saved without a silhouette (a release from before 0037) drops the old one, and "From logo" with it.
     const older = () =>

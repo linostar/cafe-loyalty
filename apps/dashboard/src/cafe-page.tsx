@@ -698,7 +698,13 @@ export function CafePage() {
       </SettingsSection>
       <SettingsSection id="card" title="Card">
         <div className="card">
-          <CardPreview name={setup.cafe.name} colors={setup.cafe.cardColors} logoHash={setup.cafe.logoHash} stampShape={setup.cafe.stampShape} />
+          <CardPreview
+            name={setup.cafe.name}
+            colors={setup.cafe.cardColors}
+            logoHash={setup.cafe.logoHash}
+            stampMaskHash={setup.cafe.stampMaskHash}
+            stampShape={setup.cafe.stampShape}
+          />
           <p className="hint">{t("The card's colours are set by the service's operator: ask them to change them.")}</p>
           <LogoForm
             cafeName={setup.cafe.name}
@@ -708,9 +714,9 @@ export function CafePage() {
           />
           {/* A new or removed logo starts the pick again from what the café now has (removal moves "From logo" to the circle). */}
           <StampShapeForm
-            key={setup.cafe.logoHash ?? "no-logo"}
+            key={setup.cafe.stampMaskHash ?? "no-logo"}
             shape={setup.cafe.stampShape}
-            logoHash={setup.cafe.logoHash}
+            maskHash={setup.cafe.stampMaskHash}
             save={(stampShape) => save("PUT", "/api/cafe/stamp-shape", { stampShape })}
           />
         </div>

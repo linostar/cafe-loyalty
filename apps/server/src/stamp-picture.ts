@@ -98,7 +98,7 @@ const MAX_REQUIRED = 50;
 
 /**
  * The picture a stamp address names (stampPicturePath: `<shape>-<background>-<text colour>-<stamps>-<required>.png`, the
- * shape `logo.<logo hash>` for "From logo"), or undefined for anything else: a known shape (with a logo's hash for
+ * shape `logo.<silhouette hash>` for "From logo"), or undefined for anything else: a known shape (with a silhouette's hash for
  * "From logo" and only then), lowercase colours, and 0 <= stamps <= required <= 50, so an address can only ask for a
  * picture a card could show (a logo's is drawn only once its silhouette is found).
  */
@@ -107,11 +107,11 @@ export function parseStampPicture(file: string): StampPicture | undefined {
   if (match === null) {
     return undefined;
   }
-  const [, name, logoHash, background = "", foreground = "", stamps = "", required = ""] = match;
+  const [, name, maskHash, background = "", foreground = "", stamps = "", required = ""] = match;
   const shape = stampShapeSchema.safeParse(name);
   const picture = { background: `#${background}`, foreground: `#${foreground}`, stamps: Number(stamps), required: Number(required) };
-  const hashed = logoHash !== undefined;
+  const hashed = maskHash !== undefined;
   return shape.success && (shape.data === "logo") === hashed && picture.stamps <= picture.required && picture.required <= MAX_REQUIRED
-    ? { ...picture, shape: shape.data, ...(hashed ? { logoHash: Buffer.from(logoHash, "hex") } : {}) }
+    ? { ...picture, shape: shape.data, ...(hashed ? { maskHash: Buffer.from(maskHash, "hex") } : {}) }
     : undefined;
 }

@@ -6,6 +6,7 @@ import { BackgroundTasks } from "./background.js";
 import { loadServerConfig, type ServerConfig } from "./config.js";
 import { customerPages } from "./customer-pages.js";
 import { registerReadiness } from "./health.js";
+import { recutStampMasks } from "./logo-routes.js";
 import { createSmtpMailer } from "./mailer.js";
 import { passkitRoutes } from "./passkit-routes.js";
 import { pilotRequests } from "./pilot-requests.js";
@@ -141,6 +142,13 @@ process.on("SIGINT", (signal) => void shutdown(signal));
 
 try {
   await app.listen({ host: config.HOST, port: config.PORT });
+  // Logos whose "From logo" silhouette is missing or cut the older way, cut again from their stored square.
+  background.run("stamp silhouette re-cut", async () => {
+    const recut = await recutStampMasks(database.db, app.log);
+    if (recut > 0) {
+      app.log.info({ recut }, "stamp silhouettes cut again");
+    }
+  });
 } catch (error) {
   app.log.fatal({ err: error }, "server failed to start");
   process.exit(1);

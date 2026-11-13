@@ -103,6 +103,8 @@ export const adminCafeSchema = z.object({
   /** The card's colours and its logo (null: the product's); defaults for a server from before them (a rollback). */
   cardColors: cardColorsShapeSchema.default({ ...DEFAULT_CARD_COLORS }),
   logoHash: logoHashSchema.nullable().default(null),
+  /** The logo's silhouette for "From logo" stamps (null: none, so the option is not offered). */
+  stampMaskHash: logoHashSchema.nullable().default(null),
   stampShape: stampShapeShapeSchema,
   paidCents: z.int(),
   payments: z.array(adminPaymentSchema),

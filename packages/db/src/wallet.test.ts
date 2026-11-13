@@ -15,7 +15,7 @@ const CONTENT = {
   qr: "qr-token",
   offer: undefined,
   feedbackUrl: undefined,
-  look: { colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, stampShape: "cup" as const, logoHash: null },
+  look: { colors: { background: "#1f5a85", foreground: "#ffffff", label: "#e5eff7" }, stampShape: "cup" as const, stampMaskHash: null },
 };
 
 const OFFER: CardOffer = {
