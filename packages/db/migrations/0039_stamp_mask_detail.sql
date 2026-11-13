@@ -33,6 +33,26 @@ BEGIN
 END
 $$;
 
+-- A silhouette written without its own hash (by a release from before this one, during a deploy or after a rollback)
+-- drops the hash and version it replaced, so it is never served under another silhouette's address and the next
+-- start-up re-cuts it.
+CREATE FUNCTION drop_stale_stamp_mask_hash() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = app, pg_temp
+  AS $$
+BEGIN
+  IF NEW.stamp_mask_hash IS NOT DISTINCT FROM OLD.stamp_mask_hash THEN
+    NEW.stamp_mask_hash := NULL;
+    NEW.stamp_mask_version := NULL;
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER cafe_logos_drop_stale_stamp_mask_hash BEFORE UPDATE ON cafe_logos
+  FOR EACH ROW WHEN (OLD.stamp_mask IS DISTINCT FROM NEW.stamp_mask)
+  EXECUTE FUNCTION drop_stale_stamp_mask_hash();
+
 -- The cafés whose logo's silhouette is missing or cut by an older version than the caller's. Like cafes_for_feedback
 -- (0015), it runs as cl_owner, which this policy lets read logos, and returns ids only; each re-cut is then done inside
 -- withCafe.
@@ -76,3 +96,4 @@ CREATE TRIGGER cafe_logos_touch_stamp_mask_passes AFTER UPDATE ON cafe_logos
 REVOKE ALL ON FUNCTION cafes_with_outdated_stamp_masks(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION cafes_with_outdated_stamp_masks(integer) TO cl_app;
 REVOKE ALL ON FUNCTION touch_logo_stamp_passes() FROM PUBLIC;
+REVOKE ALL ON FUNCTION drop_stale_stamp_mask_hash() FROM PUBLIC;

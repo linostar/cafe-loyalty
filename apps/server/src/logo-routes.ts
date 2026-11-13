@@ -14,10 +14,19 @@ export interface LogoActor {
 
 const fileParams = z.object({ file: z.string().regex(/^[0-9a-f]{64}(?:-stamp)?\.png$/) });
 
-/** The silhouette ("From logo" stamps) with this hash (its own SHA-256), whatever its café, or undefined. */
+/**
+ * The silhouette ("From logo" stamps) with this hash (its own SHA-256), whatever its café, or undefined. Addresses
+ * issued before migration 0039 named the logo's hash instead: those still find the current logo's silhouette.
+ */
 export async function findStampMask(db: Kysely<Database>, hash: Buffer): Promise<Buffer | undefined> {
   const found = await withLookup(db, { secretHash: hash }, (trx) =>
-    trx.selectFrom("cafe_logos").select("stamp_mask").where("stamp_mask_hash", "=", hash).limit(1).executeTakeFirst(),
+    trx
+      .selectFrom("cafe_logos")
+      .select("stamp_mask")
+      .where((where) => where.or([where("stamp_mask_hash", "=", hash), where("hash", "=", hash)]))
+      .where("stamp_mask", "is not", null)
+      .limit(1)
+      .executeTakeFirst(),
   );
   return found?.stamp_mask ?? undefined;
 }

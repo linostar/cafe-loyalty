@@ -544,7 +544,7 @@ describe("a café's name, card colours and logo", () => {
     expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "circle" } });
 
     // An image of its own: the file's tests share a database, and logos are found by their hash whatever the café.
-    const uploaded = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo(240, 240, 120) })).json<{ cafe: { stampMaskHash: string } }>().cafe;
+    const uploaded = (await app.asOwner("PUT", "/api/cafe/logo", { image: await pngLogo(240, 240, 120) })).json<{ cafe: { logoHash: string; stampMaskHash: string } }>().cafe;
     // The silhouette is addressed by its own hash, so a re-cut is a new address no cache holds.
     const hash = uploaded.stampMaskHash;
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
@@ -561,6 +561,10 @@ describe("a café's name, card colours and logo", () => {
     const picture = await app.app.inject({ method: "GET", url: `/stamps/v3/logo.${hash}-4a2c2a-ffffff-1-2.png` });
     expect(picture.statusCode).toBe(200);
     expect(picture.headers["content-type"]).toBe("image/png");
+    // Addresses issued before silhouettes had their own hash named the logo's: they still find its silhouette.
+    for (const address of [`/logos/${uploaded.logoHash}-stamp.png`, `/stamps/v3/logo.${uploaded.logoHash}-4a2c2a-ffffff-1-2.png`]) {
+      expect((await app.app.inject({ method: "GET", url: address })).statusCode, address).toBe(200);
+    }
     // No other logo's silhouette or stamps.
     expect((await app.app.inject({ method: "GET", url: `/logos/${"ab".repeat(32)}-stamp.png` })).statusCode).toBe(404);
     expect((await app.app.inject({ method: "GET", url: `/stamps/v3/logo.${"ab".repeat(32)}-4a2c2a-ffffff-1-2.png` })).statusCode).toBe(404);
