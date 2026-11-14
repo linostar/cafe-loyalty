@@ -164,12 +164,28 @@ describe("\"From logo\" stamp pictures", () => {
     expect(await at(empty, 0.75)).toEqual([0, 0, 0]);
   });
 
-  it("addresses and draws \"From picture\" as its silhouette, as \"From logo\" is", async () => {
+  it("addresses \"From picture\" as its silhouette and draws a full stamp as \"From logo\" does, an empty one as its ring alone, as big", async () => {
     const logo = { shape: "logo" as const, maskHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
     const picture = { ...logo, shape: "picture" as const };
     expect(stampPicturePath(picture)).toBe(stampPicturePath(logo));
     const mask = await halfMask();
-    expect(stampPictureSvg(picture, 1, 3, mask)).toEqual(stampPictureSvg(logo, 1, 3, mask));
+    const [drawn, asLogo] = await Promise.all([stampPicturePng(picture, 3, 3, mask), stampPicturePng(logo, 3, 3, mask)]);
+    const { size, positions } = stampLayout(2);
+    const [full, empty] = positions;
+    const square = (png: Buffer, stamp: { x: number; y: number } | undefined) =>
+      sharp(png)
+        .extract({ left: Math.floor((stamp?.x ?? 0) * 3), top: Math.floor((stamp?.y ?? 0) * 3), width: Math.ceil(size * 3), height: Math.ceil(size * 3) })
+        .raw()
+        .toBuffer();
+    expect(await square(drawn, full)).toEqual(await square(asLogo, full));
+    // The ring reaches the edges of the stamp's square, as the full stamp's does (its silhouette's ring), on all four sides.
+    const at = (x: number, y: number) => pixel(drawn, ((empty?.x ?? 0) + size * x) * 3, ((empty?.y ?? 0) + size * y) * 3);
+    for (const [x, y] of [[0.02, 0.5], [0.98, 0.5], [0.5, 0.02], [0.5, 0.98]] as const) {
+      expect(await at(x, y), `ring ${String(x)},${String(y)}`).toEqual([255, 0, 0]);
+    }
+    // See-through inside: past the ring, the background, where the logo's faded silhouette would show.
+    expect(await at(0.1, 0.5)).toEqual([0, 0, 0]);
+    expect(await at(0.4, 0.5)).toEqual([0, 0, 0]);
     expect(stampPictureSvg(picture, 1)).toEqual(stampPictureSvg({ ...picture, shape: "circle" }, 1));
   });
 

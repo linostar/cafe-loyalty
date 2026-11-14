@@ -1,5 +1,5 @@
 import type { StampPicture } from "@cafe-loyalty/db";
-import { LOGO_STAMP_EMPTY_OPACITY, STAMP_SHAPE_PATHS, STAMP_STROKE, isSilhouetteShape, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
+import { LOGO_STAMP_EMPTY_OPACITY, PICTURE_STAMP_EMPTY_RING, PICTURE_STAMP_SHAPE, STAMP_SHAPE_PATHS, STAMP_STROKE, isSilhouetteShape, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /**
@@ -28,6 +28,13 @@ function stampShapeMarkup(shape: DrawnStampShape, full: boolean, paint: { stamp:
 export function stampSlotSvg(shape: DrawnStampShape, full: boolean): string {
   return `<svg viewBox="0 0 24 24" focusable="false">${stampShapeMarkup(shape, full, { stamp: "currentColor", background: "currentColor" })}</svg>`;
 }
+
+/** An empty "From picture" stamp (24 units): the full stamp's ring alone (PICTURE_STAMP_EMPTY_RING), see-through inside. */
+const emptyPictureRing = (colour: string): string =>
+  `<circle cx="12" cy="12" r="${String(PICTURE_STAMP_EMPTY_RING.r)}" fill="none" stroke="${colour}" stroke-width="${String(PICTURE_STAMP_EMPTY_RING.strokeWidth)}"/>`;
+
+/** The web card's empty "From picture" stamp, in currentColor. */
+export const emptyPictureSlotSvg = (): string => `<svg viewBox="0 0 24 24" focusable="false">${emptyPictureRing("currentColor")}</svg>`;
 
 /** Apple's strip image size in points (a store card's, under the header); Google's hero image is drawn the same. */
 export const STRIP_WIDTH = 375;
@@ -67,7 +74,8 @@ export function stampLayout(required: number, version: StampLayoutVersion = 3): 
 /**
  * The strip's SVG at `scale` (1, 2 or 3): the card's background, its stamps full in the text colour, the rest outlined.
  * "From logo" stamps are the logo's silhouette (`mask`, stampSilhouette) in the text colour, solid when full and faded
- * when empty; without the silhouette they are drawn as circles.
+ * when empty; "From picture" stamps are the picture's silhouette when full and its ring alone (see-through inside, as
+ * big) when empty; without the silhouette they are drawn as circles.
  */
 export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 3, mask?: Buffer): string {
   const { size, positions } = stampLayout(picture.required, version);
@@ -77,7 +85,9 @@ export function stampPictureSvg(picture: StampPicture, scale: number, version: S
   const stamp = (full: boolean) =>
     logo === undefined
       ? stampShapeMarkup(shape, full, paint, version === 3)
-      : `<rect width="24" height="24" fill="${picture.foreground}" mask="url(#logo-stamp)"${full ? "" : ` opacity="${String(LOGO_STAMP_EMPTY_OPACITY)}"`}/>`;
+      : !full && picture.shape === PICTURE_STAMP_SHAPE
+        ? emptyPictureRing(picture.foreground)
+        : `<rect width="24" height="24" fill="${picture.foreground}" mask="url(#logo-stamp)"${full ? "" : ` opacity="${String(LOGO_STAMP_EMPTY_OPACITY)}"`}/>`;
   const stamps = positions.map(
     ({ x, y }, index) => `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${(size / 24).toFixed(4)})">${stamp(index < picture.stamps)}</g>`,
   );

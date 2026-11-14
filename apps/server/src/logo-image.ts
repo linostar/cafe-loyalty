@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CafeLogoImages, CafePictureImages } from "@cafe-loyalty/db";
-import { ApiError, apiText, type ApiText } from "@cafe-loyalty/shared";
+import { ApiError, PICTURE_STAMP_RING, apiText, type ApiText } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /** The largest logo file taken (decoded), and the request body that carries it in base64 with room for the JSON around it. */
@@ -117,12 +117,13 @@ export function processLogo(base64: string): Promise<CafeLogoImages> {
 
 /**
  * A "From picture" upload (base64, PNG or JPEG, the same limits as a logo's) turned into its square PNG (squareOf,
- * kept to cut it again) and the silhouette its stamps are drawn as, cut as a logo's is.
+ * kept to cut it again) and the ringed circle its stamps are drawn as (stampPictureSilhouette), cut from that square as
+ * a re-cut is, so both give the same silhouette.
  */
 export function processStampPicture(base64: string): Promise<CafePictureImages> {
   return processUpload(base64, PICTURE_TEXT, async (base) => {
-    const [square, stampMask] = await Promise.all([squareOf(base), stampSilhouette(base)]);
-    return { square, ...silhouetteOf(stampMask) };
+    const square = await squareOf(base);
+    return { square, ...silhouetteOf(await stampPictureSilhouette(square)) };
   });
 }
 
@@ -130,9 +131,13 @@ export function processStampPicture(base64: string): Promise<CafePictureImages> 
 export const STAMP_MASK_SIDE = 256;
 /**
  * How silhouettes are cut (cafe_logos.stamp_mask_version): 1 took a transparent logo's alpha alone (its filled outline);
- * 2 inks a logo's dark visible parts, so its inner detail shows. The server re-cuts older ones at start-up.
+ * 2 inks a logo's dark visible parts, so its inner detail shows; 3 cuts a "From picture" picture as a ringed circle
+ * (a logo's cut is 2's, so its re-cut keeps its hash and marks no pass). The server re-cuts older ones at start-up.
  */
-export const STAMP_MASK_VERSION = 2;
+export const STAMP_MASK_VERSION = 3;
+/** The ring round a "From picture" stamp and the clear gap (padding) between it and the picture, in STAMP_MASK_SIDE pixels. */
+const PICTURE_RING = PICTURE_STAMP_RING * STAMP_MASK_SIDE;
+const PICTURE_GAP = 14;
 /** A pixel at least this opaque is part of the logo; anything fainter is see-through. */
 const VISIBLE_ALPHA = 128;
 /** Visible pixels all within this brightness of each other are one colour: the logo is then its whole visible shape. */
@@ -185,26 +190,7 @@ export async function stampSilhouette(logo: Buffer): Promise<Buffer> {
     .toBuffer({ resolveWithObject: true });
   const { width, height } = info;
   const pixels = width * height;
-  const ink = Buffer.alloc(pixels);
-  const brightness = new Uint8Array(pixels);
-  const histogram = new Array<number>(256).fill(0);
-  let darkest = 255;
-  let lightest = 0;
-  for (let index = 0; index < pixels; index += 1) {
-    if ((data[index * 4 + 3] ?? 0) < VISIBLE_ALPHA) {
-      continue;
-    }
-    const value = Math.round(0.2126 * (data[index * 4] ?? 0) + 0.7152 * (data[index * 4 + 1] ?? 0) + 0.0722 * (data[index * 4 + 2] ?? 0));
-    brightness[index] = value;
-    histogram[value] = (histogram[value] ?? 0) + 1;
-    darkest = Math.min(darkest, value);
-    lightest = Math.max(lightest, value);
-  }
-  // One colour: every visible pixel is ink. Otherwise the dark side of the split (at or under the threshold).
-  const threshold = lightest - darkest < ONE_COLOUR_RANGE ? 255 : otsuThreshold(histogram);
-  for (let index = 0; index < pixels; index += 1) {
-    ink[index] = (data[index * 4 + 3] ?? 0) >= VISIBLE_ALPHA && (brightness[index] ?? 0) <= threshold ? 255 : 0;
-  }
+  const ink = inkOf(data, pixels);
   // Trimmed to the silhouette, so a logo with space around it fills the stamp as other shapes do.
   let box = { left: width, top: height, right: -1, bottom: -1 };
   for (let index = 0; index < pixels; index += 1) {
@@ -227,4 +213,71 @@ export async function stampSilhouette(logo: Buffer): Promise<Buffer> {
     .resize(STAMP_MASK_SIDE, STAMP_MASK_SIDE, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png({ compressionLevel: 9 })
     .toBuffer();
+}
+
+/**
+ * A "From picture" picture's silhouette (STAMP_MASK_VERSION 3), cut from its stored square (squareOf): the picture
+ * without that square's transparent padding, its centre cut to fill the circle inside a ring always inked and a clear
+ * gap (a wide or tall picture loses its sides; the picture is scaled into that circle, so the gap hides none of it),
+ * inked as a logo is (inkOf, untrimmed), so the stamp is round whatever the picture's edges.
+ */
+export async function stampPictureSilhouette(square: Buffer): Promise<Buffer> {
+  const { data: alpha, info: whole } = await sharp(square).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+  let box = { left: whole.width, top: whole.height, right: -1, bottom: -1 };
+  for (let index = 0; index < whole.width * whole.height; index += 1) {
+    if ((alpha[index] ?? 0) > 0) {
+      const x = index % whole.width;
+      const y = Math.floor(index / whole.width);
+      box = { left: Math.min(box.left, x), top: Math.min(box.top, y), right: Math.max(box.right, x), bottom: Math.max(box.bottom, y) };
+    }
+  }
+  const picture = box.right < 0 ? sharp(square) : sharp(square).extract({ left: box.left, top: box.top, width: box.right - box.left + 1, height: box.bottom - box.top + 1 });
+  const inset = PICTURE_RING + PICTURE_GAP;
+  const { data } = await picture
+    .resize(STAMP_MASK_SIDE - 2 * inset, STAMP_MASK_SIDE - 2 * inset, { fit: "cover" })
+    .extend({ top: inset, bottom: inset, left: inset, right: inset, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const side = STAMP_MASK_SIDE;
+  const ink = inkOf(data, side * side);
+  const radius = side / 2;
+  const white = Buffer.alloc(side * side * 4, 255);
+  for (let index = 0; index < side * side; index += 1) {
+    const away = Math.hypot((index % side) + 0.5 - radius, Math.floor(index / side) + 0.5 - radius);
+    const inked = away >= radius - PICTURE_RING ? 255 : away >= radius - PICTURE_RING - PICTURE_GAP ? 0 : (ink[index] ?? 0);
+    // The circle's edge smoothed over a pixel.
+    white[index * 4 + 3] = Math.round(inked * Math.min(1, Math.max(0, radius - away + 0.5)));
+  }
+  return sharp(white, { raw: { width: side, height: side, channels: 4 } })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
+/**
+ * Which of an RGBA image's pixels are ink (255) or holes (0): its visible pixels split in two by brightness
+ * (otsuThreshold), the dark side inked; one colour (light or dark) is all ink; see-through pixels are holes.
+ */
+function inkOf(data: Buffer, pixels: number): Buffer {
+  const ink = Buffer.alloc(pixels);
+  const brightness = new Uint8Array(pixels);
+  const histogram = new Array<number>(256).fill(0);
+  let darkest = 255;
+  let lightest = 0;
+  for (let index = 0; index < pixels; index += 1) {
+    if ((data[index * 4 + 3] ?? 0) < VISIBLE_ALPHA) {
+      continue;
+    }
+    const value = Math.round(0.2126 * (data[index * 4] ?? 0) + 0.7152 * (data[index * 4 + 1] ?? 0) + 0.0722 * (data[index * 4 + 2] ?? 0));
+    brightness[index] = value;
+    histogram[value] = (histogram[value] ?? 0) + 1;
+    darkest = Math.min(darkest, value);
+    lightest = Math.max(lightest, value);
+  }
+  // One colour: every visible pixel is ink. Otherwise the dark side of the split (at or under the threshold).
+  const threshold = lightest - darkest < ONE_COLOUR_RANGE ? 255 : otsuThreshold(histogram);
+  for (let index = 0; index < pixels; index += 1) {
+    ink[index] = (data[index * 4 + 3] ?? 0) >= VISIBLE_ALPHA && (brightness[index] ?? 0) <= threshold ? 255 : 0;
+  }
+  return ink;
 }
