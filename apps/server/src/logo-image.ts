@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CafeLogoImages, CafePictureImages } from "@cafe-loyalty/db";
-import { ApiError, apiText, type ApiText } from "@cafe-loyalty/shared";
+import { ApiError, PICTURE_STAMP_RING, apiText, type ApiText } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /** The largest logo file taken (decoded), and the request body that carries it in base64 with room for the JSON around it. */
@@ -136,7 +136,7 @@ export const STAMP_MASK_SIDE = 256;
  */
 export const STAMP_MASK_VERSION = 3;
 /** The ring round a "From picture" stamp and the clear gap (padding) between it and the picture, in STAMP_MASK_SIDE pixels. */
-const PICTURE_RING = 10;
+const PICTURE_RING = PICTURE_STAMP_RING * STAMP_MASK_SIDE;
 const PICTURE_GAP = 14;
 /** A pixel at least this opaque is part of the logo; anything fainter is see-through. */
 const VISIBLE_ALPHA = 128;

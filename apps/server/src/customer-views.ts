@@ -1,7 +1,7 @@
 import { stampsText } from "@cafe-loyalty/db";
 import { DEFAULT_COUNTRY_CODE, MAX_HOLDER_NAME, PICTURE_STAMP_SHAPE, isSilhouetteShape, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { SafeHtml, cardStyle, count, html, page, t, type Lang } from "./customer-html.js";
-import { stampSlotSvg } from "./stamp-picture.js";
+import { emptyPictureSlotSvg, stampSlotSvg } from "./stamp-picture.js";
 
 /**
  * The customer pages' markup (AC 4, 7, 8, 9), from plain data: the routes in customer-pages.ts load what a page needs
@@ -125,10 +125,12 @@ export interface CardView {
  */
 function stampGridHtml(lang: Lang, shape: StampShape, logoMask: boolean, stamps: number, required: number): SafeHtml {
   // "From logo" and "From picture": the silhouette, through the face's --stamp-logo mask (cardStyle, customer.css),
-  // except an empty "From picture" stamp, the empty circle (see-through inside); without one, circles.
+  // except an empty "From picture" stamp, its ring alone (see-through inside); without one, circles.
   const drawn = isSilhouetteShape(shape) ? "circle" : shape;
   const stamp = (full: boolean) =>
-    isSilhouetteShape(shape) && logoMask && (full || shape !== PICTURE_STAMP_SHAPE) ? new SafeHtml('<span class="stamp-logo"></span>') : new SafeHtml(stampSlotSvg(drawn, full));
+    isSilhouetteShape(shape) && logoMask
+      ? new SafeHtml(full || shape !== PICTURE_STAMP_SHAPE ? '<span class="stamp-logo"></span>' : emptyPictureSlotSvg())
+      : new SafeHtml(stampSlotSvg(drawn, full));
   const slots = Array.from({ length: required }, (_, index) =>
     index < stamps ? html`<li class="stamp is-filled">${stamp(true)}</li>` : html`<li class="stamp">${stamp(false)}</li>`,
   );

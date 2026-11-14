@@ -1,4 +1,4 @@
-import { LOGO_STAMP_SHAPE, PICTURE_STAMP_SHAPE, STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, isSilhouetteShape, stampGrid, type ApiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { LOGO_STAMP_SHAPE, PICTURE_STAMP_EMPTY_RING, PICTURE_STAMP_SHAPE, STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, isSilhouetteShape, stampGrid, type ApiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
@@ -61,10 +61,18 @@ const SHAPE_NAMES = {
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full (filled and outlined, so as big
  * as an empty one) or outlined. A full stamp's inner lines take the card's background (`.stamp-icon-inner`, app.css).
  * "From logo" and "From picture" are the silhouette (`maskHash`'s, stampMaskUrl) masking currentColor, a logo's faded
- * when empty; an empty "From picture" stamp is the empty circle (see-through inside), and a circle without a silhouette.
+ * when empty; an empty "From picture" stamp is its ring alone (see-through inside, as big), and a circle without a
+ * silhouette.
  */
 export function StampIcon({ shape, full, maskHash }: { shape: StampShape; full: boolean; maskHash: string | null }) {
-  if (isSilhouetteShape(shape) && maskHash !== null && (full || shape !== PICTURE_STAMP_SHAPE)) {
+  if (shape === PICTURE_STAMP_SHAPE && maskHash !== null && !full) {
+    return (
+      <svg className="stamp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r={PICTURE_STAMP_EMPTY_RING.r} fill="none" stroke="currentColor" strokeWidth={PICTURE_STAMP_EMPTY_RING.strokeWidth} />
+      </svg>
+    );
+  }
+  if (isSilhouetteShape(shape) && maskHash !== null) {
     return (
       <span
         className={full ? "stamp-icon stamp-icon-logo" : "stamp-icon stamp-icon-logo is-empty"}

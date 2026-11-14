@@ -75,6 +75,11 @@ export const isSilhouetteShape = (shape: StampShape): shape is SilhouetteStampSh
 /** How strongly an empty "From logo" stamp shows its silhouette (a full one is solid). */
 export const LOGO_STAMP_EMPTY_OPACITY = 0.35;
 
+/** A "From picture" stamp's ring, as a share of the stamp's side: the one its silhouette is cut with (logo-image.ts). */
+export const PICTURE_STAMP_RING = 10 / 256;
+/** An empty "From picture" stamp in a 24-unit box: the full stamp's ring alone, as big as it, see-through inside. */
+export const PICTURE_STAMP_EMPTY_RING = { r: 12 - (24 * PICTURE_STAMP_RING) / 2, strokeWidth: 24 * PICTURE_STAMP_RING } as const;
+
 /** Every café's shape until its owner or the operator picks another. */
 export const DEFAULT_STAMP_SHAPE: StampShape = "circle";
 
