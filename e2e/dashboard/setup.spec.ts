@@ -334,7 +334,8 @@ test("uploads a picture for \"From picture\" stamps from the shape picker, never
   });
   await page.goto("/cafe");
   const section = page.getByRole("region", { name: "Card" });
-  const shapes = section.getByRole("form", { name: "Stamp shape" }).getByRole("group", { name: "Stamp shape" });
+  const shapeForm = section.getByRole("form", { name: "Stamp shape" });
+  const shapes = shapeForm.getByRole("group", { name: "Stamp shape" });
   const pictureForm = section.getByRole("form", { name: `Stamp picture of ${CAFE.name}` });
   await expect(pictureForm).toHaveCount(0);
   // Picking it shows its upload, under the shapes.
@@ -353,11 +354,14 @@ test("uploads a picture for \"From picture\" stamps from the shape picker, never
   await pictureForm.getByRole("button", { name: "Replace picture" }).click();
   await expect(section.locator(".card-preview-stamps .stamp-icon-logo").first()).toHaveAttribute("style", new RegExp(`/api/logos/${NEXT}-stamp\\.png`));
 
+  // Removed, the café is back on the circle: the pick follows, its form goes, and the shapes say so and take the keyboard.
   await pictureForm.getByRole("button", { name: "Remove picture" }).click();
-  await expect(pictureForm.getByRole("status")).toHaveText("Picture removed.");
+  await expect(shapeForm.getByRole("status")).toHaveText("Picture removed.");
   expect(sent).toEqual([{ image: png.toString("base64") }, { image: png.toString("base64") }, "removed"]);
   await expect(section.locator(".card-preview-stamps .stamp-icon-logo")).toHaveCount(0);
-  await expect(pictureForm.getByRole("button", { name: "Upload picture" })).toBeVisible();
+  await expect(pictureForm).toHaveCount(0);
+  await expect(shapes.getByRole("radio", { name: "Circle" })).toBeChecked();
+  await expect(shapes.getByRole("radio", { name: "Circle" })).toBeFocused();
 });
 
 test("picks the shape the card's stamps are drawn in, which the preview then shows", async ({ page }) => {

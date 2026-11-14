@@ -6,6 +6,7 @@ import {
   cafeCreateSchema,
   loginRequestSchema,
   logoUploadSchema,
+  pictureUploadSchema,
   operatorPasswordChangeRequestSchema,
   paymentRecordSchema,
   paymentVoidSchema,
@@ -404,7 +405,7 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
     const operator = operatorOf(request);
     enforce(limits.logoUploadsPerOperator, operator.operatorId, reply);
     const { id } = parseInput(idParams, request.params);
-    const body = parseInput(logoUploadSchema, request.body);
+    const body = parseInput(pictureUploadSchema, request.body);
     const picture = await processStampPicture(body.image);
     const cafe = await withListedCafe(id, async (trx) => {
       await setPicture(trx, id, picture, { actorType: "operator", actorId: operator.operatorId });

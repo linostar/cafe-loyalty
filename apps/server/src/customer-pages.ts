@@ -598,6 +598,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     enforce(limits.applePassesPerCard, card.id);
     const token = applePassToken(secrets, secret);
     const found = await withCafe(db, card.cafe_id, async (trx) => {
+      // The café's row lock (as a shape save, a picture's change and the re-cut take it), before its branding is read: a
+      // change on its way commits first and is read here, and one after waits until this pass exists for its triggers to mark.
+      await trx.selectFrom("cafes").select("id").where("id", "=", card.cafe_id).forNoKeyUpdate().execute();
       const cafe = await loadCafeBranding(trx, card.cafe_id);
       await trx
         .insertInto("apple_passes")

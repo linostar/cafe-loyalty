@@ -723,7 +723,11 @@ export function CafePage() {
             save={(stampShape) => save("PUT", "/api/cafe/stamp-shape", { stampShape })}
             picture={{
               upload: (image) => save("PUT", "/api/cafe/picture", { image }),
-              remove: () => save("DELETE", "/api/cafe/picture", {}),
+              remove: async () => {
+                const saved = await apiRequest("DELETE", "/api/cafe/picture", cafeSetupSchema, {});
+                setSetup(saved);
+                return saved.cafe.stampShape;
+              },
             }}
           />
         </div>

@@ -615,9 +615,11 @@ describe("a café's name, card colours and logo", () => {
       expect(response.statusCode).toBe(400);
       expect(details(response)).toEqual([{ path: "stampShape", issue: "Upload a picture first: these stamps are made from it." }]);
     }
-    const notAnImage = await app.asOwner("PUT", "/api/cafe/picture", { image: Buffer.from("not an image").toString("base64") });
-    expect(notAnImage.statusCode).toBe(400);
-    expect(details(notAnImage)).toEqual([{ path: "image", issue: "Upload the picture as a PNG or JPEG image." }]);
+    for (const image of [Buffer.from("not an image").toString("base64"), "", undefined]) {
+      const notAnImage = await app.asOwner("PUT", "/api/cafe/picture", { image });
+      expect(notAnImage.statusCode).toBe(400);
+      expect(details(notAnImage)).toEqual([{ path: "image", issue: "Upload the picture as a PNG or JPEG image." }]);
+    }
 
     // Images of their own (the file's tests share a database, and silhouettes are found by their hash whatever the café):
     // a one-colour image is its whole shape, so these sizes cut silhouettes no other test's image does.

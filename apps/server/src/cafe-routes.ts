@@ -5,6 +5,7 @@ import {
   VISIT_HOURS_WEEKS,
   cafeUpdateSchema,
   logoUploadSchema,
+  pictureUploadSchema,
   stampShapeUpdateSchema,
   loyaltyProgramSchema,
   orderTypeCreateSchema,
@@ -304,7 +305,7 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
     if (wait > 0) {
       throw rateLimited(reply, wait);
     }
-    const body = parseInput(logoUploadSchema, request.body);
+    const body = parseInput(pictureUploadSchema, request.body);
     const picture = await processStampPicture(body.image);
     return withCafe(db, owner.cafeId, async (trx) => {
       await setPicture(trx, owner.cafeId, picture, { actorType: "owner", actorId: owner.ownerId });

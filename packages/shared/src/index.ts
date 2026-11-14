@@ -210,6 +210,7 @@ export {
   cafePlanSchema,
   logoHashSchema,
   logoUploadSchema,
+  pictureUploadSchema,
   operatorSessionSchema,
   paymentRecordSchema,
   paymentVoidSchema,

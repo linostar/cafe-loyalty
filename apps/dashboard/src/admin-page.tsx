@@ -1110,6 +1110,7 @@ function CafeDetailPage({ cafeId }: { cafeId: string }) {
               const saved = await apiRequest("DELETE", `/api/admin/cafes/${cafe.id}/picture`, adminCafeSchema);
               // Removing the picture also moves a "From picture" café to the circle.
               put(saved.id, { pictureMaskHash: saved.pictureMaskHash, stampShape: saved.stampShape }, null);
+              return saved.stampShape;
             },
           }}
         />

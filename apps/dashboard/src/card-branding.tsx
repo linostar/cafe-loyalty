@@ -1,5 +1,5 @@
 import { LOGO_STAMP_SHAPE, PICTURE_STAMP_SHAPE, STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, isSilhouetteShape, stampGrid, type ApiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
-import { useId, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
 
@@ -139,7 +139,9 @@ export function CardPreview({
  * templates (STAMP_SHAPES) as radio buttons, each with its picture, saved together. "From logo" is listed only while
  * the café's logo has a silhouette (`maskHash`), drawn from it; removing the logo moves the café to the circle (the server).
  * "From picture" is always listed: picked, its picture's upload, replacement and removal show under the shapes (a form
- * of its own, `picture`); an upload also picks it (the server), and removing the picture moves the café to the circle.
+ * of its own, `picture`); an upload also picks it (the server), and removing the picture moves the café to the circle,
+ * which the pick then follows (`remove` gives the shape the café is left on). A shape save and a picture's upload or
+ * removal both change the shape, so one waits for the other: an answer arriving late never undoes a later one.
  */
 export function StampShapeForm({
   cafeName,
@@ -154,24 +156,48 @@ export function StampShapeForm({
   maskHash: string | null;
   pictureMaskHash: string | null;
   save: (shape: StampShape) => Promise<unknown>;
-  picture: { upload: (image: string) => Promise<unknown>; remove: () => Promise<unknown> };
+  picture: { upload: (image: string) => Promise<unknown>; remove: () => Promise<StampShape> };
 }) {
   const t = useT(AR);
   const id = useId();
   const [picked, setPicked] = useState(shape);
   const sending = useSubmit();
+  // A picture's upload or removal on its way, kept here: it outlives the picture's form, which goes with its pick.
+  const [pictureBusy, setPictureBusy] = useState(false);
+  const busy = sending.pending || pictureBusy;
+  const whilePictureBusy = async <T,>(work: () => Promise<T>): Promise<T> => {
+    setPictureBusy(true);
+    try {
+      return await work();
+    } finally {
+      setPictureBusy(false);
+    }
+  };
+  // The picture removed: said here, since its form goes, and the keyboard moves to the shape now picked (WCAG 2.4.3).
+  const [removed, setRemoved] = useState(false);
+  const [removals, setRemovals] = useState(0);
+  const choices = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (removals > 0) {
+      choices.current?.querySelector<HTMLInputElement>("input:checked")?.focus();
+    }
+  }, [removals]);
   const options: readonly StampShape[] = maskHash === null ? [...STAMP_SHAPES, PICTURE_STAMP_SHAPE] : [...STAMP_SHAPES, LOGO_STAMP_SHAPE, PICTURE_STAMP_SHAPE];
   return (
     <>
       <Form
         aria-label={t("Stamp shape")}
         // A pick while a save is on its way: "Saved." would claim the new pick was saved.
-        onChange={sending.clearDone}
+        onChange={() => {
+          sending.clearDone();
+          setRemoved(false);
+        }}
         onSubmit={(event) => {
           event.preventDefault();
-          if (sending.pending) {
+          if (busy) {
             return;
           }
+          setRemoved(false);
           void sending.submit(() => save(picked));
         }}
       >
@@ -181,7 +207,7 @@ export function StampShapeForm({
           <p id={`${id}-hint`} className="hint">
             {t("Cards show the stamps collected as full shapes and the ones to go as outlines.")}
           </p>
-          <div className="choices stamp-shapes">
+          <div ref={choices} className="choices stamp-shapes">
             {options.map((option) => (
               <label key={option}>
                 <input
@@ -200,13 +226,28 @@ export function StampShapeForm({
           </div>
         </fieldset>
         <div className="actions">
-          <button type="submit" aria-disabled={sending.pending || undefined}>
+          <button type="submit" aria-disabled={busy || undefined}>
             {sending.pending ? t("Saving…") : t("Save shape")}
           </button>
         </div>
-        <Notice>{sending.done ? t("Saved. Cards in wallets show the new shape within a few minutes.") : null}</Notice>
+        <Notice>{sending.done ? t("Saved. Cards in wallets show the new shape within a few minutes.") : removed ? t("Picture removed.") : null}</Notice>
       </Form>
-      {picked === PICTURE_STAMP_SHAPE ? <LogoForm kind="picture" cafeName={cafeName} logoHash={pictureMaskHash} upload={picture.upload} remove={picture.remove} /> : null}
+      {picked === PICTURE_STAMP_SHAPE ? (
+        <LogoForm
+          kind="picture"
+          cafeName={cafeName}
+          logoHash={pictureMaskHash}
+          busy={sending.pending}
+          upload={(image) => whilePictureBusy(() => picture.upload(image))}
+          remove={async () => {
+            const now = await whilePictureBusy(picture.remove);
+            sending.clearDone();
+            setPicked(now);
+            setRemoved(true);
+            setRemovals((count) => count + 1);
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -265,10 +306,13 @@ export function LogoForm({
   kind = "logo",
   cafeName,
   logoHash,
+  busy = false,
   upload,
   remove,
 }: {
   kind?: keyof typeof IMAGE_TEXT;
+  /** Another request on its way that this one must wait for (StampShapeForm's shape save, for a picture). */
+  busy?: boolean;
   cafeName: string;
   logoHash: string | null;
   upload: (image: string) => Promise<unknown>;
@@ -297,7 +341,7 @@ export function LogoForm({
       aria-label={t(words.form, { name: cafeName })}
       onSubmit={(event) => {
         event.preventDefault();
-        if (sending.pending) {
+        if (sending.pending || busy) {
           return;
         }
         setSaid(null);
@@ -352,15 +396,15 @@ export function LogoForm({
         )}
       </div>
       <div className="actions">
-        <button type="submit" aria-disabled={sending.pending || undefined}>
+        <button type="submit" aria-disabled={sending.pending || busy || undefined}>
           {sending.pending && action === "upload" ? t("Uploading…") : t(logoHash === null ? words.upload : words.replace)}
         </button>
         {logoHash === null ? null : (
           <button
             type="button"
-            aria-disabled={sending.pending || undefined}
+            aria-disabled={sending.pending || busy || undefined}
             onClick={() => {
-              if (sending.pending) {
+              if (sending.pending || busy) {
                 return;
               }
               setSaid(null);
