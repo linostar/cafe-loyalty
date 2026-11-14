@@ -135,9 +135,9 @@ export const STAMP_MASK_SIDE = 256;
  * (a logo's cut is 2's, so its re-cut keeps its hash and marks no pass). The server re-cuts older ones at start-up.
  */
 export const STAMP_MASK_VERSION = 3;
-/** The ring round a "From picture" stamp and the clear gap inside it, in STAMP_MASK_SIDE pixels. */
+/** The ring round a "From picture" stamp and the clear gap (padding) between it and the picture, in STAMP_MASK_SIDE pixels. */
 const PICTURE_RING = 10;
-const PICTURE_GAP = 6;
+const PICTURE_GAP = 14;
 /** A pixel at least this opaque is part of the logo; anything fainter is see-through. */
 const VISIBLE_ALPHA = 128;
 /** Visible pixels all within this brightness of each other are one colour: the logo is then its whole visible shape. */
@@ -217,9 +217,9 @@ export async function stampSilhouette(logo: Buffer): Promise<Buffer> {
 
 /**
  * A "From picture" picture's silhouette (STAMP_MASK_VERSION 3), cut from its stored square (squareOf): the picture
- * without that square's transparent padding, its centre cut to fill a STAMP_MASK_SIDE circle (a wide or tall picture
- * loses its sides), inked inside as a logo is (inkOf, untrimmed), within a clear gap and a ring always inked, so the
- * stamp is round whatever the picture's edges.
+ * without that square's transparent padding, its centre cut to fill the circle inside a ring always inked and a clear
+ * gap (a wide or tall picture loses its sides; the picture is scaled into that circle, so the gap hides none of it),
+ * inked as a logo is (inkOf, untrimmed), so the stamp is round whatever the picture's edges.
  */
 export async function stampPictureSilhouette(square: Buffer): Promise<Buffer> {
   const { data: alpha, info: whole } = await sharp(square).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
@@ -232,7 +232,13 @@ export async function stampPictureSilhouette(square: Buffer): Promise<Buffer> {
     }
   }
   const picture = box.right < 0 ? sharp(square) : sharp(square).extract({ left: box.left, top: box.top, width: box.right - box.left + 1, height: box.bottom - box.top + 1 });
-  const { data } = await picture.resize(STAMP_MASK_SIDE, STAMP_MASK_SIDE, { fit: "cover" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const inset = PICTURE_RING + PICTURE_GAP;
+  const { data } = await picture
+    .resize(STAMP_MASK_SIDE - 2 * inset, STAMP_MASK_SIDE - 2 * inset, { fit: "cover" })
+    .extend({ top: inset, bottom: inset, left: inset, right: inset, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   const side = STAMP_MASK_SIDE;
   const ink = inkOf(data, side * side);
   const radius = side / 2;
