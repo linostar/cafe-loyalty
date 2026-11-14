@@ -60,11 +60,11 @@ const SHAPE_NAMES = {
 /**
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full (filled and outlined, so as big
  * as an empty one) or outlined. A full stamp's inner lines take the card's background (`.stamp-icon-inner`, app.css).
- * "From logo" and "From picture" are the silhouette (`maskHash`'s, stampMaskUrl) masking currentColor, faded when empty;
- * a circle without one.
+ * "From logo" and "From picture" are the silhouette (`maskHash`'s, stampMaskUrl) masking currentColor, a logo's faded
+ * when empty; an empty "From picture" stamp is the empty circle (see-through inside), and a circle without a silhouette.
  */
 export function StampIcon({ shape, full, maskHash }: { shape: StampShape; full: boolean; maskHash: string | null }) {
-  if (isSilhouetteShape(shape) && maskHash !== null) {
+  if (isSilhouetteShape(shape) && maskHash !== null && (full || shape !== PICTURE_STAMP_SHAPE)) {
     return (
       <span
         className={full ? "stamp-icon stamp-icon-logo" : "stamp-icon stamp-icon-logo is-empty"}

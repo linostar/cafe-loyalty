@@ -4,7 +4,7 @@ import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { audit } from "./db-helpers.js";
-import { STAMP_MASK_VERSION, silhouetteOf, stampSilhouette } from "./logo-image.js";
+import { STAMP_MASK_VERSION, silhouetteOf, stampPictureSilhouette, stampSilhouette } from "./logo-image.js";
 
 /** Who changed a café's logo, for its audit entry. */
 export interface LogoActor {
@@ -15,11 +15,11 @@ export interface LogoActor {
 const fileParams = z.object({ file: z.string().regex(/^[0-9a-f]{64}(?:-stamp)?\.png$/) });
 
 /**
- * The silhouette ("From logo" or "From picture" stamps) with this hash (its own SHA-256), whatever its café, or
- * undefined. Addresses issued before migration 0039 named the logo's hash instead: those still find the current logo's
- * silhouette.
+ * The silhouette ("From logo" or "From picture" stamps) with this hash (its own SHA-256), whatever its café, and whether
+ * it is a picture's (whose empty stamps are drawn otherwise), or undefined. Addresses issued before migration 0039 named
+ * the logo's hash instead: those still find the current logo's silhouette.
  */
-export async function findStampMask(db: Kysely<Database>, hash: Buffer): Promise<Buffer | undefined> {
+export async function findStampMask(db: Kysely<Database>, hash: Buffer): Promise<{ stampMask: Buffer; picture: boolean } | undefined> {
   const found = await withLookup(db, { secretHash: hash }, async (trx) => {
     const logo = await trx
       .selectFrom("cafe_logos")
@@ -28,9 +28,13 @@ export async function findStampMask(db: Kysely<Database>, hash: Buffer): Promise
       .where("stamp_mask", "is not", null)
       .limit(1)
       .executeTakeFirst();
-    return logo ?? (await trx.selectFrom("cafe_pictures").select("stamp_mask").where("stamp_mask_hash", "=", hash).limit(1).executeTakeFirst());
+    if (logo?.stamp_mask != null) {
+      return { stampMask: logo.stamp_mask, picture: false };
+    }
+    const picture = await trx.selectFrom("cafe_pictures").select("stamp_mask").where("stamp_mask_hash", "=", hash).limit(1).executeTakeFirst();
+    return picture === undefined ? undefined : { stampMask: picture.stamp_mask, picture: true };
   });
-  return found?.stamp_mask ?? undefined;
+  return found;
 }
 
 /**
@@ -59,7 +63,7 @@ export function registerLogoFiles(app: FastifyInstance, db: Kysely<Database>, op
           );
     const logo =
       hash !== undefined && stamp
-        ? await findStampMask(db, hash)
+        ? (await findStampMask(db, hash))?.stampMask
         : found === undefined
           ? undefined
           : hash !== undefined && found.hash?.equals(hash) === true
@@ -165,7 +169,7 @@ export async function recutStampMasks(db: Kysely<Database>, log: FastifyBaseLogg
         // The "From picture" picture, while it is still the one read (its square is replaced with each upload).
         const picture = await trx.selectFrom("cafe_pictures").select(["square", "stamp_mask_hash", "stamp_mask_version"]).where("cafe_id", "=", cafeId).executeTakeFirst();
         if (picture !== undefined && picture.stamp_mask_version < STAMP_MASK_VERSION) {
-          const silhouette = silhouetteOf(await stampSilhouette(picture.square));
+          const silhouette = silhouetteOf(await stampPictureSilhouette(picture.square));
           await trx
             .updateTable("cafe_pictures")
             .set({ stamp_mask: silhouette.stampMask, stamp_mask_hash: silhouette.stampMaskHash, stamp_mask_version: silhouette.stampMaskVersion })

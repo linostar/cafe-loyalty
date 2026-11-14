@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { syncResponseSchema } from "@cafe-loyalty/shared";
 import type { LightMyRequestResponse } from "fastify";
@@ -468,6 +468,17 @@ describe("the admin screen (AC 39)", () => {
 /** A plain PNG logo, base64 as the dashboard sends it. */
 const pngLogo = async (width = 300, height = 120, red = 180) =>
   (await sharp({ create: { width, height, channels: 4, background: { r: red, g: 40, b: 40, alpha: 1 } } }).png().toBuffer()).toString("base64");
+/**
+ * A "From picture" picture whose silhouette no other one has: white with a dark 40-pixel square at (spot, spot), inside
+ * the circle it is cut into (every one-colour picture is the same full circle).
+ */
+const pngPicture = async (spot: number) =>
+  (
+    await sharp({ create: { width: 200, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } } })
+      .composite([{ input: { create: { width: 40, height: 40, channels: 4, background: { r: 20, g: 20, b: 20, alpha: 1 } } }, left: spot, top: spot }])
+      .png()
+      .toBuffer()
+  ).toString("base64");
 
 describe("a café's name, card colours and logo", () => {
   it("are renamed and recoloured by the operator, lowercased, in the café's audit log, refusing colours that do not stand out", async () => {
@@ -598,7 +609,8 @@ describe("a café's name, card colours and logo", () => {
     // Cut again from the stored square, with its own hash, and still on "From logo".
     const recut = await row();
     expect(recut?.stamp_mask_version).toBe(STAMP_MASK_VERSION);
-    expect(recut?.stamp_mask_hash).toHaveLength(32);
+    // A logo is cut as it was (only pictures' cut changed), so its silhouette and its address are the same.
+    expect(recut?.stamp_mask_hash).toEqual(current?.stamp_mask_hash);
     expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "logo", stampMaskHash: recut?.stamp_mask_hash?.toString("hex") } });
     // Nothing left to cut: a second run leaves this café alone.
     const before = await row();
@@ -621,9 +633,8 @@ describe("a café's name, card colours and logo", () => {
       expect(details(notAnImage)).toEqual([{ path: "image", issue: "Upload the picture as a PNG or JPEG image." }]);
     }
 
-    // Images of their own (the file's tests share a database, and silhouettes are found by their hash whatever the café):
-    // a one-colour image is its whole shape, so these sizes cut silhouettes no other test's image does.
-    const uploaded = await app.asOwner("PUT", "/api/cafe/picture", { image: await pngLogo(330, 150, 90) });
+    // Images of their own (the file's tests share a database, and silhouettes are found by their hash whatever the café).
+    const uploaded = await app.asOwner("PUT", "/api/cafe/picture", { image: await pngPicture(60) });
     expect(uploaded.statusCode).toBe(200);
     const cafe = uploaded.json<{ cafe: { pictureMaskHash: string } }>().cafe;
     // Picked by the upload, and never the card's logo.
@@ -648,7 +659,7 @@ describe("a café's name, card colours and logo", () => {
 
     // Another shape, then the operator's replacement: a new silhouette, picked again.
     await app.asOwner("PUT", "/api/cafe/stamp-shape", { stampShape: "cup" });
-    const replaced = await app.asOperator("PUT", `${url}/picture`, { image: await pngLogo(150, 330, 90) });
+    const replaced = await app.asOperator("PUT", `${url}/picture`, { image: await pngPicture(80) });
     expect(replaced.statusCode).toBe(200);
     const next = replaced.json<{ pictureMaskHash: string }>().pictureMaskHash;
     expect(next).not.toBe(hash);
@@ -674,18 +685,22 @@ describe("a café's name, card colours and logo", () => {
     ]);
   });
 
-  it("get their picture's silhouette cut again at start-up when it was cut the older way, still drawing their stamps", async () => {
+  it("get their picture's silhouette cut again at start-up as a ringed circle when it was cut the older way, still drawing their stamps", async () => {
     const app = await adminApp();
     // An image of its own (the file's tests share a database).
-    await app.asOwner("PUT", "/api/cafe/picture", { image: await pngLogo(140, 350, 70) });
+    await app.asOwner("PUT", "/api/cafe/picture", { image: await pngPicture(100) });
     const row = async () =>
       (await context.admin.query<{ stamp_mask_hash: Buffer; stamp_mask_version: number }>("SELECT stamp_mask_hash, stamp_mask_version FROM app.cafe_pictures WHERE cafe_id = $1", [app.owner.cafeId]))
         .rows[0];
-    await context.admin.query("UPDATE app.cafe_pictures SET stamp_mask_version = 1 WHERE cafe_id = $1", [app.owner.cafeId]);
+    const circle = await row();
+    // A silhouette from the older (square) cut: another hash, version 2.
+    await context.admin.query("UPDATE app.cafe_pictures SET stamp_mask_hash = $2, stamp_mask_version = 2 WHERE cafe_id = $1", [app.owner.cafeId, randomBytes(32)]);
     const log = { error: () => undefined } as unknown as Parameters<typeof recutStampMasks>[1];
     expect(await recutStampMasks(context.testDb.app.db, log)).toBeGreaterThanOrEqual(1);
     const recut = await row();
     expect(recut?.stamp_mask_version).toBe(STAMP_MASK_VERSION);
+    // Cut again from its stored square into the circle an upload cuts now.
+    expect(recut?.stamp_mask_hash).toEqual(circle?.stamp_mask_hash);
     expect((await app.asOwner("GET", "/api/cafe")).json()).toMatchObject({ cafe: { stampShape: "picture", pictureMaskHash: recut?.stamp_mask_hash.toString("hex") } });
   });
 

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ApiError } from "@cafe-loyalty/shared";
 import sharp, { type Sharp } from "sharp";
 import { describe, expect, it } from "vitest";
-import { LOGO_MAX_BYTES, LOGO_SQUARE_SIDE, LOGO_STORED_MAX_BYTES, STAMP_MASK_SIDE, STAMP_MASK_VERSION, otsuThreshold, processLogo, processStampPicture, stampSilhouette } from "./logo-image.js";
+import { LOGO_MAX_BYTES, LOGO_SQUARE_SIDE, LOGO_STORED_MAX_BYTES, STAMP_MASK_SIDE, STAMP_MASK_VERSION, otsuThreshold, processLogo, processStampPicture, stampPictureSilhouette, stampSilhouette } from "./logo-image.js";
 
 const red = { r: 200, g: 30, b: 30, alpha: 1 };
 const picture = (width: number, height: number) => sharp({ create: { width, height, channels: 4, background: red } });
@@ -91,15 +91,50 @@ const squareOn = (outside: { r: number; g: number; b: number; alpha: number }, i
     .toBuffer();
 
 describe("a café's \"From picture\" picture", () => {
-  it("is kept as the logo's square and cut into the same silhouette a logo of it would have, with its hash and version", async () => {
+  it("is kept as the logo's square and cut from it into a ringed circle (as a re-cut cuts it), with its hash and version", async () => {
     const upload = (await squareOn({ r: 255, g: 255, b: 255, alpha: 1 }, { r: 20, g: 20, b: 20, alpha: 1 })).toString("base64");
     const [picture, logo] = await Promise.all([processStampPicture(upload), processLogo(upload)]);
     expect(Object.keys(picture).sort()).toEqual(["square", "stampMask", "stampMaskHash", "stampMaskVersion"]);
     expect(picture.square).toEqual(logo.square);
     expect(await size(picture.square)).toEqual({ width: LOGO_SQUARE_SIDE, height: LOGO_SQUARE_SIDE, format: "png" });
-    expect(picture.stampMask).toEqual(logo.stampMask);
+    expect(await size(picture.stampMask)).toEqual({ width: STAMP_MASK_SIDE, height: STAMP_MASK_SIDE, format: "png" });
+    expect(picture.stampMask).toEqual(await stampPictureSilhouette(picture.square));
+    expect(picture.stampMask).not.toEqual(logo.stampMask);
     expect(picture.stampMaskHash).toEqual(createHash("sha256").update(picture.stampMask).digest());
     expect(picture.stampMaskVersion).toBe(STAMP_MASK_VERSION);
+  });
+
+  it("is a circle with a ring always inked: corners and the gap inside the ring clear, the picture's dark side inked within", async () => {
+    // White with a dark square in its middle (a quarter to three quarters of each side).
+    const { stampMask: mask } = await processStampPicture((await squareOn({ r: 255, g: 255, b: 255, alpha: 1 }, { r: 20, g: 20, b: 20, alpha: 1 })).toString("base64"));
+    for (const [x, y] of [[0, 0], [0.99, 0], [0, 0.99], [0.99, 0.99]] as const) {
+      expect(await alphaAt(mask, x, y), `corner ${String(x)},${String(y)}`).toBe(0);
+    }
+    // The ring (the outer 10 of 256 pixels' radius) at the top, bottom and sides, inked though the picture is white there.
+    for (const [x, y] of [[0.5, 5 / 256], [0.5, 250 / 256], [5 / 256, 0.5], [250 / 256, 0.5]] as const) {
+      expect(await alphaAt(mask, x, y), `ring ${String(x)},${String(y)}`).toBe(255);
+    }
+    // The gap inside it, then the picture: its white a hole, its dark middle ink.
+    expect(await alphaAt(mask, 0.5, 13 / 256)).toBe(0);
+    expect(await alphaAt(mask, 0.5, 0.2)).toBe(0);
+    expect(await alphaAt(mask, 0.5, 0.5)).toBe(255);
+  });
+
+  it("fills the circle with a wide picture's middle, its sides cut off rather than the picture shrunk", async () => {
+    // 400 x 100, white, with a dark band at its left edge (outside the middle square) and a dark bar down its middle.
+    const wide = await sharp({ create: { width: 400, height: 100, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } } })
+      .composite([
+        { input: { create: { width: 120, height: 100, channels: 4, background: { r: 20, g: 20, b: 20, alpha: 1 } } }, left: 0, top: 0 },
+        { input: { create: { width: 20, height: 100, channels: 4, background: { r: 20, g: 20, b: 20, alpha: 1 } } }, left: 190, top: 0 },
+      ])
+      .png()
+      .toBuffer();
+    const { stampMask: mask } = await processStampPicture(wide.toString("base64"));
+    // The bar fills the circle's height; the left band is gone (shrunk to fit, it would show at the left).
+    expect(await alphaAt(mask, 0.5, 0.2)).toBe(255);
+    expect(await alphaAt(mask, 0.5, 0.8)).toBe(255);
+    expect(await alphaAt(mask, 0.15, 0.5)).toBe(0);
+    expect(await alphaAt(mask, 0.3, 0.5)).toBe(0);
   });
 
   it("takes what a logo takes, refused in the words of a picture", async () => {

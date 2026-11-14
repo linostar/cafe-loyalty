@@ -1,5 +1,5 @@
 import type { StampPicture } from "@cafe-loyalty/db";
-import { LOGO_STAMP_EMPTY_OPACITY, STAMP_SHAPE_PATHS, STAMP_STROKE, isSilhouetteShape, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
+import { LOGO_STAMP_EMPTY_OPACITY, PICTURE_STAMP_SHAPE, STAMP_SHAPE_PATHS, STAMP_STROKE, isSilhouetteShape, stampGrid, stampShapeSchema, type DrawnStampShape } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
 /**
@@ -67,6 +67,7 @@ export function stampLayout(required: number, version: StampLayoutVersion = 3): 
 /**
  * The strip's SVG at `scale` (1, 2 or 3): the card's background, its stamps full in the text colour, the rest outlined.
  * "From logo" stamps are the logo's silhouette (`mask`, stampSilhouette) in the text colour, solid when full and faded
+ * when empty; "From picture" stamps are the picture's silhouette when full and the empty circle (see-through inside)
  * when empty; without the silhouette they are drawn as circles.
  */
 export function stampPictureSvg(picture: StampPicture, scale: number, version: StampLayoutVersion = 3, mask?: Buffer): string {
@@ -75,7 +76,7 @@ export function stampPictureSvg(picture: StampPicture, scale: number, version: S
   const logo = isSilhouetteShape(picture.shape) ? mask : undefined;
   const shape = isSilhouetteShape(picture.shape) ? "circle" : picture.shape;
   const stamp = (full: boolean) =>
-    logo === undefined
+    logo === undefined || (!full && picture.shape === PICTURE_STAMP_SHAPE)
       ? stampShapeMarkup(shape, full, paint, version === 3)
       : `<rect width="24" height="24" fill="${picture.foreground}" mask="url(#logo-stamp)"${full ? "" : ` opacity="${String(LOGO_STAMP_EMPTY_OPACITY)}"`}/>`;
   const stamps = positions.map(

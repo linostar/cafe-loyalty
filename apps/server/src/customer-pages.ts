@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, loadStampMask, offerText, stampMaskPath as stampMaskPathOf, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
-import { arabicOr, DEFAULT_COUNTRY_CODE, isSilhouetteShape, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
+import { arabicOr, DEFAULT_COUNTRY_CODE, PICTURE_STAMP_SHAPE, isSilhouetteShape, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -730,7 +730,8 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
             if (maskHash !== undefined && found === undefined) {
               throw new PageError(404, "notFound");
             }
-            return stampPicturePng(picture, 3, version, found);
+            // Every silhouette's address names "logo" (stampPicturePath): a picture's is drawn as "From picture".
+            return stampPicturePng(found?.picture === true ? { ...picture, shape: PICTURE_STAMP_SHAPE } : picture, 3, version, found?.stampMask);
           })
           .then((drawn) => {
             stampPictures.set(file, drawn);

@@ -164,12 +164,23 @@ describe("\"From logo\" stamp pictures", () => {
     expect(await at(empty, 0.75)).toEqual([0, 0, 0]);
   });
 
-  it("addresses and draws \"From picture\" as its silhouette, as \"From logo\" is", async () => {
+  it("addresses \"From picture\" as its silhouette and draws a full stamp as \"From logo\" does, an empty one as the empty circle", async () => {
     const logo = { shape: "logo" as const, maskHash: Buffer.alloc(32, 1), background: "#000000", foreground: "#ff0000", stamps: 1, required: 2 };
     const picture = { ...logo, shape: "picture" as const };
     expect(stampPicturePath(picture)).toBe(stampPicturePath(logo));
     const mask = await halfMask();
-    expect(stampPictureSvg(picture, 1, 3, mask)).toEqual(stampPictureSvg(logo, 1, 3, mask));
+    const [drawn, asLogo, asCircle] = await Promise.all([stampPicturePng(picture, 1, 3, mask), stampPicturePng(logo, 1, 3, mask), stampPicturePng({ ...picture, shape: "circle" }, 1)]);
+    const { size, positions } = stampLayout(2);
+    const [full, empty] = positions;
+    const square = (png: Buffer, stamp: { x: number; y: number } | undefined) =>
+      sharp(png)
+        .extract({ left: Math.floor(stamp?.x ?? 0), top: Math.floor(stamp?.y ?? 0), width: Math.ceil(size), height: Math.ceil(size) })
+        .raw()
+        .toBuffer();
+    expect(await square(drawn, full)).toEqual(await square(asLogo, full));
+    expect(await square(drawn, empty)).toEqual(await square(asCircle, empty));
+    // See-through inside: the empty stamp's middle is the background, where the logo's faded silhouette would show.
+    expect(await pixel(drawn, (empty?.x ?? 0) + size * 0.4, (empty?.y ?? 0) + size / 2)).toEqual([0, 0, 0]);
     expect(stampPictureSvg(picture, 1)).toEqual(stampPictureSvg({ ...picture, shape: "circle" }, 1));
   });
 
