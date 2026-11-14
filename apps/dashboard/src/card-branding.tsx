@@ -237,7 +237,8 @@ export function StampShapeForm({
           kind="picture"
           cafeName={cafeName}
           logoHash={pictureMaskHash}
-          busy={sending.pending}
+          // Any shape-changing request on its way, a picture's too: a form shown again mid-request starts with none of its own.
+          busy={busy}
           upload={(image) => whilePictureBusy(() => picture.upload(image))}
           remove={async () => {
             const now = await whilePictureBusy(picture.remove);
