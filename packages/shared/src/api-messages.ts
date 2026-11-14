@@ -45,6 +45,10 @@ export const API_MESSAGES_AR = {
   "Use a logo of at most 2 MB.": "استخدم شعاراً بحجم 2 ميغابايت كحد أقصى.",
   "Use a logo at least 64 pixels wide and high.": "استخدم شعاراً بعرض وارتفاع 64 بكسل على الأقل.",
   "Upload the logo first: these stamps are made from it.": "ارفع الشعار أولاً: هذه الأختام مصنوعة منه.",
+  "Upload the picture as a PNG or JPEG image.": "ارفع الصورة بصيغة PNG أو JPEG.",
+  "Use a picture of at most 2 MB.": "استخدم صورة بحجم 2 ميغابايت كحد أقصى.",
+  "Use a picture at least 64 pixels wide and high.": "استخدم صورة بعرض وارتفاع 64 بكسل على الأقل.",
+  "Upload a picture first: these stamps are made from it.": "ارفع صورة أولاً: هذه الأختام مصنوعة منها.",
   "This payment was already recorded with other details. Reload the page to see it, then record any other payment as a new one.":
     "سُجّلت هذه الدفعة سابقاً بتفاصيل أخرى. أعد تحميل الصفحة لرؤيتها، ثم سجّل أي دفعة أخرى كدفعة جديدة.",
   "Choose pilot, active or suspended.": "اختر تجريبية أو فعّالة أو موقوفة.",

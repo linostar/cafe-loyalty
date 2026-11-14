@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { EMAIL_UNDO_PATH, FEEDBACK_PATH, GOOGLE_PASS_LAYOUT_VERSION, GOOGLE_PASS_UPDATE_QUEUE, cafeLogoPath, feedbackUrl, loadAppleLogo, loadCafeBranding, loadCardOffer, loadFeedbackRequest, loadStampMask, offerText, stampMaskPath as stampMaskPathOf, signEmailUndoToken, signFeedbackToken, verifyEmailUndoToken, verifyFeedbackToken, setLookup, useCafe, withCafe, withLookup, type Database, type GoogleWalletConfig, type PgBoss } from "@cafe-loyalty/db";
-import { arabicOr, DEFAULT_COUNTRY_CODE, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
+import { arabicOr, DEFAULT_COUNTRY_CODE, isSilhouetteShape, joinCodeSchema, linkTokenSchema, normalizePhoneInput, ownerEmailSchema, parseCountryCode, parseHolderName } from "@cafe-loyalty/shared";
 import { ICON_PNG_PATH, LOGO_SVG_PATH } from "@cafe-loyalty/ui";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -556,7 +556,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     const qr = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(renderSVG(signCardQr(secrets, { cardId: card.id, cafeId: card.cafe_id, epoch: card.epoch }), { border: 4, ecc: "M" }))}`;
     const path = `/c/${secret}`;
     const apple = onAppleDevice(request);
-    const stampMaskPath = cafe.stampShape === "logo" && cafe.stampMaskHash !== null ? stampMaskPathOf(cafe.stampMaskHash) : null;
+    const stampMaskPath = isSilhouetteShape(cafe.stampShape) && cafe.stampMaskHash !== null ? stampMaskPathOf(cafe.stampMaskHash) : null;
     const document = cardView(lang, {
       path,
       cafeName: cafe.name,
@@ -598,6 +598,10 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
     enforce(limits.applePassesPerCard, card.id);
     const token = applePassToken(secrets, secret);
     const found = await withCafe(db, card.cafe_id, async (trx) => {
+      // The café's row lock (as a shape save, a picture's change and the re-cut take it), before its branding is read: a
+      // change on its way commits first and is read here, and one after waits until this pass exists for its triggers to mark.
+      await trx.selectFrom("cafes").select("id").where("id", "=", card.cafe_id).forNoKeyUpdate().execute();
+      const cafe = await loadCafeBranding(trx, card.cafe_id);
       await trx
         .insertInto("apple_passes")
         .values({ cafe_id: card.cafe_id, card_id: card.id, epoch: card.epoch, auth_token_hash: hashToken(token), layout_version: APPLE_PASS_LAYOUT_VERSION })
@@ -606,9 +610,9 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       return {
         pass: await trx.selectFrom("apple_passes").select("id").where("card_id", "=", card.id).where("epoch", "=", card.epoch).executeTakeFirstOrThrow(),
         stamps: (await trx.selectFrom("cards").select("stamps").where("id", "=", card.id).executeTakeFirstOrThrow()).stamps,
-        cafe: await loadCafeBranding(trx, card.cafe_id),
+        cafe,
         logo: await loadAppleLogo(trx, card.cafe_id),
-        stampMask: await loadStampMask(trx, card.cafe_id),
+        stampMask: isSilhouetteShape(cafe.stampShape) ? await loadStampMask(trx, card.cafe_id, cafe.stampShape) : undefined,
         program: await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst(),
         offers: await loadCardOffer(trx, card.id),
         feedback: await loadFeedbackRequest(trx, card.id),
@@ -620,7 +624,7 @@ export function customerPages(app: FastifyInstance, options: CustomerPagesOption
       cafeName: found.cafe.name,
       colors: found.cafe.colors,
       stampShape: found.cafe.stampShape,
-      stampMask: found.cafe.stampShape === "logo" ? found.stampMask : undefined,
+      stampMask: found.stampMask,
       logo: found.logo,
       holderName: card.holder_name,
       stamps: found.stamps,

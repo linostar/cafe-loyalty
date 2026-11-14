@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CafeLogoImages } from "@cafe-loyalty/db";
+import type { CafeLogoImages, CafePictureImages } from "@cafe-loyalty/db";
 import { ApiError, apiText, type ApiText } from "@cafe-loyalty/shared";
 import sharp from "sharp";
 
@@ -27,21 +27,39 @@ const isPngOrJpeg = (input: Buffer): boolean =>
   input.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) || input.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
 
 const refused = (issue: ApiText) => new ApiError("VALIDATION_FAILED", issue, [{ path: "image", issue }]);
-const notAnImage = () => refused(apiText("Upload the logo as a PNG or JPEG image."));
+
+/** What an upload is refused with, in the words of what it is (a logo, or a "From picture" picture). */
+interface UploadText {
+  notAnImage: ApiText;
+  tooLarge: ApiText;
+  tooSmall: ApiText;
+}
+
+const LOGO_TEXT: UploadText = {
+  notAnImage: apiText("Upload the logo as a PNG or JPEG image."),
+  tooLarge: apiText("Use a logo of at most 2 MB."),
+  tooSmall: apiText("Use a logo at least 64 pixels wide and high."),
+};
+
+const PICTURE_TEXT: UploadText = {
+  notAnImage: apiText("Upload the picture as a PNG or JPEG image."),
+  tooLarge: apiText("Use a picture of at most 2 MB."),
+  tooSmall: apiText("Use a picture at least 64 pixels wide and high."),
+};
 
 /**
- * A logo upload (base64, PNG or JPEG) turned into the images a café's cards use: a square PNG (the image centred on a
- * transparent square, so Google's round crop keeps all of it) and Apple's logo.png at 1x, 2x and 3x. Every output is
- * re-encoded, so no metadata of the upload (EXIF, places, comments) is kept; a JPEG's rotation is applied first.
- * Throws VALIDATION_FAILED, on the `image` field, for anything else.
+ * An upload (base64, PNG or JPEG) checked, decoded once, rotated and brought down to the largest size any card uses
+ * (a PNG), with `make` turning it into the images kept. Every output is re-encoded, so no metadata of the upload (EXIF,
+ * places, comments) is kept. Throws VALIDATION_FAILED, on the `image` field, for anything else.
  */
-export async function processLogo(base64: string): Promise<CafeLogoImages> {
+async function processUpload<T>(base64: string, text: UploadText, make: (base: Buffer) => Promise<T>): Promise<T> {
+  const notAnImage = () => refused(text.notAnImage);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
     throw notAnImage();
   }
   const input = Buffer.from(base64, "base64");
   if (input.length > LOGO_MAX_BYTES) {
-    throw refused(apiText("Use a logo of at most 2 MB."));
+    throw refused(text.tooLarge);
   }
   if (!isPngOrJpeg(input)) {
     throw notAnImage();
@@ -59,29 +77,53 @@ export async function processLogo(base64: string): Promise<CafeLogoImages> {
     throw error instanceof ApiError ? error : notAnImage();
   }
   if (Math.min(width, height) < LOGO_MIN_SIDE) {
-    throw refused(apiText("Use a logo at least 64 pixels wide and high."));
+    throw refused(text.tooSmall);
   }
   try {
-    // Decoded once, rotated and brought down to the largest size any card uses; every output is made from that.
     const base = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS, failOn: "error" })
       .rotate()
       .resize(LOGO_SQUARE_SIDE, LOGO_SQUARE_SIDE, { fit: "inside", withoutEnlargement: true })
       .png()
       .toBuffer();
-    const image = () => sharp(base);
-    const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
-    const square = await image().resize(LOGO_SQUARE_SIDE, LOGO_SQUARE_SIDE, { fit: "contain", background: transparent }).png({ compressionLevel: 9 }).toBuffer();
-    const apple = (scale: number) =>
-      image()
-        .resize(APPLE_LOGO_POINTS.width * scale, APPLE_LOGO_POINTS.height * scale, { fit: "inside", withoutEnlargement: true })
-        .png({ compressionLevel: 9 })
-        .toBuffer();
-    const [apple1x, apple2x, apple3x, stampMask] = await Promise.all([apple(1), apple(2), apple(3), stampSilhouette(base)]);
-    return { hash: createHash("sha256").update(square).digest(), square, apple1x, apple2x, apple3x, ...silhouetteOf(stampMask) };
+    return await make(base);
   } catch {
     // A file whose header reads but whose pixels do not (truncated, corrupt).
     throw notAnImage();
   }
+}
+
+/** The image centred on a transparent square of LOGO_SQUARE_SIDE, so Google's round crop keeps all of it. */
+const squareOf = (base: Buffer): Promise<Buffer> =>
+  sharp(base)
+    .resize(LOGO_SQUARE_SIDE, LOGO_SQUARE_SIDE, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+
+/**
+ * A logo upload (base64, PNG or JPEG) turned into the images a café's cards use: a square PNG (squareOf) and Apple's
+ * logo.png at 1x, 2x and 3x, with its silhouette for "From logo" stamps; a JPEG's rotation is applied first.
+ */
+export function processLogo(base64: string): Promise<CafeLogoImages> {
+  return processUpload(base64, LOGO_TEXT, async (base) => {
+    const apple = (scale: number) =>
+      sharp(base)
+        .resize(APPLE_LOGO_POINTS.width * scale, APPLE_LOGO_POINTS.height * scale, { fit: "inside", withoutEnlargement: true })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+    const [square, apple1x, apple2x, apple3x, stampMask] = await Promise.all([squareOf(base), apple(1), apple(2), apple(3), stampSilhouette(base)]);
+    return { hash: createHash("sha256").update(square).digest(), square, apple1x, apple2x, apple3x, ...silhouetteOf(stampMask) };
+  });
+}
+
+/**
+ * A "From picture" upload (base64, PNG or JPEG, the same limits as a logo's) turned into its square PNG (squareOf,
+ * kept to cut it again) and the silhouette its stamps are drawn as, cut as a logo's is.
+ */
+export function processStampPicture(base64: string): Promise<CafePictureImages> {
+  return processUpload(base64, PICTURE_TEXT, async (base) => {
+    const [square, stampMask] = await Promise.all([squareOf(base), stampSilhouette(base)]);
+    return { square, ...silhouetteOf(stampMask) };
+  });
 }
 
 /** The side of a logo's silhouette for "From logo" stamps: twice the largest stamp drawn (a 3x strip's, about 110 px). */

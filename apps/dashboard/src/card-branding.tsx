@@ -1,5 +1,5 @@
-import { LOGO_STAMP_SHAPE, STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
-import { useId, useState, type CSSProperties } from "react";
+import { LOGO_STAMP_SHAPE, PICTURE_STAMP_SHAPE, STAMP_SHAPES, STAMP_SHAPE_PATHS, STAMP_STROKE, apiText, isSilhouetteShape, stampGrid, type ApiText, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { Form, FormError, Notice, useFocusOnChange, useFocusWhenInvalid, useSubmit } from "./forms.js";
 import { useApiText, useT } from "./i18n.js";
 
@@ -10,6 +10,7 @@ const AR = {
   "Stamp shape": "شكل الأختام",
   "Cards show the stamps collected as full shapes and the ones to go as outlines.": "تُظهر البطاقات الأختام المجمّعة أشكالاً ممتلئة، والباقية أشكالاً مفرّغة.",
   "From logo": "من الشعار",
+  "From picture": "من الصورة",
   Circle: "دائرة",
   Cup: "فنجان",
   Plate: "طبق",
@@ -31,6 +32,15 @@ const AR = {
   "Remove logo": "إزالة الشعار",
   "Removing…": "جارٍ الإزالة…",
   "Logo removed.": "أُزيل الشعار.",
+  "Stamp picture": "صورة الأختام",
+  "Stamp picture of {name}": "صورة أختام {name}",
+  "A PNG or JPEG of at most 2 MB, at least 64 pixels on each side. Its dark parts become the stamp; it never shows as the card's logo.":
+    "صورة PNG أو JPEG بحجم 2 ميغابايت كحد أقصى، و64 بكسل على الأقل لكل جانب. تصبح أجزاؤها الداكنة هي الختم، ولا تظهر أبداً كشعار للبطاقة.",
+  "Upload picture": "رفع الصورة",
+  "Replace picture": "استبدال الصورة",
+  "Remove picture": "إزالة الصورة",
+  "Saved. Cards in wallets show the new stamps within a few minutes.": "تم الحفظ. تظهر الأختام الجديدة على البطاقات في المحافظ خلال دقائق.",
+  "Picture removed.": "أُزيلت الصورة.",
 } as const;
 
 /** Each stamp shape's name, as the picker lists them. */
@@ -44,16 +54,17 @@ const SHAPE_NAMES = {
   cake: "Cake",
   burger: "Burger",
   logo: "From logo",
+  picture: "From picture",
 } as const satisfies Record<StampShape, keyof typeof AR>;
 
 /**
  * One stamp in a shape (STAMP_SHAPE_PATHS, as the cards draw it), in currentColor: full (filled and outlined, so as big
  * as an empty one) or outlined. A full stamp's inner lines take the card's background (`.stamp-icon-inner`, app.css).
- * "From logo" is the logo's silhouette (`maskHash`'s, stampMaskUrl) masking currentColor, faded when empty; a circle
- * without one.
+ * "From logo" and "From picture" are the silhouette (`maskHash`'s, stampMaskUrl) masking currentColor, faded when empty;
+ * a circle without one.
  */
 export function StampIcon({ shape, full, maskHash }: { shape: StampShape; full: boolean; maskHash: string | null }) {
-  if (shape === LOGO_STAMP_SHAPE && maskHash !== null) {
+  if (isSilhouetteShape(shape) && maskHash !== null) {
     return (
       <span
         className={full ? "stamp-icon stamp-icon-logo" : "stamp-icon stamp-icon-logo is-empty"}
@@ -62,7 +73,7 @@ export function StampIcon({ shape, full, maskHash }: { shape: StampShape; full: 
       />
     );
   }
-  const { body, extra, inner } = STAMP_SHAPE_PATHS[shape === LOGO_STAMP_SHAPE ? "circle" : shape];
+  const { body, extra, inner } = STAMP_SHAPE_PATHS[isSilhouetteShape(shape) ? "circle" : shape];
   const line = { fill: "none", stroke: "currentColor", strokeWidth: STAMP_STROKE, strokeLinecap: "round", strokeLinejoin: "round" } as const;
   return (
     <svg className="stamp-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -79,7 +90,7 @@ const SAMPLE_STAMPS = 9;
 /** A café's logo as the dashboard loads it (its domain forwards only /api to the server). */
 export const logoUrl = (hash: string): string => `/api/logos/${hash}.png`;
 
-/** The silhouette of a café's logo (by its own hash), which its "From logo" stamps are drawn as. */
+/** A silhouette (a logo's or a "From picture" picture's, by its own hash), which those stamps are drawn as. */
 export const stampMaskUrl = (hash: string): string => `/api/logos/${hash}-stamp.png`;
 
 /**
@@ -91,12 +102,14 @@ export function CardPreview({
   colors,
   logoHash,
   stampMaskHash,
+  pictureMaskHash,
   stampShape,
 }: {
   name: string;
   colors: CardColors;
   logoHash: string | null;
   stampMaskHash: string | null;
+  pictureMaskHash: string | null;
   stampShape: StampShape;
 }) {
   const t = useT(AR);
@@ -111,7 +124,7 @@ export function CardPreview({
         <ol className="card-preview-stamps" style={{ "--stamp-columns": stampGrid(SAMPLE_STAMPS).columns } as CSSProperties} aria-hidden="true">
           {Array.from({ length: SAMPLE_STAMPS }, (_, index) => (
             <li key={index} className={index < 4 ? "is-filled" : undefined}>
-              <StampIcon shape={stampShape} full={index < 4} maskHash={stampMaskHash} />
+              <StampIcon shape={stampShape} full={index < 4} maskHash={stampShape === PICTURE_STAMP_SHAPE ? pictureMaskHash : stampMaskHash} />
             </li>
           ))}
         </ol>
@@ -125,56 +138,118 @@ export function CardPreview({
  * Picking the shape a café's cards draw their stamps in (the owner's Card section, the operator's café page): the
  * templates (STAMP_SHAPES) as radio buttons, each with its picture, saved together. "From logo" is listed only while
  * the café's logo has a silhouette (`maskHash`), drawn from it; removing the logo moves the café to the circle (the server).
+ * "From picture" is always listed: picked, its picture's upload, replacement and removal show under the shapes (a form
+ * of its own, `picture`); an upload also picks it (the server), and removing the picture moves the café to the circle,
+ * which the pick then follows (`remove` gives the shape the café is left on). A shape save and a picture's upload or
+ * removal both change the shape, so one waits for the other: an answer arriving late never undoes a later one.
  */
-export function StampShapeForm({ shape, maskHash, save }: { shape: StampShape; maskHash: string | null; save: (shape: StampShape) => Promise<unknown> }) {
+export function StampShapeForm({
+  cafeName,
+  shape,
+  maskHash,
+  pictureMaskHash,
+  save,
+  picture,
+}: {
+  cafeName: string;
+  shape: StampShape;
+  maskHash: string | null;
+  pictureMaskHash: string | null;
+  save: (shape: StampShape) => Promise<unknown>;
+  picture: { upload: (image: string) => Promise<unknown>; remove: () => Promise<StampShape> };
+}) {
   const t = useT(AR);
   const id = useId();
   const [picked, setPicked] = useState(shape);
   const sending = useSubmit();
+  // A picture's upload or removal on its way, kept here: it outlives the picture's form, which goes with its pick.
+  const [pictureBusy, setPictureBusy] = useState(false);
+  const busy = sending.pending || pictureBusy;
+  const whilePictureBusy = async <T,>(work: () => Promise<T>): Promise<T> => {
+    setPictureBusy(true);
+    try {
+      return await work();
+    } finally {
+      setPictureBusy(false);
+    }
+  };
+  // The picture removed: said here, since its form goes, and the keyboard moves to the shape now picked (WCAG 2.4.3).
+  const [removed, setRemoved] = useState(false);
+  const [removals, setRemovals] = useState(0);
+  const choices = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (removals > 0) {
+      choices.current?.querySelector<HTMLInputElement>("input:checked")?.focus();
+    }
+  }, [removals]);
+  const options: readonly StampShape[] = maskHash === null ? [...STAMP_SHAPES, PICTURE_STAMP_SHAPE] : [...STAMP_SHAPES, LOGO_STAMP_SHAPE, PICTURE_STAMP_SHAPE];
   return (
-    <Form
-      aria-label={t("Stamp shape")}
-      // A pick while a save is on its way: "Saved." would claim the new pick was saved.
-      onChange={sending.clearDone}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (sending.pending) {
-          return;
-        }
-        void sending.submit(() => save(picked));
-      }}
-    >
-      <FormError message={sending.error} />
-      <fieldset aria-describedby={`${id}-hint`}>
-        <legend>{t("Stamp shape")}</legend>
-        <p id={`${id}-hint`} className="hint">
-          {t("Cards show the stamps collected as full shapes and the ones to go as outlines.")}
-        </p>
-        <div className="choices stamp-shapes">
-          {(maskHash === null ? STAMP_SHAPES : ([...STAMP_SHAPES, LOGO_STAMP_SHAPE] as const)).map((option: StampShape) => (
-            <label key={option}>
-              <input
-                type="radio"
-                name={`${id}-shape`}
-                value={option}
-                checked={picked === option}
-                onChange={() => {
-                  setPicked(option);
-                }}
-              />{" "}
-              <StampIcon shape={option} full maskHash={maskHash} />
-              {t(SHAPE_NAMES[option])}
-            </label>
-          ))}
+    <>
+      <Form
+        aria-label={t("Stamp shape")}
+        // A pick while a save is on its way: "Saved." would claim the new pick was saved.
+        onChange={() => {
+          sending.clearDone();
+          setRemoved(false);
+        }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (busy) {
+            return;
+          }
+          setRemoved(false);
+          void sending.submit(() => save(picked));
+        }}
+      >
+        <FormError message={sending.error} />
+        <fieldset aria-describedby={`${id}-hint`}>
+          <legend>{t("Stamp shape")}</legend>
+          <p id={`${id}-hint`} className="hint">
+            {t("Cards show the stamps collected as full shapes and the ones to go as outlines.")}
+          </p>
+          <div ref={choices} className="choices stamp-shapes">
+            {options.map((option) => (
+              <label key={option}>
+                <input
+                  type="radio"
+                  name={`${id}-shape`}
+                  value={option}
+                  checked={picked === option}
+                  onChange={() => {
+                    setPicked(option);
+                  }}
+                />{" "}
+                <StampIcon shape={option} full maskHash={option === PICTURE_STAMP_SHAPE ? pictureMaskHash : maskHash} />
+                {t(SHAPE_NAMES[option])}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="actions">
+          <button type="submit" aria-disabled={busy || undefined}>
+            {sending.pending ? t("Saving…") : t("Save shape")}
+          </button>
         </div>
-      </fieldset>
-      <div className="actions">
-        <button type="submit" aria-disabled={sending.pending || undefined}>
-          {sending.pending ? t("Saving…") : t("Save shape")}
-        </button>
-      </div>
-      <Notice>{sending.done ? t("Saved. Cards in wallets show the new shape within a few minutes.") : null}</Notice>
-    </Form>
+        <Notice>{sending.done ? t("Saved. Cards in wallets show the new shape within a few minutes.") : removed ? t("Picture removed.") : null}</Notice>
+      </Form>
+      {picked === PICTURE_STAMP_SHAPE ? (
+        <LogoForm
+          kind="picture"
+          cafeName={cafeName}
+          logoHash={pictureMaskHash}
+          // Any shape-changing request on its way, a picture's too: a form shown again mid-request starts with none of its own.
+          busy={busy}
+          upload={(image) => whilePictureBusy(() => picture.upload(image))}
+          remove={async () => {
+            const now = await whilePictureBusy(picture.remove);
+            sending.clearDone();
+            setPicked(now);
+            setRemoved(true);
+            setRemovals((count) => count + 1);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -195,22 +270,57 @@ const base64Of = (file: File): Promise<string> =>
 const LOGO_TYPES = ["image/png", "image/jpeg"];
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 
+/** What LogoForm says, for a logo or for a "From picture" picture (the same upload, the server's own messages). */
+const IMAGE_TEXT = {
+  logo: {
+    form: "Logo of {name}",
+    label: "Logo",
+    hint: "A PNG or JPEG of at most 2 MB, at least 64 pixels on each side. A square logo fits best: Google Wallet shows it in a circle.",
+    upload: "Upload logo",
+    replace: "Upload logo",
+    remove: "Remove logo",
+    saved: "Saved. Cards in wallets show it within a few minutes.",
+    removed: "Logo removed.",
+    notAnImage: apiText("Upload the logo as a PNG or JPEG image."),
+    tooLarge: apiText("Use a logo of at most 2 MB."),
+  },
+  picture: {
+    form: "Stamp picture of {name}",
+    label: "Stamp picture",
+    hint: "A PNG or JPEG of at most 2 MB, at least 64 pixels on each side. Its dark parts become the stamp; it never shows as the card's logo.",
+    upload: "Upload picture",
+    replace: "Replace picture",
+    remove: "Remove picture",
+    saved: "Saved. Cards in wallets show the new stamps within a few minutes.",
+    removed: "Picture removed.",
+    notAnImage: apiText("Upload the picture as a PNG or JPEG image."),
+    tooLarge: apiText("Use a picture of at most 2 MB."),
+  },
+} as const satisfies Record<string, Record<"form" | "label" | "hint" | "upload" | "replace" | "remove" | "saved" | "removed", keyof typeof AR> & Record<"notAnImage" | "tooLarge", ApiText>>;
+
 /**
- * Uploading or removing a café's logo (the owner's Card section, the operator's café page). The file is checked here for
- * its type and size first, with the server's own messages; the server checks it again and makes the cards' sizes.
+ * Uploading or removing a café's logo (the owner's Card section, the operator's café page), or, as `kind="picture"`, its
+ * "From picture" picture (StampShapeForm; `logoHash` is then its silhouette's, shown as the stamp). The file is checked
+ * here for its type and size first, with the server's own messages; the server checks it again and makes the cards' sizes.
  */
 export function LogoForm({
+  kind = "logo",
   cafeName,
   logoHash,
+  busy = false,
   upload,
   remove,
 }: {
+  kind?: keyof typeof IMAGE_TEXT;
+  /** Another request on its way that this one must wait for (StampShapeForm's shape save, for a picture). */
+  busy?: boolean;
   cafeName: string;
   logoHash: string | null;
   upload: (image: string) => Promise<unknown>;
   remove: () => Promise<unknown>;
 }) {
   const t = useT(AR);
+  const words = IMAGE_TEXT[kind];
   const api = useApiText();
   const id = useId();
   const [file, setFile] = useState<File | null>(null);
@@ -229,19 +339,19 @@ export function LogoForm({
   const errorId = `${id}-error`;
   return (
     <Form
-      aria-label={t("Logo of {name}", { name: cafeName })}
+      aria-label={t(words.form, { name: cafeName })}
       onSubmit={(event) => {
         event.preventDefault();
-        if (sending.pending) {
+        if (sending.pending || busy) {
           return;
         }
         setSaid(null);
         if (file === null || !LOGO_TYPES.includes(file.type)) {
-          setProblem(apiText("Upload the logo as a PNG or JPEG image."));
+          setProblem(words.notAnImage);
           return;
         }
         if (file.size > LOGO_MAX_BYTES) {
-          setProblem(apiText("Use a logo of at most 2 MB."));
+          setProblem(words.tooLarge);
           return;
         }
         setProblem(null);
@@ -261,11 +371,12 @@ export function LogoForm({
     >
       <FormError message={sending.error} />
       <div ref={field} className="field">
-        <label htmlFor={id}>{t("Logo")}</label>
+        {kind === "picture" && logoHash !== null ? <StampIcon shape={PICTURE_STAMP_SHAPE} full maskHash={logoHash} /> : null}
+        <label htmlFor={id}>{t(words.label)}</label>
         <input
           ref={input}
           id={id}
-          name="logo"
+          name={kind}
           type="file"
           accept="image/png,image/jpeg"
           onChange={(event) => {
@@ -277,7 +388,7 @@ export function LogoForm({
           aria-describedby={error === undefined ? hintId : `${hintId} ${errorId}`}
         />
         <p id={hintId} className="hint">
-          {t("A PNG or JPEG of at most 2 MB, at least 64 pixels on each side. A square logo fits best: Google Wallet shows it in a circle.")}
+          {t(words.hint)}
         </p>
         {error === undefined ? null : (
           <p id={errorId} className="field-error">
@@ -286,15 +397,15 @@ export function LogoForm({
         )}
       </div>
       <div className="actions">
-        <button type="submit" aria-disabled={sending.pending || undefined}>
-          {sending.pending && action === "upload" ? t("Uploading…") : t("Upload logo")}
+        <button type="submit" aria-disabled={sending.pending || busy || undefined}>
+          {sending.pending && action === "upload" ? t("Uploading…") : t(logoHash === null ? words.upload : words.replace)}
         </button>
         {logoHash === null ? null : (
           <button
             type="button"
-            aria-disabled={sending.pending || undefined}
+            aria-disabled={sending.pending || busy || undefined}
             onClick={() => {
-              if (sending.pending) {
+              if (sending.pending || busy) {
                 return;
               }
               setSaid(null);
@@ -307,11 +418,11 @@ export function LogoForm({
               });
             }}
           >
-            {sending.pending && action === "remove" ? t("Removing…") : t("Remove logo")}
+            {sending.pending && action === "remove" ? t("Removing…") : t(words.remove)}
           </button>
         )}
       </div>
-      <Notice>{said === "saved" ? t("Saved. Cards in wallets show it within a few minutes.") : said === "removed" ? t("Logo removed.") : null}</Notice>
+      <Notice>{said === "saved" ? t(words.saved) : said === "removed" ? t(words.removed) : null}</Notice>
     </Form>
   );
 }

@@ -1,5 +1,5 @@
 import { createPrivateKey, createSign } from "node:crypto";
-import { formatUsd, plural, type Plural } from "@cafe-loyalty/shared";
+import { formatUsd, isSilhouetteShape, plural, type Plural } from "@cafe-loyalty/shared";
 import { z } from "zod";
 import { cafeLogoPath, stampPicturePath, type CafeBranding } from "./branding.js";
 import { offerKey, type CardOffer } from "./offers.js";
@@ -239,8 +239,8 @@ export const stampPictureUrl = (publicUrl: string, look: Pick<CafeBranding, "col
     stampPicturePath({
       // "From logo" without a logo cannot be stored (migration 0037 moves the café to the circle), but a picture is never
       // left without a shape it can draw.
-      shape: look.stampShape === "logo" && look.stampMaskHash === null ? "circle" : look.stampShape,
-      ...(look.stampShape === "logo" && look.stampMaskHash !== null ? { maskHash: look.stampMaskHash } : {}),
+      shape: isSilhouetteShape(look.stampShape) && look.stampMaskHash === null ? "circle" : look.stampShape,
+      ...(isSilhouetteShape(look.stampShape) && look.stampMaskHash !== null ? { maskHash: look.stampMaskHash } : {}),
       background: look.colors.background,
       foreground: look.colors.foreground,
       stamps,

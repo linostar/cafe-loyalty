@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ApiError } from "@cafe-loyalty/shared";
 import sharp, { type Sharp } from "sharp";
 import { describe, expect, it } from "vitest";
-import { LOGO_MAX_BYTES, LOGO_SQUARE_SIDE, LOGO_STORED_MAX_BYTES, STAMP_MASK_SIDE, STAMP_MASK_VERSION, otsuThreshold, processLogo, stampSilhouette } from "./logo-image.js";
+import { LOGO_MAX_BYTES, LOGO_SQUARE_SIDE, LOGO_STORED_MAX_BYTES, STAMP_MASK_SIDE, STAMP_MASK_VERSION, otsuThreshold, processLogo, processStampPicture, stampSilhouette } from "./logo-image.js";
 
 const red = { r: 200, g: 30, b: 30, alpha: 1 };
 const picture = (width: number, height: number) => sharp({ create: { width, height, channels: 4, background: red } });
@@ -13,9 +13,9 @@ const size = async (png: Buffer) => {
 };
 
 /** The field issue a refused upload names. */
-async function refusal(upload: string): Promise<string | undefined> {
+async function refusal(upload: string, process: (base64: string) => Promise<unknown> = processLogo): Promise<string | undefined> {
   try {
-    await processLogo(upload);
+    await process(upload);
     return undefined;
   } catch (error) {
     expect(error).toBeInstanceOf(ApiError);
@@ -89,6 +89,25 @@ const squareOn = (outside: { r: number; g: number; b: number; alpha: number }, i
     .composite([{ input: { create: { width: 100, height: 100, channels: 4, background: inside } }, left: 50, top: 50 }])
     .png()
     .toBuffer();
+
+describe("a café's \"From picture\" picture", () => {
+  it("is kept as the logo's square and cut into the same silhouette a logo of it would have, with its hash and version", async () => {
+    const upload = (await squareOn({ r: 255, g: 255, b: 255, alpha: 1 }, { r: 20, g: 20, b: 20, alpha: 1 })).toString("base64");
+    const [picture, logo] = await Promise.all([processStampPicture(upload), processLogo(upload)]);
+    expect(Object.keys(picture).sort()).toEqual(["square", "stampMask", "stampMaskHash", "stampMaskVersion"]);
+    expect(picture.square).toEqual(logo.square);
+    expect(await size(picture.square)).toEqual({ width: LOGO_SQUARE_SIDE, height: LOGO_SQUARE_SIDE, format: "png" });
+    expect(picture.stampMask).toEqual(logo.stampMask);
+    expect(picture.stampMaskHash).toEqual(createHash("sha256").update(picture.stampMask).digest());
+    expect(picture.stampMaskVersion).toBe(STAMP_MASK_VERSION);
+  });
+
+  it("takes what a logo takes, refused in the words of a picture", async () => {
+    expect(await refusal(Buffer.from("not an image at all").toString("base64"), processStampPicture)).toBe("Upload the picture as a PNG or JPEG image.");
+    expect(await refusal(await base64(picture(300, 40).png()), processStampPicture)).toBe("Use a picture at least 64 pixels wide and high.");
+    expect(await refusal(Buffer.alloc(LOGO_MAX_BYTES + 1).toString("base64"), processStampPicture)).toBe("Use a picture of at most 2 MB.");
+  });
+});
 
 describe("a logo's silhouette for \"From logo\" stamps", () => {
   it("is made with every upload: a white square PNG whose alpha is the silhouette, with its own hash and version", async () => {

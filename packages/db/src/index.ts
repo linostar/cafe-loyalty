@@ -1,5 +1,20 @@
 export { bootstrap, withDatabase, type BootstrapLog, type BootstrapOptions } from "./bootstrap.js";
-export { cafeLogoPath, loadAppleLogo, loadCafeBranding, loadStampMask, removeCafeLogo, saveCafeLogo, stampMaskPath, stampPicturePath, type CafeBranding, type CafeLogoImages, type StampPicture } from "./branding.js";
+export {
+  cafeLogoPath,
+  loadAppleLogo,
+  loadCafeBranding,
+  loadStampMask,
+  removeCafeLogo,
+  removeCafePicture,
+  saveCafeLogo,
+  saveCafePicture,
+  stampMaskPath,
+  stampPicturePath,
+  type CafeBranding,
+  type CafeLogoImages,
+  type CafePictureImages,
+  type StampPicture,
+} from "./branding.js";
 export { currentKey, keyringSchema, signCardQr, verifyCardQr, type Keyring } from "./card-qr.js";
 export { checkMigrations, findBreakingStatements, findForbiddenStatements, type MigrationCheckContext, type MigrationProblem } from "./check-migrations.js";
 export {

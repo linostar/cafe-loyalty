@@ -79,6 +79,8 @@ export const stampShapeUpdateSchema = z.object({ stampShape: stampShapeSchema })
 
 /** A logo upload: a PNG or JPEG, base64-encoded (the API takes JSON only); the server checks and resizes it. */
 export const logoUploadSchema = z.object({ image: z.string(apiText("Upload the logo as a PNG or JPEG image.")).min(1, apiText("Upload the logo as a PNG or JPEG image.")) });
+/** A "From picture" picture's upload: the logo's, in the words of a picture. */
+export const pictureUploadSchema = z.object({ image: z.string(apiText("Upload the picture as a PNG or JPEG image.")).min(1, apiText("Upload the picture as a PNG or JPEG image.")) });
 
 export const adminPaymentSchema = z.object({
   id: z.uuid(),
@@ -105,6 +107,8 @@ export const adminCafeSchema = z.object({
   logoHash: logoHashSchema.nullable().default(null),
   /** The logo's silhouette for "From logo" stamps (null: none, so the option is not offered). */
   stampMaskHash: logoHashSchema.nullable().default(null),
+  /** The silhouette of the café's "From picture" picture (by its own hash), or null without one. */
+  pictureMaskHash: logoHashSchema.nullable().default(null),
   stampShape: stampShapeShapeSchema,
   paidCents: z.int(),
   payments: z.array(adminPaymentSchema),

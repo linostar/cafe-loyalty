@@ -6,6 +6,7 @@ import {
   cafeCreateSchema,
   loginRequestSchema,
   logoUploadSchema,
+  pictureUploadSchema,
   operatorPasswordChangeRequestSchema,
   paymentRecordSchema,
   paymentVoidSchema,
@@ -23,8 +24,8 @@ import { clearedOperatorCookie, hashPassword, hashToken, newToken, operatorSessi
 import { audit, now, secondsAgo, secondsFromNow } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
 import { insertInvite, inviteLink } from "./invites.js";
-import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo } from "./logo-image.js";
-import { refuseLogoStampWithoutLogo, setLogo, unsetLogo } from "./logo-routes.js";
+import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo, processStampPicture } from "./logo-image.js";
+import { refuseLogoStampWithoutLogo, setLogo, setPicture, unsetLogo, unsetPicture } from "./logo-routes.js";
 import { RateLimiter, clientKey } from "./rate-limit.js";
 
 export interface AdminRoutesOptions {
@@ -72,6 +73,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     return undefined;
   }
   const logo = await trx.selectFrom("cafe_logos").select(["hash", "stamp_mask_hash"]).where("cafe_id", "=", cafeId).executeTakeFirst();
+  const picture = await trx.selectFrom("cafe_pictures").select("stamp_mask_hash").where("cafe_id", "=", cafeId).executeTakeFirst();
   const payments = await trx
     .selectFrom("cafe_payments")
     .leftJoin("cafe_payment_voids", "cafe_payment_voids.payment_id", "cafe_payments.id")
@@ -113,6 +115,7 @@ async function loadCafe(trx: Transaction<Database>, cafeId: string): Promise<Adm
     cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
     logoHash: logo?.hash?.toString("hex") ?? null,
     stampMaskHash: logo?.stamp_mask_hash?.toString("hex") ?? null,
+    pictureMaskHash: picture?.stamp_mask_hash.toString("hex") ?? null,
     stampShape: cafe.stamp_shape,
     paidCents: Number(paid.total),
     payments: payments.map((payment) => ({
@@ -394,6 +397,33 @@ export function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions, d
       return loadCafe(trx, id);
     });
     request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe logo set");
+    return cafe;
+  });
+
+  /** Sets a café's "From picture" picture and draws its stamps from it (checked and cut before the transaction). */
+  app.put("/cafes/:id/picture", { config: { access: "operator" }, bodyLimit: LOGO_BODY_LIMIT_BYTES }, async (request, reply) => {
+    const operator = operatorOf(request);
+    enforce(limits.logoUploadsPerOperator, operator.operatorId, reply);
+    const { id } = parseInput(idParams, request.params);
+    const body = parseInput(pictureUploadSchema, request.body);
+    const picture = await processStampPicture(body.image);
+    const cafe = await withListedCafe(id, async (trx) => {
+      await setPicture(trx, id, picture, { actorType: "operator", actorId: operator.operatorId });
+      return loadCafe(trx, id);
+    });
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe stamp picture set");
+    return cafe;
+  });
+
+  /** Removes a café's "From picture" picture: a café drawing its stamps from it goes back to the circle. */
+  app.delete("/cafes/:id/picture", { config: { access: "operator" } }, async (request) => {
+    const operator = operatorOf(request);
+    const { id } = parseInput(idParams, request.params);
+    const cafe = await withListedCafe(id, async (trx) => {
+      await unsetPicture(trx, id, { actorType: "operator", actorId: operator.operatorId });
+      return loadCafe(trx, id);
+    });
+    request.log.info({ cafeId: id, operatorId: operator.operatorId }, "cafe stamp picture removed");
     return cafe;
   });
 

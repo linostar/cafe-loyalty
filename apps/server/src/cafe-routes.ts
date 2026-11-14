@@ -5,6 +5,7 @@ import {
   VISIT_HOURS_WEEKS,
   cafeUpdateSchema,
   logoUploadSchema,
+  pictureUploadSchema,
   stampShapeUpdateSchema,
   loyaltyProgramSchema,
   orderTypeCreateSchema,
@@ -22,9 +23,9 @@ import { z } from "zod";
 import { ownerOf } from "./access.js";
 import { audit } from "./db-helpers.js";
 import { parseInput, rateLimited } from "./http-errors.js";
-import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo } from "./logo-image.js";
+import { LOGO_BODY_LIMIT_BYTES, LOGO_UPLOADS_PER_HOUR, processLogo, processStampPicture } from "./logo-image.js";
 import { RateLimiter } from "./rate-limit.js";
-import { refuseLogoStampWithoutLogo, setLogo, unsetLogo } from "./logo-routes.js";
+import { refuseLogoStampWithoutLogo, setLogo, setPicture, unsetLogo, unsetPicture } from "./logo-routes.js";
 
 export interface CafeRoutesOptions {
   db: Kysely<Database>;
@@ -63,6 +64,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
     .where("id", "=", cafeId)
     .executeTakeFirstOrThrow();
   const logo = await trx.selectFrom("cafe_logos").select(["hash", "stamp_mask_hash"]).where("cafe_id", "=", cafeId).executeTakeFirst();
+  const picture = await trx.selectFrom("cafe_pictures").select("stamp_mask_hash").where("cafe_id", "=", cafeId).executeTakeFirst();
   const program = await trx.selectFrom("loyalty_programs").select(["stamps_required", "reward_name_ar", "reward_name_en"]).executeTakeFirst();
   const orderTypes = await trx
     .selectFrom("order_types")
@@ -84,6 +86,7 @@ async function loadSetup(trx: Transaction<Database>, cafeId: string): Promise<Ca
       cardColors: { background: cafe.card_background, foreground: cafe.card_foreground, label: cafe.card_label },
       logoHash: logo?.hash?.toString("hex") ?? null,
       stampMaskHash: logo?.stamp_mask_hash?.toString("hex") ?? null,
+      pictureMaskHash: picture?.stamp_mask_hash.toString("hex") ?? null,
       stampShape: cafe.stamp_shape,
     },
     program:
@@ -288,6 +291,35 @@ export function cafeRoutes(app: FastifyInstance, options: CafeRoutesOptions, don
         await audit(trx, { cafeId: owner.cafeId, actorType: "owner", actorId: owner.ownerId, action: "cafe.updated", entityType: "cafe", entityId: owner.cafeId, changes: { stampShape } });
       }
       request.log.info({ cafeId: owner.cafeId, stampShape }, "cafe stamp shape set");
+      return loadSetup(trx, owner.cafeId);
+    });
+  });
+
+  /**
+   * Sets the café's "From picture" picture and draws its stamps from it (never its logo): a PNG or JPEG, base64 in the
+   * JSON body, checked and cut before the transaction (logo-image.ts), counted with logo uploads.
+   */
+  app.put("/cafe/picture", { config: { access: "owner" }, bodyLimit: LOGO_BODY_LIMIT_BYTES }, async (request, reply) => {
+    const owner = ownerOf(request);
+    const wait = logoUploads.hit(owner.ownerId);
+    if (wait > 0) {
+      throw rateLimited(reply, wait);
+    }
+    const body = parseInput(pictureUploadSchema, request.body);
+    const picture = await processStampPicture(body.image);
+    return withCafe(db, owner.cafeId, async (trx) => {
+      await setPicture(trx, owner.cafeId, picture, { actorType: "owner", actorId: owner.ownerId });
+      request.log.info({ cafeId: owner.cafeId }, "cafe stamp picture set");
+      return loadSetup(trx, owner.cafeId);
+    });
+  });
+
+  /** Removes the café's "From picture" picture: a café drawing its stamps from it goes back to the circle. */
+  app.delete("/cafe/picture", { config: { access: "owner" } }, async (request) => {
+    const owner = ownerOf(request);
+    return withCafe(db, owner.cafeId, async (trx) => {
+      await unsetPicture(trx, owner.cafeId, { actorType: "owner", actorId: owner.ownerId });
+      request.log.info({ cafeId: owner.cafeId }, "cafe stamp picture removed");
       return loadSetup(trx, owner.cafeId);
     });
   });

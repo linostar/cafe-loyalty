@@ -1,5 +1,5 @@
 import { stampsText } from "@cafe-loyalty/db";
-import { DEFAULT_COUNTRY_CODE, MAX_HOLDER_NAME, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
+import { DEFAULT_COUNTRY_CODE, MAX_HOLDER_NAME, isSilhouetteShape, stampGrid, type CardColors, type StampShape } from "@cafe-loyalty/shared";
 import { SafeHtml, cardStyle, count, html, page, t, type Lang } from "./customer-html.js";
 import { stampSlotSvg } from "./stamp-picture.js";
 
@@ -124,9 +124,10 @@ export interface CardView {
  * passes have them (`columns-<n>`, customer.css: at most 5 a row, spread evenly).
  */
 function stampGridHtml(lang: Lang, shape: StampShape, logoMask: boolean, stamps: number, required: number): SafeHtml {
-  // "From logo": the logo's silhouette, through the face's --stamp-logo mask (cardStyle, customer.css); without one, circles.
-  const drawn = shape === "logo" ? "circle" : shape;
-  const stamp = (full: boolean) => (shape === "logo" && logoMask ? new SafeHtml('<span class="stamp-logo"></span>') : new SafeHtml(stampSlotSvg(drawn, full)));
+  // "From logo" and "From picture": the silhouette, through the face's --stamp-logo mask (cardStyle, customer.css);
+  // without one, circles.
+  const drawn = isSilhouetteShape(shape) ? "circle" : shape;
+  const stamp = (full: boolean) => (isSilhouetteShape(shape) && logoMask ? new SafeHtml('<span class="stamp-logo"></span>') : new SafeHtml(stampSlotSvg(drawn, full)));
   const slots = Array.from({ length: required }, (_, index) =>
     index < stamps ? html`<li class="stamp is-filled">${stamp(true)}</li>` : html`<li class="stamp">${stamp(false)}</li>`,
   );

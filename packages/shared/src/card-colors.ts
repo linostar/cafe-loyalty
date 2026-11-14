@@ -61,7 +61,16 @@ export type DrawnStampShape = (typeof STAMP_SHAPES)[number];
  * circle.
  */
 export const LOGO_STAMP_SHAPE = "logo";
-export type StampShape = DrawnStampShape | typeof LOGO_STAMP_SHAPE;
+/**
+ * The template made from a picture the café uploads for its stamps alone ("From picture"): cut and drawn like "From
+ * logo", but the picture is never the card's logo. Only a café with a picture can pick it; removing the picture goes
+ * back to the circle.
+ */
+export const PICTURE_STAMP_SHAPE = "picture";
+/** The templates drawn as a silhouette (a circle masked by it) rather than from STAMP_SHAPE_PATHS. */
+export type SilhouetteStampShape = typeof LOGO_STAMP_SHAPE | typeof PICTURE_STAMP_SHAPE;
+export type StampShape = DrawnStampShape | SilhouetteStampShape;
+export const isSilhouetteShape = (shape: StampShape): shape is SilhouetteStampShape => shape === LOGO_STAMP_SHAPE || shape === PICTURE_STAMP_SHAPE;
 
 /** How strongly an empty "From logo" stamp shows its silhouette (a full one is solid). */
 export const LOGO_STAMP_EMPTY_OPACITY = 0.35;
@@ -69,7 +78,7 @@ export const LOGO_STAMP_EMPTY_OPACITY = 0.35;
 /** Every café's shape until its owner or the operator picks another. */
 export const DEFAULT_STAMP_SHAPE: StampShape = "circle";
 
-export const stampShapeSchema = z.enum([...STAMP_SHAPES, LOGO_STAMP_SHAPE], apiText("Pick one of the stamp shapes."));
+export const stampShapeSchema = z.enum([...STAMP_SHAPES, LOGO_STAMP_SHAPE, PICTURE_STAMP_SHAPE], apiText("Pick one of the stamp shapes."));
 
 /**
  * The stamp templates, drawn on a 24-unit square (the server's pass pictures and web card, the dashboard's preview):
