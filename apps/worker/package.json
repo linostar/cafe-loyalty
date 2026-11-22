@@ -12,7 +12,7 @@
   "dependencies": {
     "@cafe-loyalty/db": "workspace:*",
     "@cafe-loyalty/shared": "workspace:*",
-    "kysely": "^0.29.8",
+    "kysely": "^0.29.9",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
     "zod": "^4.6.7"
